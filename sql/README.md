@@ -32,6 +32,8 @@ uv run agent-bot settings import-env
 这些操作不属于统一安装脚本。历史设计文档和来源清单中的旧 SQL 路径对应本目录的
 同名归档文件，不表示需要重新执行它们。
 
-wheel 提供 `agent_bot/resources/agent_bot_init.sql`；兼容保留三份自有分阶段资源与
+从源码或 editable 安装开发时直接使用仓库 `sql/` 中的脚本。安装 wheel 后可通过
+`importlib.resources.files('agent_bot').joinpath('resources/agent_bot_init.sql')` 读取统一脚本。
+wheel 兼容保留三份自有分阶段资源与
 注释增量资源，服务不会自动执行 SQL。补注释必须使用独立增量脚本，保留类型、
 默认值、可空性和约束；执行前按实例升级流程备份，并评估元数据锁影响。

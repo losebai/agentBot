@@ -13,7 +13,9 @@ def definitions(sql):
     sql = re.sub(r"--[^\n]*", "", sql)
     return {
         m[1]: re.split(r",(?![^()]*\))", m[2])
-        for m in re.finditer(r"CREATE TABLE IF NOT EXISTS `?(\w+)`?\s*\((.*?)\)\s*ENGINE", sql, re.S)
+        for m in re.finditer(
+            r"CREATE TABLE IF NOT EXISTS `?(\w+)`?\s*\((.*?)\)\s*ENGINE", sql, re.S
+        )
     }
 
 
@@ -87,9 +89,9 @@ def test_unified_initialization_includes_memory_idempotency_and_workflow_uniquen
     session = normalized(",".join(tables["dispatch_chat_memory_session"]))
     turns = normalized(",".join(tables["dispatch_chat_memory_turn"]))
     workflow = normalized(",".join(tables["dispatch_chat_workflow"]))
-    assert "`generation_id` CHAR(32) NOT NULL" in session
-    assert "`request_id` VARCHAR(128) COLLATE utf8mb4_bin NULL" in turns
+    assert "`generation_id` CHAR(32)NOT NULL" in session
+    assert "`request_id` VARCHAR(128)COLLATE utf8mb4_bin NULL" in turns
     assert "UNIQUE KEY `uk_dispatch_chat_memory_turn_request`(`session_id`,`request_id`)" in turns
     assert "dispatch_chat_memory_receipt" in tables
     assert "UNIQUE KEY `uk_dispatch_chat_workflow_content_sha256`(`content_sha256`)" in workflow
-    assert "`input_image_node_id` VARCHAR(64) NULL" in workflow
+    assert "`input_image_node_id` VARCHAR(64)NULL" in workflow

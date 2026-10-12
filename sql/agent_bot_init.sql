@@ -229,16 +229,13 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_session (
   model VARCHAR(255) NOT NULL COMMENT '实际使用的模型标识',
   status VARCHAR(16) NOT NULL COMMENT '执行状态：运行中、完成、失败或取消',
   duration_ms BIGINT UNSIGNED NOT NULL COMMENT '执行耗时，单位毫秒',
-  usage JSON NOT NULL COMMENT '令牌用量统计',
+  `usage` JSON NOT NULL COMMENT '令牌用量统计',
   created_at DATETIME(6) NOT NULL COMMENT '创建时间，协调世界时',
   error_code VARCHAR(100) NULL COMMENT '稳定错误代码',
   prompt MEDIUMTEXT NOT NULL COMMENT '用户输入文本',
   content MEDIUMTEXT NOT NULL COMMENT '模型输出文本',
-  -- 主键定义记录身份，防止同一业务记录重复创建。
   PRIMARY KEY (execution_id),
-  -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
   KEY idx_session_created (session_id, created_at, execution_id),
-  -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
   KEY idx_created (created_at, execution_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='普通文本调用记录';
 
@@ -251,9 +248,9 @@ CREATE TABLE IF NOT EXISTS agent_bot_agent_run (
   entry VARCHAR(16) NOT NULL COMMENT '调用入口：管理端或机器人',
   model VARCHAR(255) NOT NULL COMMENT '实际使用的模型标识',
   backend VARCHAR(32) NOT NULL COMMENT '执行后端标识',
-  status VARCHAR(16) NOT NULL COMMENT '执行状态：运行中、完成、失败或取消',
+  `status` VARCHAR(16) NOT NULL COMMENT '执行状态：运行中、完成、失败或取消',
   duration_ms BIGINT UNSIGNED NOT NULL COMMENT '执行耗时，单位毫秒',
-  usage JSON NOT NULL COMMENT '令牌用量统计',
+  `usage` JSON NOT NULL COMMENT '令牌用量统计',
   created_at DATETIME(6) NOT NULL COMMENT '创建时间，协调世界时',
   error_code VARCHAR(100) NULL COMMENT '稳定错误代码',
   prompt MEDIUMTEXT NOT NULL COMMENT '用户输入文本',

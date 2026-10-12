@@ -17,20 +17,21 @@ Python 一经选中，失败不会自动改走 Java，也不会自动重发有�
 
 ## 安装与 SQL 顺序
 
-新实例仍先按 [README](../../README.md) 准备独立 MySQL、Redis、引导配置及管理员凭据。以下四份自有 SQL 均随 wheel 打包到 `agent_bot/resources/`，服务启动不会自动执行它们。
+新实例先按 [README](../../README.md) 准备独立 MySQL、Redis、引导配置及管理员凭据，再只执行统一初始化脚本。合并后的统一初始化、三份兼容分阶段脚本及注释增量脚本共五份 SQL 均随 wheel 打包到 `agent_bot/resources/`，服务启动不会自动执行它们。详细使用范围见 [SQL 使用说明](../../sql/README.md)。
 
-| 顺序 | 文件 | 用途 |
+| 场景 | 文件 | 用途 |
 | --- | --- | --- |
-| 1 | [agent_bot_ai_init.sql](../../sql/agent_bot_ai_init.sql) | 三张 Python AI 目录/记录表 |
-| 2 | [agent_bot_agent_init.sql](../../sql/agent_bot_agent_init.sql) | 七张 Agent、Skill、MCP 和运行记录表 |
-| 3 | [agent_bot_media_init.sql](../../sql/agent_bot_media_init.sql) | 三张模型媒体能力、文件元数据、媒体运行记录表 |
+| 新库 | [agent_bot_init.sql](../../sql/agent_bot_init.sql) | 一次创建全部 25 张表，无须再执行分阶段脚本 |
+| 旧库缺 AI 表 | [agent_bot_ai_init.sql](../../sql/legacy/agent_bot_ai_init.sql) | 三张 Python AI 目录/记录表 |
+| 旧库已有 AI、缺 Agent 表 | [agent_bot_agent_init.sql](../../sql/legacy/agent_bot_agent_init.sql) | 七张 Agent、Skill、MCP 和运行记录表 |
+| 旧库已有 AI/Agent、缺媒体表 | [agent_bot_media_init.sql](../../sql/legacy/agent_bot_media_init.sql) | 三张模型媒体能力、文件元数据、媒体运行记录表 |
 | 旧库按需 | [2026-10-12-agentbot-schema-comments.sql](../../sql/2026-10-12-agentbot-schema-comments.sql) | 为旧十张表补中文表/字段注释 |
 
 从 0.3.0 升级时保留已经安装的前两组表，新增媒体表；旧表补注释脚本可另外执行。首次建库的初始化脚本已经含中文注释，无须重复执行补注释脚本。补注释保留字段类型、默认值、可空性和键，未重声明主键或唯一键；执行前备份并评估 MySQL DDL 元数据锁。本次只做静态结构与注释校验，未执行真实 DDL。
 
-不要批量执行整个 `sql/` 目录：迁入的历史 `dispatch_chat_setting.sql` 含旧安装的删除表语句。
+不要批量执行 `sql/legacy/` 目录：归档的历史 `dispatch_chat_setting.sql` 含旧安装的删除表语句，部分迁移还会覆盖配置或处理历史数据。
 
-wheel 内资源可通过 `importlib.resources.files('agent_bot').joinpath('resources/agent_bot_media_init.sql')` 读取。安装 wheel 后界面资源已经包含在包内，不需要 Node.js；从源码构建时先执行前端构建。
+安装 wheel 后可通过 `importlib.resources.files('agent_bot').joinpath('resources/agent_bot_init.sql')` 读取统一安装脚本；媒体旧库升级仍可读取 `resources/agent_bot_media_init.sql`。从源码开发时直接使用仓库 `sql/` 文件。wheel 已包含界面资源，不需要 Node.js；从源码构建时先执行前端构建。
 
 ## 后端开关与启用步骤
 

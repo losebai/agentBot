@@ -13,3 +13,4 @@ dist/
 web/node_modules/
 src/agent_bot/static/
 *.log
+.idea

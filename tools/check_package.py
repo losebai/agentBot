@@ -1,0 +1,83 @@
+"""检查 wheel 包含所需模块及 SQL/UI 资源，不夹带凭据或运行数据。"""
+
+import argparse
+from pathlib import Path
+from zipfile import ZipFile
+
+
+def check(path: Path) -> None:
+    """只读取指定 wheel，不安装或启动服务，也不执行 SQL。"""
+    with ZipFile(path) as archive:
+        names = archive.namelist()
+        required = {
+            "agent_bot/__main__.py",
+            "agent_bot/application.py",
+            "agent_bot/ai/service.py",
+            "agent_bot/admin/streaming.py",
+            "agent_bot/resources/agent_bot_init.sql",
+            "agent_bot/resources/agent_bot_ai_init.sql",
+            "agent_bot/resources/agent_bot_agent_init.sql",
+            "agent_bot/resources/agent_bot_media_init.sql",
+            "agent_bot/resources/2026-10-12-agentbot-schema-comments.sql",
+            "agent_bot/media/service.py",
+            "agent_bot/media/store.py",
+            "agent_bot/admin/media_routes.py",
+            "agent_bot/agent/service.py",
+            "agent_bot/static/index.html",
+            "agent_bot/bot_cli.py",
+            "agent_bot/runtime_fields.py",
+            "agent_bot/resources/sdxl_lightning_4step_api.json",
+        }
+        missing = required - set(names)
+        if missing:
+            raise ValueError(f"wheel resources missing: {sorted(missing)}")
+        if any(name.startswith("dispatch_chat/") for name in names):
+            raise ValueError("wheel contains the retired dispatch_chat package")
+        if not any(
+            name.startswith("agent_bot/static/assets/") and name.endswith(".js") for name in names
+        ):
+            raise ValueError("wheel has no built browser application")
+        forbidden = {
+            ".env", ".venv", "__pycache__", "node_modules", ".idea", "AGENTS.md",
+            ".superpowers", "data", "logs", "tts", "qa-media", "qa-tts",
+        }
+        if any(
+            forbidden.intersection(Path(name).parts)
+            or Path(name).suffix.lower() in {".log", ".wav", ".pcm", ".sqlite", ".db"}
+            or Path(name).name.startswith(".env")
+            for name in names
+        ):
+            raise ValueError("wheel contains excluded local artifacts")
+        sql = archive.read("agent_bot/resources/agent_bot_init.sql").decode("utf-8")
+        import re
+
+        if re.search(r"\bDROP\b", sql, flags=re.IGNORECASE):
+            raise ValueError("initialization SQL contains destructive statements")
+        # 新库只使用统一建表脚本，禁止混入修改旧表或业务数据的历史迁移。
+        statements = re.sub(r"--[^\n]*|'(?:''|[^'])*'", "", sql)
+        if re.search(r"(?:^|;)\s*(ALTER|TRUNCATE|INSERT|UPDATE|DELETE)\b", statements, re.I):
+            raise ValueError("unified initialization SQL contains migration statements")
+        agent_sql = archive.read("agent_bot/resources/agent_bot_agent_init.sql").decode("utf-8")
+        if re.search(r"\bDROP\b", agent_sql, flags=re.IGNORECASE):
+            raise ValueError("agent initialization SQL contains destructive statements")
+        for name in ("agent_bot_media_init.sql", "2026-10-12-agentbot-schema-comments.sql"):
+            media_sql = archive.read(f"agent_bot/resources/{name}").decode("utf-8")
+            if re.search(r"\b(DROP|TRUNCATE|DELETE\s+FROM)\b", media_sql, flags=re.IGNORECASE):
+                raise ValueError("media SQL contains destructive statements")
+            if not re.search(r"COMMENT\s+'[^']*[\u4e00-\u9fff]", media_sql):
+                raise ValueError("media SQL has no Chinese comments")
+        print(
+            f"Wheel verified: {len(names)} entries, "
+            "unified agent_bot and runtime/UI resources present."
+        )
+
+
+def main() -> None:
+    """从命令行读取待检查产物路径。"""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("wheel", type=Path)
+    check(parser.parse_args().wheel)
+
+
+if __name__ == "__main__":
+    main()

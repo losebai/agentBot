@@ -1,0 +1,50 @@
+"""统一公开错误文案，不暴露凭据、请求体或供应商原始响应。"""
+
+from agent_bot.ai.errors import AiError
+
+
+def classify_api_error(error: AiError) -> tuple[int, str, str]:
+    """稳定中文错误文案不回显上游响应、文件路径或凭据。"""
+    messages = {
+        "MEDIA_NOT_INITIALIZED": "媒体数据表尚未初始化，请导入 agent_bot_init.sql 后重启服务",
+        "MEDIA_STORAGE_UNAVAILABLE": "媒体目录不可用，请修复后重启服务",
+        "MEDIA_REQUIRES_PYTHON": "请在机器人配置中将媒体后端设置为 python",
+        "MEDIA_NOT_READY": "媒体资源尚未就绪，请检查状态并重启服务",
+        "MEDIA_EXPIRED": "附件已过期",
+        "MEDIA_NOT_FOUND": "附件不存在或不可访问",
+        "MEDIA_TOO_LARGE": "媒体超过大小限制",
+        "MEDIA_TOO_MANY_IMAGES": "图片数量超过限制",
+        "MEDIA_INVALID_IMAGE": "图片格式无效、截断或与声明不符",
+        "MEDIA_ANIMATION_UNSUPPORTED": "暂不支持动画图片，请使用静态图片",
+        "MEDIA_BUSY": "媒体并发已满，请稍后再试",
+        "MEDIA_SAVE_FAILED": "上游已调用，但媒体保存失败，请检查存储状态",
+        "MEDIA_STORAGE_FULL": "媒体存储配额已满",
+        "MEDIA_VISION_UNSUPPORTED": "所选模型尚未启用图片理解能力",
+        "MEDIA_INPUT_ALREADY_USED": "此上传已用于另一次执行，请重新上传",
+        "MEDIA_CANCELLED": "媒体请求已取消",
+        "MEDIA_TIMEOUT": "媒体生成已超时",
+        "MEDIA_UPLOAD_TIMEOUT": "上传超时，请重新选择文件",
+        "MEDIA_INVALID_RESPONSE": "上游未返回有效的媒体结果",
+        "AI_NOT_INITIALIZED": "Python AI 数据表尚未初始化，请导入 agent_bot_init.sql",
+        "AI_CONFIG_CONFLICT": "配置已被修改或仍在启用，请重新加载后操作",
+        "AI_CONFIG_IN_USE": "供应商仍有关联模型，请先处理模型",
+        "AI_CREDENTIAL_MISSING": "供应商凭据引用不可用，请检查服务运行环境",
+        "AI_OPTION_UNSUPPORTED": "当前协议不支持已配置的采样参数",
+        "AI_TIMEOUT": "模型请求已超时",
+        "AGENT_NOT_INITIALIZED": "Agent 数据表尚未初始化，请导入 agent_bot_init.sql",
+        "AGENT_CONFIG_CONFLICT": "此配置已有更新，请保留草稿并重新加载后合并修改",
+        "AGENT_CONFIG_IN_USE": "配置仍被 Agent 引用，请先解除关联",
+        "AGENT_CONFIG_DISABLED": "Agent、Skill 或 MCP 配置已停用",
+        "AGENT_REQUIRES_PYTHON": "请在机器人配置中将 Agent 后端设置为 python",
+        "AGENT_TOOL_UNAUTHORIZED": "当前入口或 Agent 未授权这些工具",
+        "AGENT_TOOL_UNAVAILABLE": "预设工具不可用，请检查工具名称及 MCP 白名单",
+        "AGENT_SEARCH_UNAVAILABLE": "请配置已启用的 search 分类 MCP 服务",
+        "AGENT_SKILL_UNAVAILABLE": "关联 Skill 已停用或缺少已授权的工具依赖",
+        "AGENT_BUSY": "Agent 并发已满，请稍后再试",
+        "AGENT_CAPABILITY_NOT_MIGRATED": "此 Agent 要求尚未迁移的能力，请移除高级工具或使用 Java",
+    }
+    return (
+        error.status_code,
+        error.code,
+        messages.get(error.code, "AI 操作未完成，请检查配置或服务状态"),
+    )

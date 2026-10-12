@@ -1,0 +1,97 @@
+"""Authenticated AI directory and record operations against the current runtime."""
+
+from fastapi import APIRouter, Query
+
+from agent_bot.ai.contracts import (
+    ModelCreate,
+    ModelUpdate,
+    ModelView,
+    Page,
+    ProviderCreate,
+    ProviderUpdate,
+    ProviderView,
+    SessionDetail,
+    SessionSummary,
+    VersionDelete,
+)
+from agent_bot.ai.errors import AiError
+
+
+def install_ai_routes(router: APIRouter, runtime) -> None:
+    async def operate(action: str, *args, records: bool = False, **kwargs):
+        async with runtime.lease():
+            service = getattr(runtime, "ai_service", None)
+            if service is None:
+                raise AiError("AI_NOT_INITIALIZED", status_code=503)
+            result = await getattr(service.sessions if records else service.catalog, action)(
+                *args, **kwargs
+            )
+
+            def visible(item):
+                return item.model_copy(
+                    update={
+                        "credential_available": service.credential_available(item.credential_ref)
+                    }
+                )
+
+            if isinstance(result, ProviderView):
+                return visible(result)
+            if (
+                isinstance(result, Page)
+                and result.items
+                and isinstance(result.items[0], ProviderView)
+            ):
+                return result.model_copy(update={"items": [visible(item) for item in result.items]})
+            return result
+
+    @router.get("/ai/providers", response_model=Page[ProviderView])
+    async def providers(limit: int = Query(50, ge=1, le=100), cursor: str | None = None):
+        return await operate("list_providers", limit, cursor)
+
+    @router.post("/ai/providers", response_model=ProviderView, status_code=201)
+    async def create_provider(body: ProviderCreate):
+        return await operate("create_provider", body)
+
+    @router.patch("/ai/providers/{id}", response_model=ProviderView)
+    async def update_provider(id: int, body: ProviderUpdate):
+        return await operate("update_provider", id, body)
+
+    @router.delete("/ai/providers/{id}", status_code=204)
+    async def delete_provider(id: int, body: VersionDelete):
+        await operate("delete_provider", id, body.expected_revision)
+
+    @router.get("/ai/models", response_model=Page[ModelView])
+    async def models(limit: int = Query(50, ge=1, le=100), cursor: str | None = None):
+        return await operate("list_models", limit, cursor)
+
+    @router.post("/ai/models", response_model=ModelView, status_code=201)
+    async def create_model(body: ModelCreate):
+        return await operate("create_model", body)
+
+    @router.patch("/ai/models/{id}", response_model=ModelView)
+    async def update_model(id: int, body: ModelUpdate):
+        return await operate("update_model", id, body)
+
+    @router.delete("/ai/models/{id}", status_code=204)
+    async def delete_model(id: int, body: VersionDelete):
+        await operate("delete_model", id, body.expected_revision)
+
+    @router.get("/ai/sessions", response_model=Page[SessionSummary])
+    async def sessions(
+        session_id: str | None = Query(None, max_length=256),
+        status: str | None = None,
+        limit: int = Query(50, ge=1, le=100),
+        cursor: str | None = Query(None, max_length=512),
+    ):
+        return await operate(
+            "list_records",
+            records=True,
+            session_id=session_id,
+            status=status,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    @router.get("/ai/sessions/{execution_id}", response_model=SessionDetail)
+    async def record(execution_id: str):
+        return await operate("get_record", execution_id, records=True)

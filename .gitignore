@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage*
+coverage.xml
+*.egg-info/
+.env
+.env.*
+!/.env.example
+.superpowers/
+dist/
+web/node_modules/
+src/agent_bot/static/
+*.log

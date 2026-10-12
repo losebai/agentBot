@@ -1,0 +1,1233 @@
+{
+  "source_directory": "D:\\items\\web\\dispatch-sdk\\dispatch-chat",
+  "files": [
+    {
+      "source": "src/dispatch_chat/__init__.py",
+      "destination": "src/dispatch_chat/__init__.py",
+      "sha256": "cdda27f469cb71bc87b8c233c477cadf53945ecb4544151b628ff482d05c82b0",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/__main__.py",
+      "destination": "src/dispatch_chat/__main__.py",
+      "sha256": "97091dc600c3c477d956da1ddc8579e61606c1d01cccf956e85befa46faa927b",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/bootstrap.py",
+      "destination": "src/dispatch_chat/bootstrap.py",
+      "sha256": "510ae6f4275523ff29335620ec968590006d3652ab25dfc16756e47be9a70930",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/config.py",
+      "destination": "src/dispatch_chat/config.py",
+      "sha256": "3eab68cb3702b2eca3c2a9427f93e975f24364448268cac4cdf058dff2fc42b6",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/config_cli.py",
+      "destination": "src/dispatch_chat/config_cli.py",
+      "sha256": "d099447c9aad77ccda6c75429b417bc007c5b42c5d42be961ee3c260d8fa4b4d",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/content_classifier.py",
+      "destination": "src/dispatch_chat/content_classifier.py",
+      "sha256": "7d4321bcfc45bf60c234f1a93c6f25be0db0f39c9f372de8fdcbfa7b384f9b0e",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/database_errors.py",
+      "destination": "src/dispatch_chat/database_errors.py",
+      "sha256": "2c120c6a479f4855e311b20e4d2e41b08c70571b4643d3c9dcbe98206585f2ef",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/database_pool.py",
+      "destination": "src/dispatch_chat/database_pool.py",
+      "sha256": "521c4b600520ec0edb5f777e795e7771de4b6342fd4b3d32207a4631169f187c",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/group_context.py",
+      "destination": "src/dispatch_chat/group_context.py",
+      "sha256": "ba52ea6d76de353cbce3e4f6edf99f4b699a19b0eab3043510f1f79111b47e97",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/group_members.py",
+      "destination": "src/dispatch_chat/group_members.py",
+      "sha256": "cf8a6a0f439f7a4477733ca10b423cc00555930c5a1648056dc02e3981d00e7b",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/__init__.py",
+      "destination": "src/dispatch_chat/integrations/__init__.py",
+      "sha256": "cd76b4590c17a2c7d97279d7a083830a7b056d47a8e6163a4065575630ed4dd7",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/comfy.py",
+      "destination": "src/dispatch_chat/integrations/comfy.py",
+      "sha256": "e4aea50b2f8dfc2422df916201d1565395171d200487b756de684770b303b069",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/dispatch_ai.py",
+      "destination": "src/dispatch_chat/integrations/dispatch_ai.py",
+      "sha256": "cb0022b45d231934cd2bcd1d366443c6a52616324015cb8b32413a77464da281",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/gpt_sovits.py",
+      "destination": "src/dispatch_chat/integrations/gpt_sovits.py",
+      "sha256": "805eeef3e38bcf8e70721874159e5fc3df9c64627b0b86c5ff1643fcd3295a30",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/mcp.py",
+      "destination": "src/dispatch_chat/integrations/mcp.py",
+      "sha256": "7a4fd6b524feda6333f7eaf438198815f494549b7e0dda898819649cc133a932",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/naraka.py",
+      "destination": "src/dispatch_chat/integrations/naraka.py",
+      "sha256": "56523a886c8475d63e9c0935a26d67a390913e8b46889123bb9132e4cfdba58b",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/__init__.py",
+      "destination": "src/dispatch_chat/integrations/onebot/__init__.py",
+      "sha256": "a4563fb74d18dba56bde455fda80d1f97e3235c1318f544c28e2515e7a086034",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/ai_jobs.py",
+      "destination": "src/dispatch_chat/integrations/onebot/ai_jobs.py",
+      "sha256": "d78de2e4939ce2ee2a6b3416dce544a19796c53dc1a35820e67d1892bf8b0d38",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/auto_speak.py",
+      "destination": "src/dispatch_chat/integrations/onebot/auto_speak.py",
+      "sha256": "6e4cb2c629783bd1940e5116c70d9793a4632fda4c62bc5d12efcd50f2529155",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/auto_speak_trigger.py",
+      "destination": "src/dispatch_chat/integrations/onebot/auto_speak_trigger.py",
+      "sha256": "807b168067f273494de53a3990efdc436ed763d4ffd99e811b220ec6d152abf2",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/context.py",
+      "destination": "src/dispatch_chat/integrations/onebot/context.py",
+      "sha256": "09a0aa1f05d91fdff1f4fda0d8ab31ef4c0ab19d2193316bb80bafb01d56cbf7",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/conversation.py",
+      "destination": "src/dispatch_chat/integrations/onebot/conversation.py",
+      "sha256": "b16618bbf62418fd442ce0d7cfa501a74ff99b7f1fd1f5ce54775b8037697aa4",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/drawing.py",
+      "destination": "src/dispatch_chat/integrations/onebot/drawing.py",
+      "sha256": "4d42c03536a1b6224275d14ad866a20aa1dc66f2768b5ecbf3d4eec834c8594a",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/naraka_command.py",
+      "destination": "src/dispatch_chat/integrations/onebot/naraka_command.py",
+      "sha256": "44b7eeace496f198ec15d1978af54ab31a7bbc9bfe4dfab9629962768e89d767",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/queue_processor.py",
+      "destination": "src/dispatch_chat/integrations/onebot/queue_processor.py",
+      "sha256": "71923e98c40de6e5afc2d3be01215478c2058f2dd545aee289f55ed0de153411",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/replies.py",
+      "destination": "src/dispatch_chat/integrations/onebot/replies.py",
+      "sha256": "70a8e30e5336ba3f3dee3fd7b2b36ea6ec67981e168e78993ba0aec2a36848bc",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/routing.py",
+      "destination": "src/dispatch_chat/integrations/onebot/routing.py",
+      "sha256": "f1a50566013a6e35c86be91fe88e87297d63469602e3b7831c053ff96cd498ee",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/summary.py",
+      "destination": "src/dispatch_chat/integrations/onebot/summary.py",
+      "sha256": "85db72930db92e2ef4a035ff4a9ba75123ca5f30ca29ee90101e91b79aac1548",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/onebot/tooling.py",
+      "destination": "src/dispatch_chat/integrations/onebot/tooling.py",
+      "sha256": "0d584462db7cf4edee54bd623d82297bbf2b36d92fbaf6cdb4376ae29fc91442",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/redis_image_tasks.py",
+      "destination": "src/dispatch_chat/integrations/redis_image_tasks.py",
+      "sha256": "42c89ca629b7ce8e6261c6bdd906adc02a7f8e3f79dbc3d32502ecd0bdf35a5a",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/redis_queue.py",
+      "destination": "src/dispatch_chat/integrations/redis_queue.py",
+      "sha256": "e4ddfcb14008d4a7ac62a1553e70a1843c939b5284a24988871394555dcd1e58",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/tagged_memory_store.py",
+      "destination": "src/dispatch_chat/integrations/tagged_memory_store.py",
+      "sha256": "729dbc8309e709519e23f14ec45971fba0a9c56029bf1a7fbaff0ce44398dc2d",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/tool_operations.py",
+      "destination": "src/dispatch_chat/integrations/tool_operations.py",
+      "sha256": "646fc7a7ee3958250417cca3df5bab50daf1fc760e4f1252945d7dc23a4ffd4a",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/integrations/workflow_store.py",
+      "destination": "src/dispatch_chat/integrations/workflow_store.py",
+      "sha256": "784a5c6b828aab40cf69407edd9ad4dde0a24512c9bfce4b6b997f893eabd917",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/keyword_reply.py",
+      "destination": "src/dispatch_chat/keyword_reply.py",
+      "sha256": "7d205908c80c9b4b151cc25b9e2a01c760fbc5585fb90c440f22e8039ca7616b",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/media_artifacts.py",
+      "destination": "src/dispatch_chat/media_artifacts.py",
+      "sha256": "42105dfbc90ed54d9a4591eb7ce9f780bd7d3989ac21d336849e7918b1c15c4f",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/memory_store.py",
+      "destination": "src/dispatch_chat/memory_store.py",
+      "sha256": "551f9de36cba7bc388ac4a1690a8728c8da3bbe7b5603993473720f18f3f15b5",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/mentions.py",
+      "destination": "src/dispatch_chat/mentions.py",
+      "sha256": "1c16bb0b2503e701ecf660ff749f2a3e178834058ed17e69108ddb9318e71653",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/message_routing.py",
+      "destination": "src/dispatch_chat/message_routing.py",
+      "sha256": "91375dca78bfaaf8713e96d15fd119ff9415799a662c672913d93b1bc6a59af1",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/model_guard.py",
+      "destination": "src/dispatch_chat/model_guard.py",
+      "sha256": "1a2eeea25f8b3e1b318a8c19dd3ae6a0d2523260ab0aa01e4376f0ce638a7f8f",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/model_router.py",
+      "destination": "src/dispatch_chat/model_router.py",
+      "sha256": "cba81cff02bdb06f3e059af319eb442da1fcbc9ee8624017760e73902ed6da42",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/models.py",
+      "destination": "src/dispatch_chat/models.py",
+      "sha256": "46942a937c829034d112565f969e111bee8860191448e4fa6e19aad7e0cc3897",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/multimodal.py",
+      "destination": "src/dispatch_chat/multimodal.py",
+      "sha256": "5a99e88f63b82a08ae7e7396eaa8ebd635efea208bc09a2212fb440081952453",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/plugin/__init__.py",
+      "destination": "src/dispatch_chat/plugin/__init__.py",
+      "sha256": "a31aed6920139ba138783854973b2494cce67a9ef6e4e7c7a26179f2dd54bb24",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/plugin/application.py",
+      "destination": "src/dispatch_chat/plugin/application.py",
+      "sha256": "43c4eeee1f0657c44ff3845c2729504076dbf83b1180007bdba6f8a1e7529c7a",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/plugin/handlers.py",
+      "destination": "src/dispatch_chat/plugin/handlers.py",
+      "sha256": "48fa779eb7b77a4889d5e426b6e91a1a6c4b3d8013218c719c373e890aceb0e4",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/plugin/lifecycle.py",
+      "destination": "src/dispatch_chat/plugin/lifecycle.py",
+      "sha256": "58e375f65f5f622fcebc1a7221fc304991fb4d8c0346c7525fc99a643d6774c5",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/plugin/matchers.py",
+      "destination": "src/dispatch_chat/plugin/matchers.py",
+      "sha256": "f93ef47645becc1ba58bd5d1866e0c6701b8382df05b9ccf29691caab9b14906",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/plugin/runtime.py",
+      "destination": "src/dispatch_chat/plugin/runtime.py",
+      "sha256": "4053eeed698bb26ce96ac5471c4d87e2c6c6511811358f270b1d998cecd24eb2",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/quoted_summary.py",
+      "destination": "src/dispatch_chat/quoted_summary.py",
+      "sha256": "2964d04efcde8999eb163cb55743df33a74b03fb928176ad09abe104f97fc6b6",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/resources/sdxl_lightning_4step_api.json",
+      "destination": "src/dispatch_chat/resources/sdxl_lightning_4step_api.json",
+      "sha256": "a122a44e94bc459cf0e3f60d4678b746819e66d18f9be593fdbcc3eb75106365",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/runtime_reload.py",
+      "destination": "src/dispatch_chat/runtime_reload.py",
+      "sha256": "3977d1a652de6a7a76e6ce573246a0c7779d3ff9959809e2c3bc5df10b2770a1",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/__init__.py",
+      "destination": "src/dispatch_chat/services/__init__.py",
+      "sha256": "87945f4799a3e38433488f9b534ed5227a27bd371376f97d29a8361dd0a4095e",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/auto_speak_decision.py",
+      "destination": "src/dispatch_chat/services/auto_speak_decision.py",
+      "sha256": "3f2272476774da0e9dbefdac51e919fc90b3c44107536f39e4aed5e2bb6509d5",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/__init__.py",
+      "destination": "src/dispatch_chat/services/chat/__init__.py",
+      "sha256": "ad4696baadadd58f55603ec1e0958e72d113a39e63bb97682bbe7eaf46b6738a",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/compression_queue.py",
+      "destination": "src/dispatch_chat/services/chat/compression_queue.py",
+      "sha256": "643c22aa969334e0e9be9ef3b185e085f32d51c9e842e403cf8c50862b017d89",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/contracts.py",
+      "destination": "src/dispatch_chat/services/chat/contracts.py",
+      "sha256": "e35e0b9592c183a0de007e208392702c00200bb94f839f1f2bde866d6e03e0b6",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/errors.py",
+      "destination": "src/dispatch_chat/services/chat/errors.py",
+      "sha256": "1d16c73760a3713edc5297de3b152bf9f3fc9d1bd17902eb890f4f9d5d4edf27",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/media.py",
+      "destination": "src/dispatch_chat/services/chat/media.py",
+      "sha256": "55946cbf3ec04d52736a4e4aec16a1161d417017e7db687aa11d837385e85eb0",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/memory.py",
+      "destination": "src/dispatch_chat/services/chat/memory.py",
+      "sha256": "499f09e06477b78069ce624a9942e10b4679376816fea13b44a1c9911928125c",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/prompting.py",
+      "destination": "src/dispatch_chat/services/chat/prompting.py",
+      "sha256": "8fba46212db748221d8d9f0aca9655d65b8f07934d7f739291de426918a85178",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/request_control.py",
+      "destination": "src/dispatch_chat/services/chat/request_control.py",
+      "sha256": "65c25691bcb5adacfbccb9e4fd5e52ab0af531ac689b58baae4e3e46a6a74925",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/routing.py",
+      "destination": "src/dispatch_chat/services/chat/routing.py",
+      "sha256": "e37f2eff8dd8c13be44b1296970b0b42a35ae20f3f5cbcc182095dc60042d58d",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat/service.py",
+      "destination": "src/dispatch_chat/services/chat/service.py",
+      "sha256": "f2f57f2255b61e65fecfc4bb9e7f1ba8b433c86dc1d2f9a7284e76eccd6ac129",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat_reply.py",
+      "destination": "src/dispatch_chat/services/chat_reply.py",
+      "sha256": "41231b2efa951a6f8225c9d939f44cff83b6287f1ea62e52aaef53e5f03b2463",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/chat_tools.py",
+      "destination": "src/dispatch_chat/services/chat_tools.py",
+      "sha256": "32b0d300efd75b1cc91d7aad79fc6cac1d7b653defd78476b86a6b1eb8ca8a28",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/conversation_queue.py",
+      "destination": "src/dispatch_chat/services/conversation_queue.py",
+      "sha256": "1babd767d81f63a50c21e48e43fd3af740f5f3637662686d8ab83f5bbe1b762b",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/image_task_context.py",
+      "destination": "src/dispatch_chat/services/image_task_context.py",
+      "sha256": "c8e11978a696934fd3ea253a94324baed51894fc7706e28fcecc4cceb843ac35",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/image_tasks.py",
+      "destination": "src/dispatch_chat/services/image_tasks.py",
+      "sha256": "90745bc5cc35ec128c63187754fbaa78e1c4d2c8da16b095be9967515ea47b01",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/naraka.py",
+      "destination": "src/dispatch_chat/services/naraka.py",
+      "sha256": "131bea9959057e30c81764f95cc9cf38bc408e10f4e71d71aa5d7e498bc229e8",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/naraka_formatting.py",
+      "destination": "src/dispatch_chat/services/naraka_formatting.py",
+      "sha256": "76371e4708b36065f526c7947cc5f40dc73ade9e4539a1df086c2105693e97b3",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/replies.py",
+      "destination": "src/dispatch_chat/services/replies.py",
+      "sha256": "69959180fdd835ee363e5285ad6a9f52c5e6b387b81fea258291763ba13f652c",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/request_deadline.py",
+      "destination": "src/dispatch_chat/services/request_deadline.py",
+      "sha256": "3e4437e1424a43fd179c7c920373d12a04683b202cea7ab8a77d29f213c51b95",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/tagged_memory.py",
+      "destination": "src/dispatch_chat/services/tagged_memory.py",
+      "sha256": "372cb3662bcc618c36d7eecb309189f4d444ae0c272f99234121c791177d0273",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/tool_images.py",
+      "destination": "src/dispatch_chat/services/tool_images.py",
+      "sha256": "905232a15be293013cf6b4539da2aa467677d8a6a5ac3437a904e19bd17c4490",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/tool_operations.py",
+      "destination": "src/dispatch_chat/services/tool_operations.py",
+      "sha256": "150dd7d943bfc97de95c753e3e90db8c951b4e05e68847e6bb93b69bf2dc0f9a",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/tool_sessions.py",
+      "destination": "src/dispatch_chat/services/tool_sessions.py",
+      "sha256": "de74255ef3969687b8a4f0014d5ef175c3001dfaa66fd2707dd9493ae5099578",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/workflow_execution.py",
+      "destination": "src/dispatch_chat/services/workflow_execution.py",
+      "sha256": "190d171fb07ee85bd3de341892c25dd800777f297425b310143558a8775e53b2",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/workflow_inputs.py",
+      "destination": "src/dispatch_chat/services/workflow_inputs.py",
+      "sha256": "4d1346befe769b3c9b43f2b93e3d5f8e3c9c7f4c3bfc4967e9d02af1e017d968",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/services/workflows.py",
+      "destination": "src/dispatch_chat/services/workflows.py",
+      "sha256": "87f1601ad693db5b4291bbff29ddc0e10442fc9b4c747bad06c5307c7227f196",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/settings.py",
+      "destination": "src/dispatch_chat/settings.py",
+      "sha256": "adae57035b58690e79fde63036c18046eb061671ba03575cad6b6342dd45d38a",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/state.py",
+      "destination": "src/dispatch_chat/state.py",
+      "sha256": "cd9350a451ea5084965101a1e1365ec85f9bbecc3cd1322b940da4f37cc599e2",
+      "purpose": "src"
+    },
+    {
+      "source": "src/dispatch_chat/workflow_cli.py",
+      "destination": "src/dispatch_chat/workflow_cli.py",
+      "sha256": "b1ef014b3482302648e120032d388cbaa4412433a8e3f424d3733889d9d7160d",
+      "purpose": "src"
+    },
+    {
+      "source": "tests/_fake_mysql.py",
+      "destination": "tests/_fake_mysql.py",
+      "sha256": "5cd0b25da4e5f978c728fd09b762d69851306e067bcd709ea5707b4408546c0d",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/conftest.py",
+      "destination": "tests/conftest.py",
+      "sha256": "6e95a02b40f4fbe0b29f06c45e91364bd581ec5230d46432c8d284b32c77dae8",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/fixtures/qwen_i2i_api.json",
+      "destination": "tests/fixtures/qwen_i2i_api.json",
+      "sha256": "842a26569a76b98616a05d87ce806cc4562006343383ccb88b6ca26d9ce69351",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/integration/test_auto_speak_plugin.py",
+      "destination": "tests/integration/test_auto_speak_plugin.py",
+      "sha256": "4a396c317c62cf2d52caab4da1e177aefdec28e0960f6886bc59767d35926df3",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/integration/test_chat_mcp_plugin.py",
+      "destination": "tests/integration/test_chat_mcp_plugin.py",
+      "sha256": "deafc7ff38ab5b07cb7a899321df8e309ef8c61f7774c7c357696666984b8bb7",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/integration/test_database_bootstrap.py",
+      "destination": "tests/integration/test_database_bootstrap.py",
+      "sha256": "b0db4178523edf47884382f6cd9b132aee9eb787f4c05beefbb5759035d20760",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/integration/test_plugin.py",
+      "destination": "tests/integration/test_plugin.py",
+      "sha256": "cc13338d75e9224f4430a92ec09d0be9dbe7e2d259134037fb4b6223a350261f",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/chat/test_chat_agent_service.py",
+      "destination": "tests/unit/chat/test_chat_agent_service.py",
+      "sha256": "186aaacc23a535d7caec3b7c39199d84075a46e0f26333372fcedb79685d36f9",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/chat/test_service.py",
+      "destination": "tests/unit/chat/test_service.py",
+      "sha256": "2077e6e76f9966923aace7e81f6b007b32024592192c62d9e01fa5991cb0b7a8",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_ai_jobs.py",
+      "destination": "tests/unit/test_ai_jobs.py",
+      "sha256": "f5a847a9ec36d5f67f4ab114eb48291329c7d4eb82d4678d70fdd3caa48649e4",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_auto_speak.py",
+      "destination": "tests/unit/test_auto_speak.py",
+      "sha256": "f04c6164fb21c5993adeaf2814fd890e11c0996a8a9fc615d11510874341d462",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_auto_speak_decision.py",
+      "destination": "tests/unit/test_auto_speak_decision.py",
+      "sha256": "ba378ebedc0a8ffd1cf643505fdd6e86923e98b7888e29a5a3a0e52cfd50b04f",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_auto_speak_decision_client.py",
+      "destination": "tests/unit/test_auto_speak_decision_client.py",
+      "sha256": "5ac278e94ae383981a17fe9e553872aeae9b11fbb1f74f7cf651c0ceb84f224d",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_auto_speak_trigger.py",
+      "destination": "tests/unit/test_auto_speak_trigger.py",
+      "sha256": "30e8dead31955229a2e8a64406fb38ecc8401c4464fdb4db52b616acdc34b38d",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_background_drawing.py",
+      "destination": "tests/unit/test_background_drawing.py",
+      "sha256": "b244d4e3314ba865e150569e3c0c6407d8f71bcdaa33a82f2cb5b10a3bd07acf",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_bootstrap.py",
+      "destination": "tests/unit/test_bootstrap.py",
+      "sha256": "806e6e8e6c122d6b95d20e2909012cbe4d2f39e4c0167c462438063c790481cf",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_chat_agent_client.py",
+      "destination": "tests/unit/test_chat_agent_client.py",
+      "sha256": "a684d813f3cd5c06187de551dddc0663f4ee6c3596330d8efe689a7d7deaf627",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_chat_pipeline.py",
+      "destination": "tests/unit/test_chat_pipeline.py",
+      "sha256": "69350b59eb00fd77b87062de69a7298e977d98f4acd222cb8cbdc725adcf9e8e",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_chat_tools.py",
+      "destination": "tests/unit/test_chat_tools.py",
+      "sha256": "2a53f620c78f6a2e393abdc1c9287fc03319437fb2e701402acf169a763e7d24",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_client.py",
+      "destination": "tests/unit/test_client.py",
+      "sha256": "8833c58af739ab63d735549ad2188dc4cfbb3391acefad3ceca484e61075202d",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_comfy.py",
+      "destination": "tests/unit/test_comfy.py",
+      "sha256": "b2b7210b3fe7b52f1c69874ad8eb2218b735e14bdb15553d07c8c13c9d3ee9c8",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_comfy_cancellation.py",
+      "destination": "tests/unit/test_comfy_cancellation.py",
+      "sha256": "84d27b2e0a7063093bdaa66055e20ee049a58191426dd8fe7b2321ef4727894d",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_comfy_upload.py",
+      "destination": "tests/unit/test_comfy_upload.py",
+      "sha256": "29cf5bb8170f33666212e563642002d358ac42ee40e7bd5b40b216beba1ce196",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_config.py",
+      "destination": "tests/unit/test_config.py",
+      "sha256": "7a54bcb14e573ffb64ecf80cf2d1e7db60b81adf0e6dec2a957c609f287a47d2",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_config_cli.py",
+      "destination": "tests/unit/test_config_cli.py",
+      "sha256": "222eeda397b195f61c9cc0dce34095aeda8733e1dd248ab825997a3f11c0b3c5",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_content_classifier.py",
+      "destination": "tests/unit/test_content_classifier.py",
+      "sha256": "8debb239a97f37bafab8b855e957baba261967f21b039fc47d4a30f50693e7c2",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_conversation_processor.py",
+      "destination": "tests/unit/test_conversation_processor.py",
+      "sha256": "e737761f034f66ed160fa2c9d6a571bd4d39c4254ccfe15eff885095b4f0d1e5",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_conversation_queue.py",
+      "destination": "tests/unit/test_conversation_queue.py",
+      "sha256": "d09c6f1ca2fc33ae081cc52a35efafb34a52b18c80ce5718dce69197e1ff3a81",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_database_pool.py",
+      "destination": "tests/unit/test_database_pool.py",
+      "sha256": "eb60f4dd6cd59f1b8d17f25eb09b86703df322f45f3e3fcf6c28334162f35bcb",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_drawing_command.py",
+      "destination": "tests/unit/test_drawing_command.py",
+      "sha256": "35af5b57595a1705b666496790ec137684faa9828ad10ef5997c5f83bd570639",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_drawing_prompt_contract.py",
+      "destination": "tests/unit/test_drawing_prompt_contract.py",
+      "sha256": "280a00c874abb5e7b1401da89a97ae9fa140d920b16593028f03dd6ae0682cde",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_fixed_reference_workflow.py",
+      "destination": "tests/unit/test_fixed_reference_workflow.py",
+      "sha256": "b5b4ca8f2caf6fc557364f5e05fcb4f8946bcd6fe5344c4152b51ba53ca26305",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_gpt_sovits.py",
+      "destination": "tests/unit/test_gpt_sovits.py",
+      "sha256": "22fec997f74c5057c61bb3dd7e0145713fba340bec9a5a84a8b12ccdca8c6567",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_group_context.py",
+      "destination": "tests/unit/test_group_context.py",
+      "sha256": "746ef21c568894b16afd8e915f9c35881549d672ba4a41afef4e694d997d3102",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_group_members.py",
+      "destination": "tests/unit/test_group_members.py",
+      "sha256": "56099561d57fded46b14ca8f65c67bb4c482022deddf5c1e5fab1b19f41409bf",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_i2i_tools.py",
+      "destination": "tests/unit/test_i2i_tools.py",
+      "sha256": "06da04fe751f9e542caa08da208448d0dbe8c31ec708926303d6619e0fbeec9e",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_image_task_tools.py",
+      "destination": "tests/unit/test_image_task_tools.py",
+      "sha256": "0ecd8b669271612bfdbe7dc0a788f3cbe0c5a11c49f53eb722821c5ad60615cb",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_image_tasks.py",
+      "destination": "tests/unit/test_image_tasks.py",
+      "sha256": "1b719e7d3ae6c045804694ee4a4a01f93573c84c8dc0947fb53b2603b95504ef",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_keyword_reply.py",
+      "destination": "tests/unit/test_keyword_reply.py",
+      "sha256": "d3283868dcf91f62ba07dcc3f154b133272c3605397948e09cc5338e2dace6af",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_laya.py",
+      "destination": "tests/unit/test_laya.py",
+      "sha256": "fb7fcb70adaec10d2ff5473d2c1fe1b1c8c6b40af8635c7444ec70aaebce51ac",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_laya_command.py",
+      "destination": "tests/unit/test_laya_command.py",
+      "sha256": "3127f8ce462b5c91f3004af4fce32a0b2ca746bfc2ae5bde3c28285225af95fa",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_main.py",
+      "destination": "tests/unit/test_main.py",
+      "sha256": "f72ebe4fae96bacad71073bbe7fba8a4ebccbf04f058992700c1b8b98039ec9f",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_mcp_config.py",
+      "destination": "tests/unit/test_mcp_config.py",
+      "sha256": "573068edc1167bad10d9b27e54ba88c34e1e7a0c431df35b64a3dee82b9df0b3",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_mcp_server.py",
+      "destination": "tests/unit/test_mcp_server.py",
+      "sha256": "124be13e43166aa169e395e2e43db47f3e61635d3d3f1e4808a472ee6aa8fd83",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_memory_store.py",
+      "destination": "tests/unit/test_memory_store.py",
+      "sha256": "3864c130080adbb31d7f9cb0ba848fedb585b37975bd2eec93507e4b84a6b5b0",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_mentions.py",
+      "destination": "tests/unit/test_mentions.py",
+      "sha256": "423c0f8a4ce19e7dfefd22c59b0c1ede15e554c00d9f562dee30296cf2a5e918",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_message_routing.py",
+      "destination": "tests/unit/test_message_routing.py",
+      "sha256": "e9fcdd78d9725b0e7cfc45c4b73e20152a682962535bcf75e86149b92c57c9ea",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_model_guard.py",
+      "destination": "tests/unit/test_model_guard.py",
+      "sha256": "5e4c0668a860c949d4b495a86d2f00b141e8c92d9a5b3f185a79ee227141a65e",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_model_router.py",
+      "destination": "tests/unit/test_model_router.py",
+      "sha256": "0469818bbccf61b0c78d80edd21c342c70dfcf9b708888b968cb763f723d7224",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_models.py",
+      "destination": "tests/unit/test_models.py",
+      "sha256": "e24286006958f3cae360c8e9507670e4a886c00881c536d4690733d1280a892f",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_multimodal.py",
+      "destination": "tests/unit/test_multimodal.py",
+      "sha256": "066650ffa28d7127946d275c6d0e76383ecf018c6c2985588308cf43f39e2c89",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_naraka.py",
+      "destination": "tests/unit/test_naraka.py",
+      "sha256": "2fe31a5b18713fcc5aa4c870bdff6ac42bccda3c04e6a9c200519735102455ff",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_onebot_replies.py",
+      "destination": "tests/unit/test_onebot_replies.py",
+      "sha256": "a6e2e5ff27161a16903f99b7560a320439e140686f7fe9f4b41c759292fad221",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_package_boundaries.py",
+      "destination": "tests/unit/test_package_boundaries.py",
+      "sha256": "852001c092dca0c5241bc47ba88e0103ddb0aba0ae25d1bd599b6537b554cace",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_proactive_replies.py",
+      "destination": "tests/unit/test_proactive_replies.py",
+      "sha256": "c26f4bf924838630a2ef1ab422416489c713d0cbf66257d0f7c79b80fb2d6ae7",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_quoted_summary.py",
+      "destination": "tests/unit/test_quoted_summary.py",
+      "sha256": "445632ff105e864e3428bf006b1a8ef0c912d0f3032081c72237c75e5d77c0cd",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_replies.py",
+      "destination": "tests/unit/test_replies.py",
+      "sha256": "c720e1bdb3fd11c710c3533538982e84e5ff2e46363eb00f086e66943be4c9f9",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_reply_boundaries.py",
+      "destination": "tests/unit/test_reply_boundaries.py",
+      "sha256": "78d75fdc58afdb5e4a4243adc0f253234446407b4bd23a6eea584eff25736afe",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_reply_tools.py",
+      "destination": "tests/unit/test_reply_tools.py",
+      "sha256": "5ef6a674a4212ee076eb6cb91729325908d53ae0d677609f9fcc392b85cd3fad",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_request_deadline.py",
+      "destination": "tests/unit/test_request_deadline.py",
+      "sha256": "9dc36f994094464abe0e9e33d7f60d74c3d9da0357050fc176ec3063c0bc72c3",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_runtime_reload.py",
+      "destination": "tests/unit/test_runtime_reload.py",
+      "sha256": "dfaae34342de555e52f84190f5ebdf73d51dcdaf41e69e63f5f83f8f4ecb2c9d",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_settings.py",
+      "destination": "tests/unit/test_settings.py",
+      "sha256": "ec13674ce871c83dc67a1488b5bfc0a804110bca63577b5500dafbcb2a52ff30",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_soloncode.py",
+      "destination": "tests/unit/test_soloncode.py",
+      "sha256": "5073cf4a72aee1c3e24f07e64e4516a5a11773082931779fba251f5d7ffb6930",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_state.py",
+      "destination": "tests/unit/test_state.py",
+      "sha256": "2068dbf2173ee1dff94802df92982afd0f9c04526fdb0a45738cd612b3220fb7",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_tagged_memory.py",
+      "destination": "tests/unit/test_tagged_memory.py",
+      "sha256": "4e45fd8458ffbc3938128c17ff0ee3c79ee1ba2ec991321fcdd4ef7b8d2a67cc",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_tool_images.py",
+      "destination": "tests/unit/test_tool_images.py",
+      "sha256": "3f776120041092baa1d32c3ba6ebcc1b819920ac824bc07315fe3af95e7d237b",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_tool_operation_integration.py",
+      "destination": "tests/unit/test_tool_operation_integration.py",
+      "sha256": "96991c02605312447d640410b7bd7957020eab2ad89c68f88033511b29cde7d0",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_tool_operations.py",
+      "destination": "tests/unit/test_tool_operations.py",
+      "sha256": "99503b16f26e0e658e15d6506e99d36806e8f039b137e3c333e290ec0e8da1a3",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_tool_sessions.py",
+      "destination": "tests/unit/test_tool_sessions.py",
+      "sha256": "1471ca107dbb8a7bbf188fde1ad13c9c421e7bfdf2ce4705c4a565d4f2cc6e8b",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_tooling.py",
+      "destination": "tests/unit/test_tooling.py",
+      "sha256": "65e46f80b5007baa74366d353ff67484a3eb9589dae71da941be297b0fa423be",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_workflow_cli.py",
+      "destination": "tests/unit/test_workflow_cli.py",
+      "sha256": "70ea591494dfeda6eea785248ed8c1e693b00a9c1cd1c1ad757af8b8b015349b",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_workflow_execution.py",
+      "destination": "tests/unit/test_workflow_execution.py",
+      "sha256": "d33168ef143c8680a8928b257de297f97d668035bb741d813e62ac73f5be40d9",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_workflow_inputs.py",
+      "destination": "tests/unit/test_workflow_inputs.py",
+      "sha256": "08f13c7b9fde11b81d46c4ebb24d6e23f3d8436564d9efea25f1dc3533963bbc",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_workflow_store.py",
+      "destination": "tests/unit/test_workflow_store.py",
+      "sha256": "ea9a0032fe49900157aa0ce27210a43e7637ff2c0f4f1f52cb6b712103ac050e",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/test_workflows.py",
+      "destination": "tests/unit/test_workflows.py",
+      "sha256": "082a6f013567065ba691bb1fabae4517adf625924fc46f06e5428d4dc424b6a5",
+      "purpose": "tests"
+    },
+    {
+      "source": "tests/unit/workflow_fakes.py",
+      "destination": "tests/unit/workflow_fakes.py",
+      "sha256": "901e6bab35b68ebf135c51bd8380df552775437708150a3911b1f18033bd5e8a",
+      "purpose": "tests"
+    },
+    {
+      "source": "sql/2026-09-03-chat-comfy-timeouts-5m.sql",
+      "destination": "sql/2026-09-03-chat-comfy-timeouts-5m.sql",
+      "sha256": "370523cbb55faeab65c52d47e6c6d0015ebc9504d81cedc7efda17e28557a5d6",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/2026-09-03-dispatch-chat-workflow.sql",
+      "destination": "sql/2026-09-03-dispatch-chat-workflow.sql",
+      "sha256": "6bd3b710d484752470b332a36ed7b5c3ac3b1dff6c30b58f1cbe671939b43f36",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/2026-09-03-local-workflow-settings.sql",
+      "destination": "sql/2026-09-03-local-workflow-settings.sql",
+      "sha256": "dc10e1879901973c0c26092bfddee019a6e127b4bca329fe000bb5f888e1385b",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/2026-09-22-tagged-memory.sql",
+      "destination": "sql/2026-09-22-tagged-memory.sql",
+      "sha256": "6427116bddfb148ac4a82f6d985b92b37f7adb33e01a419ff5b7564b7eb08b5b",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/2026-09-22-workflow-image-input.sql",
+      "destination": "sql/2026-09-22-workflow-image-input.sql",
+      "sha256": "4ed17adbeeeada30f3de4b8c38917c541c9dab88b9d71c16470f0aa8a9db7f1b",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/2026-09-28-tagged-memory-soft-delete.sql",
+      "destination": "sql/2026-09-28-tagged-memory-soft-delete.sql",
+      "sha256": "aae1c7e6bca33e128295fc95bce6f4829d1c03f2b4f0b9e7050155c734f70d1a",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/2026-09-29-auto-speak-trigger-mode.sql",
+      "destination": "sql/2026-09-29-auto-speak-trigger-mode.sql",
+      "sha256": "d605d3faa57151930eeb8ecefa3a94b4d845dc6ba24a6438f8de8c483768aae8",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/2026-09-30-auto-speak-laya-prompt.sql",
+      "destination": "sql/2026-09-30-auto-speak-laya-prompt.sql",
+      "sha256": "6003ff226a45d7507b2c1f222dff376b8fac01240827a765f276168182b24eee",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/2026-10-02-local-workflow-timeout-500s.sql",
+      "destination": "sql/2026-10-02-local-workflow-timeout-500s.sql",
+      "sha256": "49f3e4f46e795b76984c410d0b36b87593e7a57a2978a38c1d51551e2a13c3be",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_content_model_settings.sql",
+      "destination": "sql/dispatch_chat_content_model_settings.sql",
+      "sha256": "3034df05a8071c6aeb61ba1a076763f15ec9d2c23e6c46458e1b44181b3e07e8",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_group_member.sql",
+      "destination": "sql/dispatch_chat_group_member.sql",
+      "sha256": "c0d1ce66f50e393bec9eea30cb9746ffe9a10d77dfcc028aafacd3306bd3b44b",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_group_recent_context_settings.sql",
+      "destination": "sql/dispatch_chat_group_recent_context_settings.sql",
+      "sha256": "63467524188d8a991e8b4c57006f65b1296b0b4ec471ff7d9d0b27a3d4a094f2",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_image_generation_settings.sql",
+      "destination": "sql/dispatch_chat_image_generation_settings.sql",
+      "sha256": "1b9bd075b7f84927f773f680f01e075b0b67134f32598d556a10298db1914ed2",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_memory.sql",
+      "destination": "sql/dispatch_chat_memory.sql",
+      "sha256": "e58324fd2e7b1675d898fd3dbebfff35efea8491432fb3dde3260a3a0a4968c9",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_memory_generation.sql",
+      "destination": "sql/dispatch_chat_memory_generation.sql",
+      "sha256": "1a82e067b13668a116c85e90f1f127e1afe664da768c834f1eb16821d3bc218a",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_memory_request_id.sql",
+      "destination": "sql/dispatch_chat_memory_request_id.sql",
+      "sha256": "49c599cc13ff9d863f38f973c4885c55d127452efb80ed5b44eb86d4855671c8",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_pipeline_settings.sql",
+      "destination": "sql/dispatch_chat_pipeline_settings.sql",
+      "sha256": "43acee03fba2a04a755124133e4075c6ac3909e69417d3f29f0af790fcd5a931",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_queue_settings.sql",
+      "destination": "sql/dispatch_chat_queue_settings.sql",
+      "sha256": "716bf242ff2efc81494de01b28b2dbfef0849de54e253c4de14da06f4271c7e9",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_setting.sql",
+      "destination": "sql/dispatch_chat_setting.sql",
+      "sha256": "401f5cc5a004c57880a8123ec6bbf5662ed2cfa76f9f436efc4c808f8321bfab",
+      "purpose": "sql"
+    },
+    {
+      "source": "sql/dispatch_chat_tts_settings.sql",
+      "destination": "sql/dispatch_chat_tts_settings.sql",
+      "sha256": "73189b84ab6bcfae450524090feddec97f6191de0642343a1102d447a9c3ad5d",
+      "purpose": "sql"
+    }
+  ],
+  "excluded_tests": [
+    "test_deployment_config.py",
+    "test_gitlab_ci.py"
+  ],
+  "exclusion_reason": "Old repository GitLab/Helm deployment configuration is not migrated.",
+  "source_commit": "da11607",
+  "source_state": "User working tree, including existing local changes; original files not modified.",
+  "adaptations": [
+    {
+      "destination": "src/dispatch_chat/plugin/application.py",
+      "original_sha256": "43c4eeee1f0657c44ff3845c2729504076dbf83b1180007bdba6f8a1e7529c7a",
+      "migrated_sha256": "5684867cf9795f7dce98394016d3aaa83effbe388be2106f063a6ca9d2f9129e",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。",
+      "phase_three_migrated_sha256": "e34fe8a36af6d8bcb13170ae0b1beb4736481bc2d5db42afbb1f79ffdac3cac5"
+    },
+    {
+      "destination": "src/dispatch_chat/plugin/runtime.py",
+      "original_sha256": "4053eeed698bb26ce96ac5471c4d87e2c6c6511811358f270b1d998cecd24eb2",
+      "migrated_sha256": "dbac9871d04ffb44a16fabf79290c44b8d0f1d25e2842475207514865f508a70",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。",
+      "phase_one_migrated_sha256": "95ac98f1b0c4c7b4ccafba141ce4cad606dd9db264e92930f8b6596447c36947",
+      "phase_three_migrated_sha256": "cea83b59e2fdb29855d3089fd4540d17f44ad1552ad4569641d49c98c623f6e3"
+    },
+    {
+      "destination": "src/dispatch_chat/services/conversation_queue.py",
+      "original_sha256": "1babd767d81f63a50c21e48e43fd3af740f5f3637662686d8ab83f5bbe1b762b",
+      "migrated_sha256": "570a152a0778336033e97ba408d6cc9ddc4ad0cd959aa041f265b630170f46e2",
+      "reason": "Management runtime observations or side-effect-free restart field import."
+    },
+    {
+      "source": "D:\\items\\web\\bai-web\\src\\components\\markdown\\MarkdownRenderer.tsx",
+      "destination": "web/src/components/MarkdownRenderer.tsx",
+      "original_sha256": "217c7c8d5ee00e95d7239c6182ee99cbbd5270c351b7f7e4b57a0dcc3d4c0b44",
+      "migrated_sha256": "4967317fe096a944cb5b6fb184e062dac4c391f1cea107662b22e1ac3eaf7874",
+      "reason": "Retain GFM/link/image rendering; add explicit prop type and lazy images."
+    },
+    {
+      "source": "D:\\items\\web\\bai-web\\src\\services\\ai\\types.ts",
+      "destination": "web/src/types.ts",
+      "original_sha256": "46177db00ce72df02ab9690d311772bbd32d304162abc46ee3e0f8d3c486cb6f",
+      "migrated_sha256": "508f874443c11fe12c462f3d111726e7d1afaf1e32cda8b23b88243041c5530a",
+      "reason": "第四阶段 A：沿用旧消息契约，增加管理媒体能力与附件类型。",
+      "phase_one_migrated_sha256": "aec19b122975ad656cb81c58f1681e800607870bc261999256195aaea41444c5",
+      "phase_three_migrated_sha256": "da53c47663636fb868bf59f0a8d52b987683a5ec3b940889651d9bfb56ed6a75"
+    },
+    {
+      "destination": "src/dispatch_chat/config.py",
+      "original_sha256": "3eab68cb3702b2eca3c2a9427f93e975f24364448268cac4cdf058dff2fc42b6",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。",
+      "migrated_sha256": "a5ad16f76473b008240ce8c7f682038ad24dd283da49a7e54bce80e3e0fb9a04",
+      "phase_three_migrated_sha256": "42d47f8934ed09ba367014f11c61b4ea44d10d78c7cb5f4462592707d654f2e2"
+    },
+    {
+      "destination": "src/dispatch_chat/model_guard.py",
+      "original_sha256": "1a2eeea25f8b3e1b318a8c19dd3ae6a0d2523260ab0aa01e4376f0ce638a7f8f",
+      "reason": "Phase two: explicit Python ordinary AI routing or preserved regression fixture adaptation.",
+      "migrated_sha256": "c1dbf8e85315a5f530995202e742f2da18e27efe5379ff475c1344cdf01e5a30"
+    },
+    {
+      "destination": "src/dispatch_chat/services/chat/service.py",
+      "original_sha256": "f2f57f2255b61e65fecfc4bb9e7f1ba8b433c86dc1d2f9a7284e76eccd6ac129",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。",
+      "migrated_sha256": "459d275de7538d459086ca06553da7ac7ed9634a381a97898b2fc41c5de2e869",
+      "phase_three_migrated_sha256": "9f3f79fbbd78d7f4eebe111065a6fcacfa195f012c5e2489558a5c0d143a05ff"
+    },
+    {
+      "destination": "tests/unit/chat/test_service.py",
+      "original_sha256": "2077e6e76f9966923aace7e81f6b007b32024592192c62d9e01fa5991cb0b7a8",
+      "reason": "Phase two: explicit Python ordinary AI routing or preserved regression fixture adaptation.",
+      "migrated_sha256": "a5a2ac1f13dd2889e1284e6360fb51afe62da399cc5197a9f1cfebecaab4eee3"
+    },
+    {
+      "destination": "tests/unit/test_bootstrap.py",
+      "original_sha256": "806e6e8e6c122d6b95d20e2909012cbe4d2f39e4c0167c462438063c790481cf",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。",
+      "migrated_sha256": "4089191fa8ca5443c01ffd8840e3c6b5bea826cbff5789c2db5e79acced079b3",
+      "phase_three_migrated_sha256": "7e2d02c94596393f8e369c4ba13a27cfffaa6dcb2d1c9ce1dcf7ed88524d3992"
+    },
+    {
+      "destination": "tests/unit/test_laya.py",
+      "original_sha256": "fb7fcb70adaec10d2ff5473d2c1fe1b1c8c6b40af8635c7444ec70aaebce51ac",
+      "reason": "Phase two: explicit Python ordinary AI routing or preserved regression fixture adaptation.",
+      "migrated_sha256": "9eb6ec0a583febfac16062d9b3779c65f76005610cacb2ecbf4fc87d8c3b3b96"
+    },
+    {
+      "destination": "tests/unit/test_runtime_reload.py",
+      "original_sha256": "dfaae34342de555e52f84190f5ebdf73d51dcdaf41e69e63f5f83f8f4ecb2c9d",
+      "reason": "Phase two: explicit Python ordinary AI routing or preserved regression fixture adaptation.",
+      "migrated_sha256": "6a89a986e454941152fc2b428984925a1a494e346db6ea756e2805dd848e92d7"
+    },
+    {
+      "destination": "tests/unit/test_settings.py",
+      "original_sha256": "ec13674ce871c83dc67a1488b5bfc0a804110bca63577b5500dafbcb2a52ff30",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。",
+      "migrated_sha256": "f1c523e81c267eb1a8f0992b768df8d5c078cff7de77a64a4f6be5db0d89cf99",
+      "phase_three_migrated_sha256": "c9a0617da8cecd9151b95fa30d2983469bcd2553f775d840be0d0f847fcf3932"
+    },
+    {
+      "destination": "src/dispatch_chat/integrations/comfy.py",
+      "original_sha256": "e4aea50b2f8dfc2422df916201d1565395171d200487b756de684770b303b069",
+      "migrated_sha256": "64ed26e2f860598b5cfa742b9729f50d5f57e23a14b951cdfe4e69dc05a37458",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。"
+    },
+    {
+      "destination": "src/dispatch_chat/integrations/gpt_sovits.py",
+      "original_sha256": "805eeef3e38bcf8e70721874159e5fc3df9c64627b0b86c5ff1643fcd3295a30",
+      "migrated_sha256": "51b113fa15f0baf58595355a3ff970fe56fdb1c3624c4a872d64c7de5cd7fad8",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。"
+    },
+    {
+      "destination": "src/dispatch_chat/services/chat/contracts.py",
+      "original_sha256": "e35e0b9592c183a0de007e208392702c00200bb94f839f1f2bde866d6e03e0b6",
+      "migrated_sha256": "6ea161ee3a887d731998f7c1b5d2187ab5c99bbdcc3fcf912c5dbd45824957b3",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。"
+    },
+    {
+      "destination": "src/dispatch_chat/services/chat/media.py",
+      "original_sha256": "55946cbf3ec04d52736a4e4aec16a1161d417017e7db687aa11d837385e85eb0",
+      "migrated_sha256": "f9080c62fdf622aa6a9a13012f89a6afc4c3d4683bdd7f0a4a3aa6c264afcb73",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。"
+    },
+    {
+      "destination": "src/dispatch_chat/services/workflow_execution.py",
+      "original_sha256": "190d171fb07ee85bd3de341892c25dd800777f297425b310143558a8775e53b2",
+      "migrated_sha256": "412143dce1f5cf6dbf57592e04ba2268a0b50ca082417e1f3c42ca588bf3d6cc",
+      "reason": "第四阶段 A：媒体路由、取消收尾、中文注释与离线回归适配。"
+    }
+  ],
+  "derived_files": [
+    {
+      "source": "src/dispatch_chat/plugin/runtime.py",
+      "destination": "src/dispatch_chat/runtime_fields.py",
+      "reason": "Extract identical restart field names without plugin startup side effects."
+    },
+    {
+      "source": "sql/dispatch_chat_setting.sql",
+      "destination": "sql/agent_bot_init.sql",
+      "reason": "Preserve initial schema while removing DROP TABLE statements."
+    }
+  ],
+  "phase_two_source_verification": {
+    "files": 179,
+    "result": "All source hashes unchanged"
+  },
+  "phase_three_source_verification": {
+    "files": 179,
+    "result": "All source hashes unchanged",
+    "frontend_source_files": 2
+  },
+  "phase_four_a_source_verification": {
+    "files": 179,
+    "frontend_source_files": 2,
+    "result": "All source hashes unchanged"
+  }
+}

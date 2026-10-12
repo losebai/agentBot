@@ -1,0 +1,107 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-bot"
+version = "0.4.0"
+description = "Independent Agent bot service with browser administration"
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+dependencies = [
+  "jsonschema>=4.26,<5.0",
+  "httpx2>=2.13.1,<3.0",
+  "httpcore>=1.0.9,<2.0",
+  "anyio>=4.0,<5.0",
+  "fastapi>=0.115,<1.0",
+  "pydantic>=2.12,<3.0",
+  "python-dotenv>=1.0,<2.0",
+  "httpx>=0.28.1,<1.0",
+  "mcp>=2.0.0,<3.0",
+  "nonebot-adapter-onebot>=2.4.6,<3.0",
+  "nonebot2[fastapi]>=2.5.0,<3.0",
+  "pillow>=11.0,<13.0",
+  "pymysql>=1.1,<2.0",
+  "redis>=5.2,<7.0",
+]
+
+[project.scripts]
+agent-bot = "agent_bot.__main__:main"
+dispatch-chat = "agent_bot.bot_cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "nonebug>=0.4.3,<1.0",
+  "fakeredis>=2.31,<3.0",
+  "pytest>=8.3,<9.0",
+  "pytest-asyncio>=0.24,<1.0",
+  "pytest-cov>=6.0,<8.0",
+  "pytest-socket>=0.7,<1.0",
+  "ruff>=0.12,<1.0",
+]
+
+[tool.hatch.build]
+exclude = [
+  "/AGENTS.md", "/.superpowers", "/.venv", "/web/node_modules",
+  "/.pytest_cache", "/.ruff_cache", "/.coverage*", "/dist",
+  "/.env", "/.env.*",
+  "/data", "/logs", "/tts", "*.log", "tts-*.wav",
+]
+artifacts = ["src/static/**"]
+
+# 只把根目录示例加入源码包，避免否定通配规则重新纳入本地基线中的同名文件。
+[tool.hatch.build.targets.sdist.force-include]
+".env.example" = ".env.example"
+
+[tool.hatch.build.targets.wheel]
+# 源码按用户约定平铺在 src，发布和可编辑安装均映射为 agent_bot 包。
+only-include = ["src"]
+sources = { "src" = "agent_bot" }
+dev-mode-exact = true
+
+[tool.hatch.build.targets.wheel.force-include]
+"sql/agent_bot_init.sql" = "agent_bot/resources/agent_bot_init.sql"
+# 旧分阶段资源仍可读取，供既有部署按版本显式升级；新安装使用统一脚本。
+"sql/legacy/agent_bot_ai_init.sql" = "agent_bot/resources/agent_bot_ai_init.sql"
+"sql/legacy/agent_bot_agent_init.sql" = "agent_bot/resources/agent_bot_agent_init.sql"
+"sql/legacy/agent_bot_media_init.sql" = "agent_bot/resources/agent_bot_media_init.sql"
+"sql/2026-10-12-agentbot-schema-comments.sql" = "agent_bot/resources/2026-10-12-agentbot-schema-comments.sql"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = [
+  "-ra",
+  "--strict-markers",
+  "--cov=agent_bot",
+  "--cov-branch",
+  "--cov-report=term-missing",
+  "--cov-fail-under=80",
+]
+markers = [
+  "integration: NoneBot integration without external services",
+  "e2e: requires a real NapCatQQ and QQ account",
+]
+
+[tool.coverage.run]
+source = ["agent_bot"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = [".superpowers", "web/node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
+allowed-confusables = ["，", "；", "！", "？", "："]
+
+[tool.ruff.lint.per-file-ignores]
+"src/plugin/__init__.py" = ["B008"]
+"src/plugin/handlers.py" = ["B008"]

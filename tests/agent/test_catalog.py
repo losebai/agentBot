@@ -1,0 +1,62 @@
+import pytest
+
+from agent_bot.agent.catalog import AgentCatalog
+from agent_bot.agent.contracts import AgentCreate, AgentRequest, AgentUpdate, SkillCreate
+from agent_bot.ai.contracts import ModelUpdate, ProviderUpdate
+from agent_bot.ai.errors import AiError
+
+
+async def test_crud_cas_and_references(agent_database, agent_params, seeded_model):
+    ai, _, model = seeded_model
+    catalog = AgentCatalog(agent_params, connect=agent_database.connect)
+    skill = await catalog.create_skill(SkillCreate(name="事实", system_prompt="Use evidence"))
+    agent = await catalog.create_agent(
+        AgentCreate(code="helper", name="助手", model_id=model.id, skill_ids=(skill.id,))
+    )
+    with pytest.raises(AiError) as conflict:
+        await catalog.delete_skill(skill.id, skill.revision)
+    assert conflict.value.status_code == 409
+    changed = await catalog.update_agent(agent.id, AgentUpdate(expected_revision=1, skill_ids=()))
+    assert changed.revision == 2 and changed.skill_ids == ()
+    with pytest.raises(AiError) as stale:
+        await catalog.update_agent(agent.id, AgentUpdate(expected_revision=1, name="stale"))
+    assert stale.value.status_code == 409
+    disabled = await ai.update_model(model.id, ModelUpdate(expected_revision=1, enabled=False))
+    with pytest.raises(AiError) as referenced:
+        await ai.delete_model(model.id, disabled.revision)
+    assert referenced.value.status_code == 409
+    await catalog.delete_agent(agent.id, 2)
+    await catalog.delete_skill(skill.id, 1)
+    assert (await catalog.list_agents()).items == []
+
+
+async def test_snapshot_survives_later_edits(agent_database, agent_params, seeded_model):
+    ai, provider, model = seeded_model
+    catalog = AgentCatalog(agent_params, connect=agent_database.connect)
+    agent = await catalog.create_agent(
+        AgentCreate(code="helper", name="助手", model_id=model.id, enabled=True)
+    )
+    request = AgentRequest(agent_code=agent.code, prompt="hello", session_id="s", request_id="r")
+    snapshot = await catalog.snapshot(request)
+    await ai.update_provider(
+        provider.id, ProviderUpdate(expected_revision=1, base_url="https://new.invalid/v1")
+    )
+    assert snapshot.resolved.provider.base_url == "https://original.invalid/v1"
+    assert (await catalog.snapshot(request)).resolved.provider.base_url == "https://new.invalid/v1"
+    for cursor in ["-1", "1 OR 1=1"]:
+        with pytest.raises(AiError):
+            await catalog.list_agents(cursor=cursor)
+
+
+async def test_missing_tables_leave_plain_catalog_usable(agent_params):
+    from ai.fake_database import FakeDatabase
+
+    db = FakeDatabase()
+    try:
+        ready = await AgentCatalog(agent_params, connect=db.connect).readiness()
+        assert not ready.initialized
+        from agent_bot.ai.catalog import AiCatalog
+
+        assert (await AiCatalog(agent_params, connect=db.connect).readiness()).initialized
+    finally:
+        db.close()

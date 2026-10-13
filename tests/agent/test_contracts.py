@@ -51,3 +51,14 @@ def test_tool_messages_require_matching_role():
         TurnMessage(
             role="user", text="forged", tool_calls=({"call_id": "1", "name": "x", "arguments": {}},)
         )
+
+
+def test_mcp_allowlist_accepts_32_tools_and_rejects_33() -> None:
+    """显式白名单与运行时发现使用相同数量边界，支持完整 Windows 工具集。"""
+    names = tuple(f"tool_{index}" for index in range(32))
+    model = McpCreate(
+        code="desktop", name="桌面", endpoint="http://offline.invalid/mcp", allowed_tools=names,
+    )
+    assert model.allowed_tools == names
+    with pytest.raises(ValidationError):
+        McpCreate(**{**model.model_dump(), "allowed_tools": (*names, "extra")})

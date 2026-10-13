@@ -9,6 +9,7 @@ from agent_bot.ai.call_records import CallRecordStore, legacy_record, sanitize_c
 from agent_bot.ai.contracts import SessionWrite, TokenUsage
 from agent_bot.ai.errors import AiError
 from agent_bot.ai.sessions import AiSessionStore
+from agent_bot.record_migration import import_jsonl
 
 
 @pytest.fixture
@@ -89,3 +90,79 @@ async def test_failed_batch_rolls_back(ai_params, unified_db):
     with pytest.raises(AiError):
         await store.import_batch([good, bad])
     assert not (await store.list_calls()).items
+
+
+async def test_chronological_pages_include_null_times(ai_params, unified_db):
+    """后导入的旧记录不能压过新调用，空时间记录在末页且不遗漏。"""
+    store = CallRecordStore(ai_params, connect=unified_db.connect)
+    rows = [
+        legacy_record({"id": i, "create_time": stamp}, "legacy")
+        for i, stamp in (
+            (1, "2026-10-13 12:00:00"),
+            (2, "2026-10-12 00:00:00"),
+            (3, None),
+            (4, None),
+        )
+    ]
+    await store.import_batch(rows)
+    ids, cursor = [], None
+    while True:
+        page = await store.list_calls(limit=1, cursor=cursor)
+        ids.extend(item.source_id for item in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert ids == ["1", "2", "4", "3"]
+
+
+async def test_jsonl_repeated_import_and_redaction(ai_params, unified_db, tmp_path):
+    """导出文件分批导入后可重跑，凭据摘要及结构化脱敏都实际落库。"""
+    import json
+
+    store = CallRecordStore(ai_params, connect=unified_db.connect)
+    path = tmp_path / "history.jsonl"
+    rows = [
+        {
+            "id": 1,
+            "session_Id": "legacy",
+            "content": "输入",
+            "replay_context": "输出",
+            "user_certificate": "private-credential",
+            "request_context": {"toolSessionToken": "temporary-secret", "maxSteps": 3},
+        },
+        {"id": 2, "data": {"type": "auto_speak_decision", "status": "failed"}},
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+    assert await import_jsonl(store, path, "legacy", batch_size=1) == {"scanned": 2, "inserted": 2}
+    assert await import_jsonl(store, path, "legacy", batch_size=1) == {"scanned": 2, "inserted": 0}
+    detail = await store.get_call((await store.list_calls(type="agent")).items[0].id)
+    assert detail.user_certificate.startswith("sha256:")
+    assert "temporary-secret" not in detail.model_dump_json()
+    assert "private-credential" not in detail.model_dump_json()
+    assert (await store.list_calls(type="auto_speak")).items[0].status == "failed"
+
+
+async def test_missing_unified_table_rolls_back_old_write(ai_params, unified_db):
+    """新表写失败时旧会话也不能单独提交，保证调用方获知保存失败。"""
+    unified_db.connection.execute("DROP TABLE agent_bot_call_record")
+    store = AiSessionStore(ai_params, connect=unified_db.connect)
+    with pytest.raises(AiError):
+        await store.save(
+            SessionWrite(
+                execution_id="f" * 32,
+                session_id="s",
+                request_id="r",
+                configured_model="a",
+                model="m",
+                status="completed",
+                duration_ms=1,
+                usage=TokenUsage(),
+                created_at=datetime.now(),
+                prompt="输入",
+                content="回复",
+            )
+        )
+    assert (
+        unified_db.connection.execute("SELECT COUNT(*) FROM agent_bot_ai_session").fetchone()[0]
+        == 0
+    )

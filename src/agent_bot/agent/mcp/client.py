@@ -9,7 +9,7 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 
-from agent_bot.agent.contracts import ServiceWarning
+from agent_bot.agent.contracts import MAX_MCP_TOOLS, ServiceWarning
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.mcp.discovery import convert_result, discover
 from agent_bot.agent.mcp.http import client_factory
@@ -172,7 +172,7 @@ class McpConnector:
 
     @asynccontextmanager
     async def open(self, servers, *, remaining, result_converter=convert_result):
-        """普通工具仍返回受限文本，固定决策显式选择严格结构化解析。"""
+        """限定合并工具数量并单独拒绝重名，固定决策仍使用严格结构化解析。"""
         if len(servers) > 3:
             raise AgentError("AGENT_MCP_SERVICE_LIMIT", status_code=422)
         workers, warnings = [], []
@@ -196,8 +196,10 @@ class McpConnector:
                     warnings.append(ServiceWarning(code=error.code, service_code=server.code))
             connection = McpConnection(workers, warnings)
             names = [t.name for t in connection.tools]
-            if len(names) > 20 or len(set(names)) != len(names):
+            if len(set(names)) != len(names):
                 raise AgentError("AGENT_TOOL_NAME_CONFLICT", status_code=409)
+            if len(names) > MAX_MCP_TOOLS:
+                raise AgentError("AGENT_MCP_TOOL_LIMIT", status_code=422)
             yield connection
         except BaseException:
             failed = True

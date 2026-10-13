@@ -13,8 +13,8 @@ from starlette.routing import Route
 
 @asynccontextmanager
 async def peer(*, foreign=False, repeating=False, status=200, call_wait=None,
-               tool_name="lookup", tool_schema=None, tool_result=None):
-    """可配置工具和结构化结果，同时保留既有协议与取消测试的默认行为。"""
+               tool_name="lookup", tool_schema=None, tool_result=None, tool_names=None):
+    """可配置完整工具列表和结构化结果，支持发现数量边界及取消测试。"""
     queue = asyncio.Queue()
     state = {
         "calls": [], "active": 0, "entered": asyncio.Event(),
@@ -40,14 +40,14 @@ async def peer(*, foreign=False, repeating=False, status=200, call_wait=None,
             result = {
                 "tools": [
                     {
-                        "name": tool_name,
+                        "name": name,
                         "description": "test",
                         "inputSchema": tool_schema or {
                             "type": "object",
                             "properties": {},
                             "additionalProperties": False,
                         },
-                    }
+                    } for name in (tool_names if tool_names is not None else [tool_name])
                 ]
             }
             if repeating:

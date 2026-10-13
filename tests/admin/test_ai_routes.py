@@ -187,3 +187,37 @@ async def test_sync_stream_and_record_queries(python_api, system_prompt: str):
     assert "event: error" not in response.text
     records = await api.get("/api/v1/ai/sessions", headers=HEADERS)
     assert len(records.json()["items"]) == 2 and "prompt" not in records.json()["items"][0]
+    # 统一入口使用同一认证，列表不泄漏正文，详情保留输入和输出语义。
+    assert (await api.get('/api/v1/ai/records')).status_code == 401
+    combined = await api.get('/api/v1/ai/records?type=ordinary', headers=HEADERS)
+    assert combined.status_code == 200
+    items = combined.json()['items']
+    assert len(items) == 2 and 'content' not in items[0]
+    detail = await api.get(f'/api/v1/ai/records/{items[0]["id"]}', headers=HEADERS)
+    assert detail.json()['content'] == 'hello'
+    assert detail.json()['request_context']['messages'][-1]['content'] == 'hello'
+    assert (await api.get('/api/v1/ai/records?type=bad', headers=HEADERS)).status_code == 422
+
+
+async def test_system_records_api_filters_and_validates_category(python_api):
+    """分组参数传入真实记录查询，普通页排除决策和指令，详情保留调用类型。"""
+    from agent_bot.ai.call_records import CallRecordStore, legacy_record
+
+    api, _, runtime = python_api
+    sessions = runtime.ai_service.sessions
+    store = CallRecordStore(sessions.params, connect=sessions.connect)
+    await store.import_batch([
+        legacy_record({"id": 1, "data": {"choices": []}}, "offline"),
+        legacy_record({"id": 2, "data": {"type": "auto_speak_decision"}}, "offline"),
+        legacy_record({"id": 3, "request_id": "qq-summary-test"}, "offline"),
+    ])
+    normal = await api.get("/api/v1/ai/records?category=conversation", headers=HEADERS)
+    assert [r["source_id"] for r in normal.json()["items"]] == ["1"]
+    system = await api.get("/api/v1/ai/records?category=system", headers=HEADERS)
+    assert {r["system_kind"] for r in system.json()["items"]} == {"auto_speak", "command"}
+    commands = await api.get(
+        "/api/v1/ai/records?category=system&system_kind=command", headers=HEADERS,
+    )
+    assert [r["source_id"] for r in commands.json()["items"]] == ["3"]
+    assert (await api.get("/api/v1/ai/records?category=bad", headers=HEADERS)).status_code == 422
+    assert (await api.get("/api/v1/ai/records?category=system")).status_code == 401

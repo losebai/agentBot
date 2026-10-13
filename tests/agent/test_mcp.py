@@ -13,6 +13,7 @@ from .mcp_server import peer
 
 
 def server(url, transport="streamable", **patch):
+    """构造离线服务快照，允许测试显式白名单或通配符发现。"""
     return McpView(
         id=1,
         revision=1,
@@ -22,10 +23,45 @@ def server(url, transport="streamable", **patch):
         name="docs",
         endpoint=url + ("/mcp" if transport == "streamable" else "/sse"),
         transport=transport,
-        allowed_tools=("lookup",),
+        allowed_tools=patch.pop("allowed_tools", ("lookup",)),
         enabled=True,
         **patch,
     )
+
+
+@pytest.mark.parametrize("count", [21, 32, 33])
+async def test_discovery_accepts_windows_tool_count_with_bounded_limit(count: int) -> None:
+    """完整保留已授权的 21 或 32 个工具，超过上限时明确拒绝而非截断。"""
+    names = [f"tool_{index}" for index in range(count)]
+    async with peer(tool_names=names) as (url, state):
+        connector = McpConnector(McpCredentials())
+        if count <= 32:
+            async with connector.open(
+                (server(url, allowed_tools=("*",)),), remaining=lambda: 5,
+            ) as connection:
+                assert [tool.name for tool in connection.tools] == names
+        else:
+            with pytest.raises(AgentError, match="AGENT_MCP_TOOL_LIMIT"):
+                async with connector.open(
+                    (server(url, allowed_tools=("*",)),), remaining=lambda: 5,
+                ):
+                    pass
+        assert "tools/call" not in state["calls"]
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+async def test_multiple_servers_distinguish_tool_limit_and_name_conflict(duplicate: bool) -> None:
+    """合并服务时分别检查总数量和重名，避免把数量超限误报为名称冲突。"""
+    left = [f"left_{index}" for index in range(17)]
+    right = left if duplicate else [f"right_{index}" for index in range(17)]
+    async with peer(tool_names=left) as (first, _), peer(tool_names=right) as (second, _):
+        code = "AGENT_TOOL_NAME_CONFLICT" if duplicate else "AGENT_MCP_TOOL_LIMIT"
+        with pytest.raises(AgentError, match=code):
+            async with McpConnector(McpCredentials()).open(
+                (server(first, allowed_tools=("*",)), server(second, allowed_tools=("*",))),
+                remaining=lambda: 5,
+            ):
+                pass
 
 
 @pytest.mark.parametrize("transport", ["streamable", "sse"])

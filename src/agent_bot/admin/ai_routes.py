@@ -2,7 +2,14 @@
 
 from fastapi import APIRouter, Query
 
-from agent_bot.ai.call_records import CallDetail, CallRecordStore, CallSummary, CallType
+from agent_bot.ai.call_records import (
+    CallCategory,
+    CallDetail,
+    CallRecordStore,
+    CallSummary,
+    CallType,
+    SystemKind,
+)
 from agent_bot.ai.contracts import (
     ModelCreate,
     ModelImportRequest,
@@ -27,29 +34,39 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
     async def call_records(action, **kwargs):
         """统一查询仍持有运行时租约并沿用已认证路由。"""
         async with runtime.lease():
-            service = getattr(runtime, 'ai_service', None)
+            service = getattr(runtime, "ai_service", None)
             if service is None:
-                raise AiError('AI_NOT_INITIALIZED', status_code=503)
+                raise AiError("AI_NOT_INITIALIZED", status_code=503)
             sessions = service.sessions
             store = CallRecordStore(sessions.params, connect=sessions.connect)
             return await getattr(store, action)(**kwargs)
 
-    @router.get('/ai/records', response_model=Page[CallSummary])
+    @router.get("/ai/records", response_model=Page[CallSummary])
     async def unified_records(
         type: CallType | None = None,
+        category: CallCategory | None = None,
+        system_kind: SystemKind | None = None,
         session_id: str | None = Query(None, max_length=255),
         status: str | None = Query(None, max_length=16),
         limit: int = Query(50, ge=1, le=100),
         cursor: str | None = Query(None, max_length=2048),
     ):
-        """普通、Agent 和历史决策记录共用类型筛选与分页。"""
-        return await call_records('list_calls', type=type, session_id=session_id,
-                                  status=status, limit=limit, cursor=cursor)
+        """按普通或系统调用分组查询，类型、会话和游标一起约束结果。"""
+        return await call_records(
+            "list_calls",
+            type=type,
+            category=category,
+            system_kind=system_kind,
+            session_id=session_id,
+            status=status,
+            limit=limit,
+            cursor=cursor,
+        )
 
-    @router.get('/ai/records/{id}', response_model=CallDetail)
+    @router.get("/ai/records/{id}", response_model=CallDetail)
     async def unified_detail(id: int):
         """统一详情保留旧字段名，避免混淆输入与模型回复。"""
-        return await call_records('get_call', id=id)
+        return await call_records("get_call", id=id)
 
     async def operate(action: str, *args, records: bool = False, **kwargs):
         """读写操作持有运行时租约，返回仅序列化公开字段的快照。"""

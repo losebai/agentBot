@@ -15,6 +15,8 @@ from agent_bot.models import ChatMessage, LlmRequestOptions
 from agent_bot.multimodal import DEFAULT_IMAGE_PROMPT
 
 CODE_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
+# 单服务白名单、发现结果及多服务合并共用上限，容纳 Windows MCP 的完整工具集。
+MAX_MCP_TOOLS = 32
 
 
 class DirectoryItem(AiModel):
@@ -77,7 +79,7 @@ class McpFields(CodedItem):
     category: Literal["general", "search"] = "general"
     transport: Literal["streamable", "sse"] = "streamable"
     endpoint: str = Field(min_length=1, max_length=512)
-    allowed_tools: tuple[str, ...] = Field(min_length=1, max_length=20)
+    allowed_tools: tuple[str, ...] = Field(min_length=1, max_length=MAX_MCP_TOOLS)
     search_tool: str | None = Field(default=None, min_length=1, max_length=100)
     timeout_seconds: int = Field(default=10, ge=1, le=30)
     required: bool = False

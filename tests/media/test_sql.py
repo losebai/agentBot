@@ -89,7 +89,7 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
             for referenced in re.findall(r"REFERENCES\s+`?(\w+)`?", declaration, re.I):
                 assert referenced in created, (name, referenced)
         created.add(name)
-    assert len(tables) == 27
+    assert len(tables) == 28
 
 
 def test_dynamic_credential_migration_only_adds_columns_and_preserves_auth_requirement():

@@ -10,7 +10,13 @@ from pathlib import Path
 
 import pymysql
 
-from agent_bot.ai.call_records import CallRecordStore, legacy_record, python_record
+from agent_bot.ai.call_records import (
+    CallRecordStore,
+    call_record_time,
+    decision_record,
+    legacy_record,
+    python_record,
+)
 from agent_bot.ai.database import query
 from agent_bot.bootstrap import database_params, load_bootstrap_config
 from agent_bot.database import connect_database, database_connector
@@ -34,24 +40,72 @@ def install_schema(params):
 
 
 async def backfill_local(store, batch_size=100):
-    """分批回填本库两个来源，不修改原始会话、步骤或附件。"""
+    """分批回填会话、Agent 和决策来源，不修改原始记录。"""
     result = {}
-    for table, type in (("agent_bot_ai_session", "ordinary"), ("agent_bot_agent_run", "agent")):
+    for table, type in (
+        ("agent_bot_ai_session", "ordinary"), ("agent_bot_agent_run", "agent"),
+        ("agent_bot_auto_speak_decision", "auto_speak"),
+    ):
+        key = "id" if type == "auto_speak" else "execution_id"
         after, scanned, inserted = "", 0, 0
         while True:
             rows = await store.run(
-                lambda c, table=table, after=after: query(
+                lambda c, table=table, after=after, key=key: query(
                     c,
-                    f"SELECT * FROM {table} WHERE execution_id>%s ORDER BY execution_id LIMIT %s",
+                    f"SELECT * FROM {table} WHERE {key}>%s ORDER BY {key} LIMIT %s",
                     (after, batch_size),
                 )
             )
             if not rows:
                 break
-            inserted += await store.import_batch([python_record(row, type) for row in rows])
+            inserted += await store.import_batch([
+                decision_record(row) if type == "auto_speak" else python_record(row, type)
+                for row in rows
+            ])
             scanned += len(rows)
-            after = rows[-1]["execution_id"]
+            after = rows[-1][key]
         result[table] = {"scanned": scanned, "inserted": inserted}
+    return result
+
+
+async def repair_local_times(store: CallRecordStore, batch_size: int = 100) -> dict:
+    """分批按原始 UTC 时间校正统一记录，重跑不累加偏移，不改正文和旧库记录。"""
+    result = {}
+    for table, key in (
+        ("agent_bot_ai_session", "execution_id"),
+        ("agent_bot_agent_run", "execution_id"),
+        ("agent_bot_auto_speak_decision", "id"),
+    ):
+        source = f"python:{table}"
+        after, scanned, updated = 0, 0, 0
+        while True:
+            def repair_batch(connection, table=table, key=key, source=source, after=after):
+                """同一事务读取原始时间并仅更新不同值，取消或失败时整批回滚。"""
+                rows = query(
+                    connection,
+                    "SELECT c.id,r.created_at FROM agent_bot_call_record c "
+                    f"JOIN {table} r ON c.source_id=r.{key} "
+                    "WHERE c.source=%s AND c.id>%s ORDER BY c.id LIMIT %s",
+                    (source, after, batch_size),
+                )
+                changed = 0
+                with connection.cursor() as cursor:
+                    for row in rows:
+                        stamp = call_record_time(row["created_at"])
+                        changed += cursor.execute(
+                            "UPDATE agent_bot_call_record SET create_time=%s "
+                            "WHERE id=%s AND (create_time IS NULL OR create_time<>%s)",
+                            (stamp, row["id"], stamp),
+                        )
+                return rows, changed
+
+            rows, changed = await store.run(repair_batch, write=True)
+            if not rows:
+                break
+            scanned += len(rows)
+            updated += changed
+            after = rows[-1]["id"]
+        result[table] = {"scanned": scanned, "updated": updated}
     return result
 
 
@@ -105,9 +159,9 @@ async def import_jsonl(store, path, source, batch_size=100):
 
 
 def run(argv):
-    """命令行只接收配置文件路径，连接密码不出现在参数或异常输出中。"""
+    """显式导入或校正归档时间，连接密码不出现在参数或异常输出中。"""
     parser = argparse.ArgumentParser(prog="agent-bot records")
-    parser.add_argument("command", choices=["migrate"])
+    parser.add_argument("command", choices=["migrate", "repair-times"])
     parser.add_argument("--init-schema", action="store_true", help="显式安装统一记录增量表")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--legacy-config", help="包含 DatabaseParams MySQL 参数的 JSON 文件")
@@ -116,6 +170,10 @@ def run(argv):
         "--source", help="稳定来源名，如 dispatch-ai:dispatch-sdk:service_ai_session"
     )
     args = parser.parse_args(argv)
+    if args.command == "repair-times" and (
+        args.init_schema or args.legacy_config or args.legacy_jsonl or args.source
+    ):
+        parser.error("repair-times 只校正本库时间，不能与初始化或旧库导入选项一起使用")
     if (args.legacy_config or args.legacy_jsonl) and (
         not args.source
         or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,191}", args.source)
@@ -127,6 +185,9 @@ def run(argv):
         if args.init_schema:
             install_schema(params)
         store = CallRecordStore(params, connect=database_connector(params))
+        if args.command == "repair-times":
+            print(json.dumps(asyncio.run(repair_local_times(store)), ensure_ascii=False))
+            return 0
         source_params = None
         if args.legacy_config:
             cfg = json.loads(Path(args.legacy_config).read_text(encoding="utf-8-sig"))

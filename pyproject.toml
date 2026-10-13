@@ -65,9 +65,9 @@ artifacts = ["src/static/**"]
 ".env.example" = ".env.example"
 
 [tool.hatch.build.targets.wheel]
-# 源码按用户约定平铺在 src，发布和可编辑安装均映射为 agent_bot 包。
-only-include = ["src"]
-sources = { "src" = "agent_bot" }
+# 当前源码位于 src/agent_bot，资源目录通过下方规则放到同一发布包。
+only-include = ["src/agent_bot"]
+sources = { "src" = "" }
 # Hatch 的自动检测不支持重命名目录，由下方构建钩子显式登记开发包。
 dev-mode-dirs = ["."]
 
@@ -75,6 +75,8 @@ dev-mode-dirs = ["."]
 path = "tools/build_hook.py"
 
 [tool.hatch.build.targets.wheel.force-include]
+"src/static" = "agent_bot/static"
+"src/resources" = "agent_bot/resources"
 "sql/2026-10-13-unified-call-records.sql" = "agent_bot/resources/2026-10-13-unified-call-records.sql"
 "sql/2026-10-13-unified-call-records.sqlite.sql" = "agent_bot/resources/2026-10-13-unified-call-records.sqlite.sql"
 "sql/agent_bot_init.sql" = "agent_bot/resources/agent_bot_init.sql"

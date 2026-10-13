@@ -732,6 +732,9 @@ CREATE TABLE IF NOT EXISTS agent_bot_call_record (
 -- 来源内唯一，重复导入不得覆盖新记录。
 CREATE UNIQUE INDEX IF NOT EXISTS uk_call_source ON agent_bot_call_record(source, source_id);
 -- 类型、会话、状态分别支持自增主键分页。
-CREATE INDEX IF NOT EXISTS idx_call_type ON agent_bot_call_record(type, id);
-CREATE INDEX IF NOT EXISTS idx_call_session ON agent_bot_call_record(session_Id, id);
-CREATE INDEX IF NOT EXISTS idx_call_status ON agent_bot_call_record(status, id);
+CREATE INDEX IF NOT EXISTS idx_call_type ON agent_bot_call_record(type, create_time, id);
+CREATE INDEX IF NOT EXISTS idx_call_session ON agent_bot_call_record(session_Id, create_time, id);
+CREATE INDEX IF NOT EXISTS idx_call_status ON agent_bot_call_record(status, create_time, id);
+
+-- 按调用时间及主键稳定分页。
+CREATE INDEX IF NOT EXISTS idx_call_time ON agent_bot_call_record(create_time, id);

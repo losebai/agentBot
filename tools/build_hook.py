@@ -15,7 +15,7 @@ class CustomBuildHook(BuildHookInterface):
         if version != "editable":
             return
         project = EditableProject(self.metadata.core.name, self.root)
-        project.map("agent_bot", "src\\agent_bot")
+        project.map("agent_bot", "src/agent_bot")
         self._editable_paths: list[Path] = []
         for filename, content in project.files():
             if filename.endswith(".py"):

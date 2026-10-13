@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
+from agent_bot.ai.call_records import decision_record, insert_record
 from agent_bot.ai.database import AiDatabase
 
 
@@ -37,12 +38,13 @@ class AutoSpeakRecords(AiDatabase):
         }
 
         def write(connection):
-            """每次分类只写一条终态，不将记录失败转化为重新分类。"""
+            """原始决策和统一调用记录同事务提交，记录失败不重新分类。"""
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"INSERT INTO agent_bot_auto_speak_decision ({','.join(values)}) "
                     f"VALUES ({','.join(['%s'] * len(values))})",
                     tuple(values.values()),
                 )
+            insert_record(connection, decision_record(values))
 
         await self.run(write, write=True)

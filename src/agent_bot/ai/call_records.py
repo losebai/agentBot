@@ -4,15 +4,31 @@ import base64
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
+from agent_bot.ai.call_origin import command_call
 from agent_bot.ai.contracts import AiModel, Page
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
 
 CallType = Literal["ordinary", "agent", "auto_speak", "unknown"]
+CallCategory = Literal["conversation", "system"]
+SystemKind = Literal["auto_speak", "command"]
 _TABLE = "agent_bot_call_record"
+_RECORD_TIMEZONE = timezone(timedelta(hours=8))
+# 新指令使用任务标记；历史记录只依据项目已有请求前缀或明确的指令输入识别。
+_COMMAND_CONDITION = """(
+    COALESCE(JSON_EXTRACT(data, '$.system_kind') IN ('command', '"command"'), 0)
+    OR SUBSTR(request_id, 1, 11) = 'qq-summary-'
+    OR SUBSTR(request_id, 1, 8) = 'qq-draw-'
+    OR SUBSTR(session_Id, -15) = ':quoted-summary'
+    OR (SUBSTR(request_id, 1, 9) = 'qq-reply-' AND SUBSTR(content, 1, 1) = '/')
+)"""
+_SYSTEM_KIND = (
+    "CASE WHEN type='auto_speak' THEN 'auto_speak' "
+    f"WHEN {_COMMAND_CONDITION} THEN 'command' ELSE NULL END"
+)
 _SECRET = re.compile(
     r"^(?:authorization|proxyauthorization|cookie|setcookie|password|passwd|secret|"
     r"apikey|accesskey|accesskeyid|accesskeysecret|credential|credentials|"
@@ -63,22 +79,38 @@ def bounded_record(record):
             result[key] = value[:255]
     if overflow:
         result["data"] = {"original_data": result.get("data"), "full_fields": overflow}
+        if isinstance(record.get("data"), dict) and "system_kind" in record["data"]:
+            result["data"]["system_kind"] = record["data"]["system_kind"]
     return result
 
 
+def call_record_time(value: datetime | str) -> datetime:
+    """将原始执行表的 UTC 时间转换为北京时间，与旧记录统一排序和显示。
+
+    原始表继续保存 UTC；统一表的无时区时间约定为北京时间，精度固定到秒。
+    显式使用 UTC+8，避免依赖部署机器或数据库会话的本地时区。
+    """
+    stamp = datetime.fromisoformat(value) if isinstance(value, str) else value
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(_RECORD_TIMEZONE).replace(tzinfo=None, microsecond=0)
+
+
 def python_record(row, type, context=None):
-    """Python 原字段 content 是回复，在统一表中明确转换为 replay_context。"""
+    """转换输入输出和归档时间，并为显式指令附加分类标记，保留模型调用类型。"""
     data = {
         key: json_value(row[key]) if key in {"usage", "revisions"} else row[key]
         for key in ("usage", "revisions", "configured_model", "backend", "entry", "error_code")
         if key in row
     }
+    if command_call.get():
+        data["system_kind"] = "command"
     return bounded_record(
         {
             "session_Id": row["session_id"],
             "content": row["prompt"],
             "replay_context": row["content"],
-            "create_time": row["created_at"],
+            "create_time": call_record_time(row["created_at"]),
             "duration": row["duration_ms"],
             "user_certificate": None,
             "model": row["model"],
@@ -94,6 +126,22 @@ def python_record(row, type, context=None):
             "status": row["status"],
         }
     )
+
+
+def decision_record(row):
+    """以北京时间归档决策结果，保留原表 ID，不复制群聊状态或其他输入正文。"""
+    result = {
+        key: row[key] for key in
+        ("mcp_code", "mcp_revision", "should_speak", "confidence", "error_code")
+    }
+    return bounded_record({
+        "session_Id": row["session_id"], "request_id": row["request_id"],
+        "content": None, "replay_context": json.dumps(result, ensure_ascii=False),
+        "create_time": call_record_time(row["created_at"]), "duration": row["duration_ms"],
+        "user_certificate": None, "model": None, "data": result, "request_context": None,
+        "type": "auto_speak", "source": "python:agent_bot_auto_speak_decision",
+        "source_id": row["id"], "execution_id": None, "status": row["status"],
+    })
 
 
 def legacy_record(row, source):
@@ -168,6 +216,7 @@ class CallSummary(AiModel):
     model: str | None
     request_id: str | None
     type: CallType
+    system_kind: SystemKind | None = None
     source: str
     source_id: str
     execution_id: str | None
@@ -185,7 +234,7 @@ class CallDetail(CallSummary):
 
 
 class CallRecordStore(AiDatabase):
-    """统一记录分页和幂等历史导入，使用自增主键避免空时间破坏分页。"""
+    """统一记录分页和幂等历史导入，时间相同时由自增主键稳定排序。"""
 
     async def import_batch(self, rows):
         """单批原子导入，已存在的来源主键不会被历史快照覆盖。"""
@@ -231,7 +280,10 @@ class CallRecordStore(AiDatabase):
     async def get_call(self, id: int):
         """详情仅按目标主键读取，旧 ID 保存在来源字段。"""
         row = await self.run(
-            lambda c: query(c, f"SELECT * FROM {_TABLE} WHERE id=%s", (id,), one=True)
+            lambda c: query(
+                c, f"SELECT *, {_SYSTEM_KIND} AS system_kind FROM {_TABLE} WHERE id=%s",
+                (id,), one=True,
+            )
         )
         if row is None:
             raise AiError("AI_RECORD_NOT_FOUND", status_code=404)
@@ -239,17 +291,30 @@ class CallRecordStore(AiDatabase):
             row[key] = json_value(row[key])
         return CallDetail.model_validate(row)
 
-    async def list_calls(self, *, type=None, session_id=None, status=None, limit=50, cursor=None):
-        """游标绑定筛选条件，混合来源或缺失时间仍能稳定遍历。"""
+    async def list_calls(
+        self, *, type=None, session_id=None, status=None, limit=50, cursor=None,
+        category=None, system_kind=None,
+    ):
+        """分组和类型在数据库分页前筛选，游标绑定完整条件，避免跨标签串页。"""
         page_limit(limit)
         if type not in {None, "ordinary", "agent", "auto_speak", "unknown"}:
             raise AiError("AI_INVALID_PAGE", status_code=422)
-        filters = [type, session_id, status]
+        if category not in {None, "conversation", "system"} or system_kind not in {
+            None, "auto_speak", "command",
+        }:
+            raise AiError("AI_INVALID_PAGE", status_code=422)
+        filters = [type, session_id, status, category, system_kind]
         conditions, args = [], []
-        for field, value in zip(("type", "session_Id", "status"), filters, strict=True):
+        for field, value in zip(("type", "session_Id", "status"), filters[:3], strict=True):
             if value is not None:
                 conditions.append(f"`{field}`=%s")
                 args.append(value)
+        if category is not None:
+            null_check = "NOT NULL" if category == "system" else "NULL"
+            conditions.append(f"({_SYSTEM_KIND}) IS {null_check}")
+        if system_kind is not None:
+            conditions.append(f"({_SYSTEM_KIND})=%s")
+            args.append(system_kind)
         if cursor:
             try:
                 if len(cursor) > 2048:
@@ -257,23 +322,40 @@ class CallRecordStore(AiDatabase):
                 obj = json.loads(base64.urlsafe_b64decode(cursor))
                 if obj["filters"] != filters or type_of_id(obj["id"]) is False:
                     raise ValueError
-                conditions.append("id<%s")
-                args.append(obj["id"])
+                stamp = obj["time"]
+                if stamp is None:
+                    conditions.append("(create_time IS NULL AND id<%s)")
+                    args.append(obj["id"])
+                else:
+                    stamp = datetime.fromisoformat(stamp)
+                    conditions.append(
+                        "(create_time<%s OR create_time IS NULL OR (create_time=%s AND id<%s))"
+                    )
+                    args.extend((stamp, stamp, obj["id"]))
             except (ValueError, KeyError, TypeError) as error:
                 raise AiError("AI_INVALID_PAGE", status_code=422) from error
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         rows = await self.run(
             lambda c: query(
                 c,
-                f"SELECT {sql_columns(CallSummary.model_fields)} FROM {_TABLE}{where} "
-                "ORDER BY id DESC LIMIT %s",
+                f"SELECT {sql_columns(set(CallSummary.model_fields) - {'system_kind'})}, "
+                f"{_SYSTEM_KIND} AS system_kind FROM {_TABLE}{where} "
+                "ORDER BY create_time DESC,id DESC LIMIT %s",
                 (*args, limit + 1),
             )
         )
         items = [CallSummary.model_validate(row) for row in rows[:limit]]
         after = (
             base64.urlsafe_b64encode(
-                json.dumps({"id": items[-1].id, "filters": filters}).encode()
+                json.dumps(
+                    {
+                        "id": items[-1].id,
+                        "filters": filters,
+                        "time": items[-1].create_time.isoformat()
+                        if items[-1].create_time
+                        else None,
+                    }
+                ).encode()
             ).decode()
             if len(rows) > limit
             else None

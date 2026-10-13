@@ -21,6 +21,7 @@ from nonebot.adapters.onebot.v11.exception import ActionFailed, ApiNotAvailable,
 from nonebot.params import CommandArg
 from nonebot.typing import T_State
 
+from agent_bot.ai.call_origin import command_scope
 from agent_bot.group_members import GroupMemberStoreError, GroupMemberValidationError
 from agent_bot.integrations.onebot.replies import OneBotReplyService
 from agent_bot.memory_store import ChatMemoryStoreError
@@ -123,7 +124,7 @@ def register_plugin_handlers(
     async def handle_reset(bot: Bot, event: MessageEvent) -> None:
         """在运行时租约内处理会话重置命令。"""
 
-        async with dependencies.runtime_lease():
+        async with dependencies.runtime_lease(), command_scope():
             if not await dependencies.is_authorized(event):
                 return
             if not dependencies.is_superuser(event):
@@ -143,7 +144,7 @@ def register_plugin_handlers(
     ) -> None:
         """在运行时租约内处理显式群成员提醒命令。"""
 
-        async with dependencies.runtime_lease():
+        async with dependencies.runtime_lease(), command_scope():
             if await dependencies.is_authorized(event):
                 await dependencies.handle_mention(bot, event, argument)
 
@@ -155,7 +156,7 @@ def register_plugin_handlers(
     ) -> None:
         """在运行时租约内处理默认本地工作流画图命令。"""
 
-        async with dependencies.runtime_lease():
+        async with dependencies.runtime_lease(), command_scope():
             if await dependencies.is_authorized(event):
                 await dependencies.handle_draw(bot, event, argument)
 
@@ -164,7 +165,7 @@ def register_plugin_handlers(
         bot: Bot, event: MessageEvent, argument: Message = CommandArg(),
     ) -> None:
         """在运行时租约内处理基于当前上下文的 Laya 决策命令。"""
-        async with dependencies.runtime_lease():
+        async with dependencies.runtime_lease(), command_scope():
             if await dependencies.is_authorized(event):
                 await dependencies.handle_laya(bot, event, argument)
 
@@ -220,7 +221,7 @@ def register_plugin_handlers(
     async def handle_summary_command(bot: Bot, event: MessageEvent) -> None:
         """在运行时租约内处理引用消息总结。"""
 
-        async with dependencies.runtime_lease():
+        async with dependencies.runtime_lease(), command_scope():
             if await dependencies.is_authorized(event):
                 await dependencies.handle_summary(bot, event)
 
@@ -232,7 +233,7 @@ def register_plugin_handlers(
     ) -> None:
         """在运行时租约内处理永劫战绩或比赛查询。"""
 
-        async with dependencies.runtime_lease():
+        async with dependencies.runtime_lease(), command_scope():
             if await dependencies.is_authorized(event):
                 await dependencies.handle_naraka(bot, event, argument)
 
@@ -244,7 +245,7 @@ def register_plugin_handlers(
     ) -> None:
         """在运行时租约内处理永劫角色搜索。"""
 
-        async with dependencies.runtime_lease():
+        async with dependencies.runtime_lease(), command_scope():
             if await dependencies.is_authorized(event):
                 await dependencies.handle_naraka_search(bot, event, argument)
 

@@ -26,7 +26,7 @@ def test_initialize_all_tables_and_preserve_existing_data(tmp_path: Path) -> Non
             cursor.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name<>'sqlite_sequence'"
             )
-            assert len(cursor.fetchall()) == 27
+            assert len(cursor.fetchall()) == 28
             cursor.execute(
                 "INSERT INTO agent_bot_ai_provider (name,protocol,base_url,created_at,updated_at) "
                 "VALUES (%s,%s,%s,%s,%s)",

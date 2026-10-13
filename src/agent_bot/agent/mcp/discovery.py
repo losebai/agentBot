@@ -4,12 +4,13 @@ import asyncio
 
 from mcp import types
 
-from agent_bot.agent.contracts import ToolDefinition, ToolResult
+from agent_bot.agent.contracts import MAX_MCP_TOOLS, ToolDefinition, ToolResult
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.tools.schema import ToolSchema, bounded_json
 
 
 async def discover(session, server, remaining):
+    """先按显式白名单筛选，再校验数量与结构，超限时不截断已授权工具。"""
     cursor, seen, tools = None, set(), []
     for _ in range(10):
         result = await asyncio.wait_for(
@@ -33,7 +34,7 @@ async def discover(session, server, remaining):
             if any(existing.name == tool.name for existing in tools):
                 raise AgentError("AGENT_TOOL_NAME_CONFLICT", status_code=409)
             tools.append(tool)
-            if len(tools) > 20:
+            if len(tools) > MAX_MCP_TOOLS:
                 raise AgentError("AGENT_MCP_TOOL_LIMIT", status_code=422)
         cursor = result.next_cursor
         if not cursor:

@@ -4,8 +4,10 @@ import pytest
 
 from agent_bot.agent.contracts import RunFinish, RunStart, StepWrite
 from agent_bot.agent.records import AgentRunStore
+from agent_bot.ai.call_records import CallRecordStore
 from agent_bot.ai.contracts import TokenUsage
 from agent_bot.ai.errors import AiError
+from agent_bot.record_migration import backfill_local
 from ai.mysql_identifiers import reject_unquoted_usage
 
 
@@ -45,6 +47,12 @@ async def test_run_terminal_transition_and_step_order(agent_database, agent_para
     summary = (await store.list_runs()).items[0]
     assert "prompt" not in summary.model_dump()
     assert (await store.get_run(run.execution_id)).content == "answer"
+    unified = CallRecordStore(agent_params, connect=agent_database.connect)
+    summary = (await unified.list_calls(type="agent")).items[0]
+    detail = await unified.get_call(summary.id)
+    assert detail.execution_id == run.execution_id
+    assert detail.content == "private prompt" and detail.replay_context == "answer"
+    assert detail.status == "completed"
 
 
 async def test_keyset_pages_same_timestamp(agent_database, agent_params):
@@ -66,6 +74,45 @@ async def test_keyset_pages_same_timestamp(agent_database, agent_params):
     two = await store.list_runs(limit=2, cursor=one.next_cursor)
     assert len({r.execution_id for r in one.items + two.items}) == 3
     assert all(r.status == "running" for r in one.items + two.items)
+
+
+async def test_backfill_preserves_steps_and_live_terminal_state(agent_database, agent_params):
+    """空决策目录不影响回填；原步骤及运行结束后的状态不能被迁移覆盖。"""
+    agent_database.connection.executescript("""
+        CREATE TABLE agent_bot_auto_speak_decision (
+            id TEXT PRIMARY KEY, session_id TEXT, request_id TEXT, mcp_code TEXT,
+            mcp_revision INTEGER, status TEXT, should_speak INTEGER,
+            confidence REAL, duration_ms INTEGER, error_code TEXT, created_at TEXT);
+    """)
+    store = AgentRunStore(agent_params, connect=agent_database.connect)
+    run = RunStart(
+        execution_id="e" * 32,
+        session_id="s",
+        request_id="r",
+        entry="admin",
+        model="m",
+        prompt="旧输入",
+        created_at=datetime(2026, 10, 13),
+    )
+    await store.begin(run)
+    await store.append_step(
+        StepWrite(
+            execution_id=run.execution_id, sequence=1, turn=1, kind="model", status="completed"
+        )
+    )
+    agent_database.connection.execute("DELETE FROM agent_bot_call_record")
+    agent_database.connection.commit()
+    unified = CallRecordStore(agent_params, connect=agent_database.connect)
+    result = await backfill_local(unified, batch_size=1)
+    assert result["agent_bot_agent_run"]["inserted"] == 1
+    await store.finish(
+        RunFinish(execution_id=run.execution_id, status="completed", content="新回复")
+    )
+    result = await backfill_local(unified, batch_size=1)
+    assert result["agent_bot_agent_run"]["inserted"] == 0
+    detail = await unified.get_call((await unified.list_calls()).items[0].id)
+    assert detail.status == "completed" and detail.replay_context == "新回复"
+    assert len((await store.list_steps(run.execution_id)).items) == 1
 
 
 @pytest.mark.parametrize("mysql_semantics", [False, True], ids=["sqlite", "mysql"])

@@ -487,8 +487,9 @@ CREATE TABLE IF NOT EXISTS agent_bot_call_record (
   `execution_id` CHAR(32) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '本地执行标识，保留步骤和附件关联',
   `status` VARCHAR(16) COLLATE utf8mb4_bin NOT NULL COMMENT '执行状态，缺失历史状态为 unknown',
   PRIMARY KEY (`id`),
+  KEY idx_call_time (`create_time`, `id`) COMMENT '按调用时间稳定分页',
   UNIQUE KEY uk_call_source (`source`, `source_id`) COMMENT '来源内去重，避免不同系统主键冲突',
-  KEY idx_call_type (`type`, `id`) COMMENT '按类型分页',
-  KEY idx_call_session (`session_Id`, `id`) COMMENT '按会话分页',
-  KEY idx_call_status (`status`, `id`) COMMENT '按状态分页'
+  KEY idx_call_type (`type`, `create_time`, `id`) COMMENT '按类型分页',
+  KEY idx_call_session (`session_Id`, `create_time`, `id`) COMMENT '按会话分页',
+  KEY idx_call_status (`status`, `create_time`, `id`) COMMENT '按状态分页'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='统一 AI 调用记录';

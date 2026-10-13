@@ -24,6 +24,7 @@ from agent_bot.agent.tools.runtime import BoundTools
 from agent_bot.media.contracts import MediaScope, ValidatedImage
 
 if TYPE_CHECKING:
+    from agent_bot.agent.model_routing import AgentModelRouter
     from agent_bot.ai.providers.langchain import LangChainProvider
 
 
@@ -39,6 +40,7 @@ class PreparedRun:
     max_steps: int
     media_scope: MediaScope | None = None
     images: tuple[ValidatedImage, ...] = ()
+    model_router: AgentModelRouter | None = None
 
 
 class AgentEngine:

@@ -56,13 +56,15 @@ class AgentCatalog(AiDatabase):
                     )
 
     async def _create(self, kind, body):
+        """保存目录并校验所有模型引用，图片专用路由需要显式识图能力。"""
         def write(connection):
+            """所有引用和关联在同一事务验证，失败回滚整个创建。"""
             values = body.model_dump()
             if kind == "mcp":
                 write_credential(values, body)
             relations = {k: values.pop(k) for k in RELATIONS} if kind == "agent" else {}
             if kind == "agent":
-                AiCatalog._get(self, connection, "model", values["model_id"], lock=True)
+                self._validate_models(connection, values)
             stamp = datetime.now(timezone.utc).replace(tzinfo=None)
             values.update(revision=1, created_at=stamp, updated_at=stamp)
             values = encode(values)
@@ -80,11 +82,13 @@ class AgentCatalog(AiDatabase):
         return await self.run(write, write=True)
 
     async def _update(self, kind, id, patch):
+        """合并省略及清空字段后一次校验，版本冲突不产生部分路由修改。"""
         changes = patch.model_dump(exclude_unset=True, exclude={"expected_revision"})
         if not changes:
             raise AgentError("AGENT_EMPTY_PATCH", status_code=422)
 
         def write(connection):
+            """合并后的模型路由与关联共同使用乐观锁版本。"""
             old = self._get(connection, kind, id)
             if old.revision != patch.expected_revision:
                 raise AgentError("AGENT_CONFIG_CONFLICT", status_code=409)
@@ -99,7 +103,7 @@ class AgentCatalog(AiDatabase):
                 .model_dump()
             )
             if kind == "agent":
-                AiCatalog._get(self, connection, "model", values["model_id"], lock=True)
+                self._validate_models(connection, values)
                 self._relations(connection, id, values)
             if kind == "mcp":
                 write_credential(values, patch, old)
@@ -115,6 +119,14 @@ class AgentCatalog(AiDatabase):
             return self._get(connection, kind, id)
 
         return await self.run(write, write=True)
+
+    def _validate_models(self, connection, values: dict) -> None:
+        """引用必须存在；停用配置仍可编辑，实际启用状态在使用时检查。"""
+        for field in ("model_id", "vision_model_id", "fallback_model_id"):
+            if values[field] is not None:
+                model = AiCatalog._get(self, connection, "model", values[field], lock=True)
+                if field == "vision_model_id" and not model.media.vision_enabled:
+                    raise AgentError("MEDIA_VISION_UNSUPPORTED", status_code=422)
 
     async def _delete(self, kind, id, revision):
         def write(connection):
@@ -221,7 +233,7 @@ class AgentCatalog(AiDatabase):
         return item
 
     async def snapshot(self, request: AgentRequest, *, search_code=None) -> AgentSnapshot:
-        """在同一读取事务取得不可变配置，包含显式媒体能力。"""
+        """根据本次图片输入选择主模型，备用快照只在明确配置时读取。"""
 
         def read(connection):
             """一致性读取不持有行锁，避免与目录配置写入形成反向锁序。"""
@@ -231,7 +243,9 @@ class AgentCatalog(AiDatabase):
                 else None
             )
             if agent:
-                model = AiCatalog._get(self, connection, "model", agent.model_id)
+                has_images = bool(request.image_urls or request.attachment_ids)
+                model_id = agent.vision_model_id if has_images else None
+                model = AiCatalog._get(self, connection, "model", model_id or agent.model_id)
             else:
                 row = query(
                     connection,
@@ -243,8 +257,15 @@ class AgentCatalog(AiDatabase):
                     raise AgentError("AGENT_MODEL_UNAVAILABLE", status_code=400)
                 model = model_view(connection, row)
             provider = AiCatalog._get(self, connection, "provider", model.provider_id)
-            if not model.enabled or not provider.enabled:
+            if (not model.enabled or not provider.enabled) and not (
+                agent and agent.fallback_model_id
+            ):
                 raise AgentError("AGENT_MODEL_UNAVAILABLE", status_code=400)
+            fallback = None
+            if agent and agent.fallback_model_id and agent.fallback_model_id != model.id:
+                backup = AiCatalog._get(self, connection, "model", agent.fallback_model_id)
+                backup_provider = AiCatalog._get(self, connection, "provider", backup.provider_id)
+                fallback = ResolvedModel(model=backup, provider=backup_provider)
             skills = (
                 tuple(self._get(connection, "skill", id) for id in agent.skill_ids) if agent else ()
             )
@@ -264,6 +285,9 @@ class AgentCatalog(AiDatabase):
             )
             if agent:
                 revisions[f"agent:{agent.id}"] = agent.revision
+            if fallback:
+                revisions[f"model:{fallback.model.id}"] = fallback.model.revision
+                revisions[f"provider:{fallback.provider.id}"] = fallback.provider.revision
             selected = (
                 request.tools
                 if request.tools is not None
@@ -284,6 +308,7 @@ class AgentCatalog(AiDatabase):
                 mcps=mcps,
                 search_mcp=search,
                 resolved=ResolvedModel(model=model, provider=provider),
+                fallback=fallback,
                 revisions=revisions,
             )
 

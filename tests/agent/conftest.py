@@ -27,6 +27,8 @@ def agent_database():
         enabled INTEGER, revision INTEGER, created_at TEXT, updated_at TEXT);
     CREATE TABLE agent_bot_agent(id INTEGER PRIMARY KEY, name TEXT, description TEXT,
         code TEXT UNIQUE, system_prompt TEXT, model_id INTEGER REFERENCES agent_bot_ai_model(id),
+        vision_model_id INTEGER REFERENCES agent_bot_ai_model(id),
+        fallback_model_id INTEGER REFERENCES agent_bot_ai_model(id),
         tools TEXT, max_steps INTEGER, options TEXT, enabled INTEGER,
         revision INTEGER, created_at TEXT, updated_at TEXT);
     CREATE TABLE agent_bot_agent_skill(agent_id INTEGER REFERENCES agent_bot_agent(id)

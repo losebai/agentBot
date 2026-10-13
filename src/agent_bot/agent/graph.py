@@ -17,6 +17,7 @@ from agent_bot.agent.prompting import AgentPromptBuilder
 from agent_bot.agent.tools.langchain import LangChainTools
 from agent_bot.agent.tools.schema import bounded_json
 from agent_bot.ai.contracts import TokenUsage
+from agent_bot.ai.errors import AiError
 from agent_bot.services.request_deadline import remaining_timeout
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ def build_agent_graph(
     *,
     acknowledged: asyncio.Event | None = None,
 ) -> CompiledStateGraph:
-    """创建请求级执行图，由条件边推进轮次，不配置重试或检查点。"""
+    """条件边推进轮次；显式备用只接管模型节点，不重放工具或图状态。"""
     definitions = tools.bound.definitions
     role = "\n\n".join(m.text for m in prepared.call.messages if m.role == "system")
     initial = [m for m in prepared.call.messages if m.role != "system"]
@@ -61,7 +62,7 @@ def build_agent_graph(
             await acknowledged.wait()
 
     async def model_node(state: AgentState, *, final_only: bool = False) -> AgentState:
-        """一次模型调用同时受上下文预算、总期限与完整输出校验约束。"""
+        """失败时只转交本轮公共对话，已完成工具及轮次保持不变。"""
         turn = state.get("turn", 0) + 1
         base = state.get("messages", initial)
         prompt = AgentPromptBuilder.build(
@@ -90,21 +91,43 @@ def build_agent_graph(
                 "timeout_seconds": remaining_timeout(prepared.request.timeout_seconds),
             }
         )
-        await emit("model_start", turn)
-        completed, text = None, ""
-        async with aclosing(provider.stream_turn(call)) as stream:
-            async for event in stream:
-                if completed is not None:
+        while True:
+            router = prepared.model_router
+            selected_provider = provider
+            if router:
+                call = router.bind_call(call)
+                selected_provider = router.provider
+            # 备用重新发布 model_start，让同步和流式消费者清除失败模型的草稿。
+            await emit("model_start", turn)
+            completed, text = None, ""
+            try:
+                async with aclosing(selected_provider.stream_turn(call)) as stream:
+                    async for event in stream:
+                        if completed is not None:
+                            raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+                        if event.kind == "text_delta":
+                            text += event.delta or ""
+                            if len(text.encode()) > 1048576:
+                                raise AgentError("AGENT_MODEL_RESPONSE_TOO_LARGE")
+                            await emit("text_delta", turn, delta=event.delta)
+                        elif event.kind == "turn_end":
+                            completed = event.turn
+                if completed is None or text != completed.content:
                     raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
-                if event.kind == "text_delta":
-                    text += event.delta or ""
-                    if len(text.encode()) > 1048576:
-                        raise AgentError("AGENT_MODEL_RESPONSE_TOO_LARGE")
-                    await emit("text_delta", turn, delta=event.delta)
-                elif event.kind == "turn_end":
-                    completed = event.turn
-        if completed is None or text != completed.content:
-            raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+            except AiError as error:
+                if router is None:
+                    raise
+                message = router.forward(error)
+                # 仅在跨模型接管时清理旧延续；备用后续轮次需要自己的私有状态。
+                base = [m.model_copy(update={"continuation": ()}) for m in base]
+                call = call.model_copy(update={
+                    "messages": tuple(
+                        m.model_copy(update={"continuation": ()}) for m in call.messages
+                    ),
+                })
+                await emit("warning", turn, code="AGENT_MODEL_FORWARDED", message=message)
+                continue
+            break
         previous = state.get("usage")
         usage = (
             completed.usage

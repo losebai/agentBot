@@ -30,7 +30,7 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
             "新库使用 agent_bot_init.sql"
         ),
         "AI_CONFIG_CONFLICT": "配置已被修改或仍在启用，请重新加载后操作",
-        "AI_CONFIG_IN_USE": "供应商仍有关联模型，请先处理模型",
+        "AI_CONFIG_IN_USE": "配置仍被模型或 Agent 引用，请先解除关联",
         "AI_CREDENTIAL_MISSING": "供应商密钥尚未设置，请在供应商管理中重新录入",
         "AGENT_CREDENTIAL_MISSING": "MCP 访问令牌尚未设置，请在 MCP 服务中重新录入",
         "AI_MODEL_LIST_INVALID": "上游模型列表格式无效或超过数量限制",

@@ -4,9 +4,13 @@ import { AiApi } from '../ai-api';
 import { errorMessage } from '../api';
 import type { AiModel, Page } from '../ai-types';
 
-/** 编辑框每次打开均读取模型状态，避免跨页面启用模型后仍显示旧快照。 */
-export function AgentModelSelect({ token, value, onChange }: {
+/** 三项路由共用一次可刷新读取，保留未加载引用并明确标出图片能力。 */
+export function AgentModelSelect({ token, value, onChange, visionValue, fallbackValue,
+  onVisionChange, onFallbackChange }: {
   token: string; value: number; onChange: (value: number) => void;
+  visionValue?: number | null; fallbackValue?: number | null;
+  onVisionChange?: (value: number | null) => void;
+  onFallbackChange?: (value: number | null) => void;
 }) {
   const api = useMemo(() => new AiApi(token), [token]);
   const [page, setPage] = useState<Page<AiModel>>({ items: [], next_cursor: null });
@@ -42,7 +46,8 @@ export function AgentModelSelect({ token, value, onChange }: {
 
   return <>
     {error && <Alert type="error" showIcon message={'模型列表读取失败：' + error} />}
-    <label>默认模型<select required value={value || ''} disabled={busy}
+    <fieldset><legend>模型路由</legend>
+    <label>{onVisionChange ? '聊天模型' : '默认模型'}<select required value={value || ''} disabled={busy}
       onChange={event => onChange(Number(event.target.value))}>
       <option value="">{busy ? '正在加载模型…' : '选择模型'}</option>
       {!!value && !page.items.some(model => model.id === value) &&
@@ -51,6 +56,29 @@ export function AgentModelSelect({ token, value, onChange }: {
         {model.alias}{model.enabled ? '' : '（停用）'}
       </option>)}
     </select></label>
+    {onVisionChange && <label>图片理解模型<select value={visionValue ?? ''} disabled={busy}
+      onChange={event => onVisionChange(event.target.value ? Number(event.target.value) : null)}>
+      <option value="">未配置：沿用聊天模型</option>
+      {!!visionValue && !page.items.some(model => model.id === visionValue) &&
+        <option value={visionValue}>模型 #{visionValue}（尚未加载）</option>}
+      {page.items.map(model => <option key={model.id} value={model.id}
+        disabled={!model.media?.vision_enabled}>
+        {model.alias}{model.enabled ? '' : '（停用）'}
+        {model.media?.vision_enabled ? '（支持图片理解）' : '（未启用图片理解）'}
+      </option>)}
+    </select></label>}
+    {onFallbackChange && <label>错误转发模型<select value={fallbackValue ?? ''} disabled={busy}
+      onChange={event => onFallbackChange(event.target.value ? Number(event.target.value) : null)}>
+      <option value="">不启用错误转发</option>
+      {!!fallbackValue && !page.items.some(model => model.id === fallbackValue) &&
+        <option value={fallbackValue}>模型 #{fallbackValue}（尚未加载）</option>}
+      {page.items.map(model => <option key={model.id} value={model.id}>
+        {model.alias}{model.enabled ? '' : '（停用）'}
+        {model.media?.vision_enabled ? '（支持图片理解）' : ''}
+      </option>)}
+    </select></label>}
+    {onFallbackChange && <p className="field-help">模型失败时由备用模型接管一次，继续使用已有工具结果。带图请求的备用模型也需启用图片理解。</p>}
+    </fieldset>
     <div className="heading-actions">
       <Button loading={busy} onClick={() => void load()}>刷新模型状态</Button>
       {page.next_cursor && <Button disabled={busy} onClick={() => void load(page.next_cursor!)}>加载更多模型</Button>}

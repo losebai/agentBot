@@ -66,7 +66,7 @@ def test_incremental_comments_do_not_redeclare_keys_or_change_column_types():
 
 
 def test_unified_initialization_preserves_owned_schema_and_orders_dependencies():
-    """只允许已声明的凭据字段迁移，其他列与外键依赖仍须保留。"""
+    """只允许已声明的凭据和模型路由迁移，其他列与外键依赖仍须保留。"""
     sql = (ROOT / "sql/agent_bot_init.sql").read_text("utf-8")
     tables = definitions(sql)
     baseline = json.loads(Path(__file__).with_name("schema_baseline.json").read_text("utf-8"))
@@ -81,6 +81,19 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
                 expected = expected.replace(
                     "credential_ref VARCHAR(128)NULL",
                     "credential TEXT NULL,credential_required TINYINT NOT NULL DEFAULT 0",
+                )
+            if name == "agent_bot_agent":
+                expected = expected.replace(
+                    "model_id BIGINT UNSIGNED NOT NULL,",
+                    "model_id BIGINT UNSIGNED NOT NULL,"
+                    "vision_model_id BIGINT UNSIGNED NULL DEFAULT NULL,"
+                    "fallback_model_id BIGINT UNSIGNED NULL DEFAULT NULL,",
+                )
+                expected += (
+                    ",CONSTRAINT fk_agent_vision_model FOREIGN KEY(vision_model_id)"
+                    "REFERENCES agent_bot_ai_model(id),"
+                    "CONSTRAINT fk_agent_fallback_model FOREIGN KEY(fallback_model_id)"
+                    "REFERENCES agent_bot_ai_model(id)"
                 )
             assert actual == expected, name
     created = set()

@@ -7,8 +7,8 @@ import { AgentModelSelect } from '../components/AgentModelSelect';
 import { AgentToolSelects } from '../components/AgentToolSelects';
 import { DirectoryEditor } from '../components/DirectoryEditor';
 
-const empty:AgentDraft={name:'',code:'',description:'',enabled:false,model_id:0,system_prompt:'',tools:[],skill_ids:[],mcp_ids:[],max_steps:3,options:{}};
-/** 管理 Agent 预设并下拉选择工具与 MCP；QQ 默认预设和授权开关由机器人配置管理。 */
+const empty:AgentDraft={name:'',code:'',description:'',enabled:false,model_id:0,vision_model_id:null,fallback_model_id:null,system_prompt:'',tools:[],skill_ids:[],mcp_ids:[],max_steps:3,options:{}};
+/** 管理消息模型路由及显式错误接管；工具和 MCP 权限不因模型切换扩大。 */
 export function Agents({token}:{token:string}) {
   const api=useMemo(()=>new AgentApi(token),[token]);
   const actions=useMemo(()=>({list:api.listAgents.bind(api),create:api.createAgent.bind(api),update:api.updateAgent.bind(api),remove:api.deleteAgent.bind(api)}),[api]);
@@ -17,10 +17,14 @@ export function Agents({token}:{token:string}) {
   useEffect(()=>{let alive=true;api.listSkills().then(s=>{if(alive){setSkills(s.items);setCursors({skills:s.next_cursor});}}).catch(e=>{if(alive)setError(errorMessage(e));});return()=>{alive=false;};},[api]);
   /** 按需追加关联目录，保留草稿中尚未加载的关联 ID。 */
   async function more(){try{const page=await api.listSkills(cursors.skills!);setSkills([...skills,...page.items]);setCursors({...cursors,skills:page.next_cursor});}catch(e){setError(errorMessage(e));}}
-  const directory = <DirectoryEditor title="Agent 管理" label="Agent" description="为助手选择模型、提示词、技能和可调用工具。" empty={empty} actions={actions} fields={(draft,set)=><>
+  const directory = <DirectoryEditor title="Agent 管理" label="Agent" description="为助手配置聊天与图片理解模型、错误转发、提示词和工具。" empty={empty} actions={actions} fields={(draft,set)=><>
     {error&&<Alert type="error" message={error}/>}
     <label>Agent 代码<input required pattern="[a-z][a-z0-9_-]{0,63}" value={draft.code} onChange={e=>set({...draft,code:e.target.value})}/></label>
-    <AgentModelSelect token={token} value={draft.model_id} onChange={model_id=>set({...draft,model_id})}/>
+    <AgentModelSelect token={token} value={draft.model_id}
+      visionValue={draft.vision_model_id ?? null} fallbackValue={draft.fallback_model_id ?? null}
+      onChange={model_id=>set(previous=>({...previous,model_id}))}
+      onVisionChange={vision_model_id=>set(previous=>({...previous,vision_model_id}))}
+      onFallbackChange={fallback_model_id=>set(previous=>({...previous,fallback_model_id}))}/>
     <label>系统提示词<textarea rows={7} maxLength={32000} value={draft.system_prompt} onChange={e=>set({...draft,system_prompt:e.target.value})}/></label>
     <label>工具轮次<input type="number" required min={1} max={5} value={draft.max_steps} onChange={e=>set({...draft,max_steps:Number(e.target.value)})}/></label>
     <AgentToolSelects token={token} tools={draft.tools} mcpIds={draft.mcp_ids}

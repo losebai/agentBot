@@ -485,6 +485,12 @@ CREATE TABLE IF NOT EXISTS agent_bot_agent (
     system_prompt TEXT COLLATE NOCASE NOT NULL,
     -- 关联的模型主键
     model_id INTEGER NOT NULL CHECK (model_id >= 0),
+    -- 图片理解模型；空值沿用聊天模型，模型引用阻止被使用的模型删除。
+    vision_model_id INTEGER DEFAULT NULL REFERENCES agent_bot_ai_model(id)
+        CHECK (vision_model_id IS NULL OR vision_model_id >= 1),
+    -- 错误转发模型；空值禁用转发，每请求最多接管一次。
+    fallback_model_id INTEGER DEFAULT NULL REFERENCES agent_bot_ai_model(id)
+        CHECK (fallback_model_id IS NULL OR fallback_model_id >= 1),
     -- 允许使用的本地工具列表
     tools TEXT COLLATE NOCASE NOT NULL CHECK (json_valid(tools)),
     -- 最大工具调用轮次

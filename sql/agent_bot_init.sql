@@ -311,6 +311,8 @@ CREATE TABLE IF NOT EXISTS agent_bot_agent (
   description VARCHAR(2000) NOT NULL COMMENT '中文用途说明',
   system_prompt MEDIUMTEXT NOT NULL COMMENT '系统提示词',
   model_id BIGINT UNSIGNED NOT NULL COMMENT '关联的模型主键',
+  vision_model_id BIGINT UNSIGNED NULL DEFAULT NULL COMMENT '图片理解模型；空值沿用聊天模型',
+  fallback_model_id BIGINT UNSIGNED NULL DEFAULT NULL COMMENT '错误转发模型；空值禁用转发，每请求最多接管一次',
   tools JSON NOT NULL COMMENT '允许使用的本地工具列表',
   max_steps INT NOT NULL COMMENT '最大工具调用轮次',
   options JSON NOT NULL COMMENT '模型生成参数',
@@ -319,7 +321,10 @@ CREATE TABLE IF NOT EXISTS agent_bot_agent (
   created_at DATETIME(6) NOT NULL COMMENT '创建时间，协调世界时',
   updated_at DATETIME(6) NOT NULL COMMENT '更新时间，协调世界时',
   -- 外键保证引用存在；级联规则沿用原定义，保持删除语义。
-  CONSTRAINT fk_agent_model FOREIGN KEY(model_id) REFERENCES agent_bot_ai_model(id)
+  CONSTRAINT fk_agent_model FOREIGN KEY(model_id) REFERENCES agent_bot_ai_model(id),
+  -- 路由引用阻止删除仍被 Agent 使用的模型，不级联删除 Agent。
+  CONSTRAINT fk_agent_vision_model FOREIGN KEY(vision_model_id) REFERENCES agent_bot_ai_model(id),
+  CONSTRAINT fk_agent_fallback_model FOREIGN KEY(fallback_model_id) REFERENCES agent_bot_ai_model(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体配置';
 
 CREATE TABLE IF NOT EXISTS agent_bot_agent_skill (

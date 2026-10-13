@@ -1,11 +1,49 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { Agents } from './Agents';
+
+it('聊天、图片理解与错误转发独立保存，清空路由提交 null', async () => {
+  const patches: unknown[] = [];
+  let agent = { id: 1, revision: 1, code: 'helper', name: '助手', description: '', enabled: true,
+    model_id: 1, vision_model_id: null as number | null, fallback_model_id: null as number | null,
+    skill_ids: [], mcp_ids: [], tools: [], system_prompt: '', max_steps: 3, options: {} };
+  vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+    if (init?.method === 'PATCH') {
+      const patch = JSON.parse(String(init.body)); patches.push(patch);
+      agent = { ...agent, ...patch, revision: agent.revision + 1 };
+      return Response.json(agent);
+    }
+    if (String(url).includes('/ai/models?')) return Response.json({ items: [
+      { id: 1, alias: 'chat', enabled: true, media: { vision_enabled: false } },
+      { id: 2, alias: 'vision', enabled: true, media: { vision_enabled: true } },
+      { id: 3, alias: 'backup', enabled: true, media: { vision_enabled: true } },
+    ], next_cursor: null });
+    return Response.json({ items: String(url).includes('/agents?') ? [agent] : [], next_cursor: null });
+  }));
+  render(<Agents token="offline" />);
+  fireEvent.click(await screen.findByRole('button', { name: '编辑助手' }));
+  await waitFor(() => expect(screen.getByLabelText('聊天模型')).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('图片理解模型'), { target: { value: '2' } });
+  fireEvent.change(screen.getByLabelText('错误转发模型'), { target: { value: '3' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
+  await waitFor(() => expect(patches).toEqual([
+    { expected_revision: 1, vision_model_id: 2, fallback_model_id: 3 },
+  ]));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  fireEvent.click(screen.getByRole('button', { name: '编辑助手' }));
+  await waitFor(() => expect(screen.getByLabelText('图片理解模型')).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('图片理解模型'), { target: { value: '' } });
+  fireEvent.change(screen.getByLabelText('错误转发模型'), { target: { value: '' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
+  await waitFor(() => expect(patches[1]).toEqual({
+    expected_revision: 2, vision_model_id: null, fallback_model_id: null,
+  }));
+});
 
 it('工具和 MCP 下拉选择保存准确的名称和 ID，不改变其他 Agent 配置', async () => {
   let patch: unknown;
   const agent = { id: 1, revision: 3, code: 'helper', name: '助手', description: '', enabled: false,
-    model_id: 1, skill_ids: [], mcp_ids: [], tools: [], system_prompt: '原提示', max_steps: 3, options: {} };
+    model_id: 1, vision_model_id: null, fallback_model_id: null, skill_ids: [], mcp_ids: [], tools: [], system_prompt: '原提示', max_steps: 3, options: {} };
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
     if (init?.method === 'PATCH') { patch = JSON.parse(String(init.body)); return Response.json(agent); }
     if (String(url).includes('/mcp-servers?')) return Response.json({ items: [
@@ -26,14 +64,14 @@ it('工具和 MCP 下拉选择保存准确的名称和 ID，不改变其他 Agen
 });
 
 it('关联未加载时保留 ID，冲突保留草稿，只提交修改字段', async () => {
-  const item = {id:1,revision:1,code:'helper',name:'助手',description:'',enabled:true,model_id:90,skill_ids:[80],mcp_ids:[],tools:['memory'],system_prompt:'原提示',max_steps:3,options:{}};
+  const item = {id:1,revision:1,code:'helper',name:'助手',description:'',enabled:true,model_id:90,vision_model_id:null,fallback_model_id:null,skill_ids:[80],mcp_ids:[],tools:['memory'],system_prompt:'原提示',max_steps:3,options:{}};
   const fetcher = vi.fn(async (url, init) => init?.method==='PATCH'
     ? Response.json({message:'配置版本冲突',code:'AI_CONFIG_CONFLICT'},{status:409})
     : Response.json({items:String(url).includes('/agents?')?[item]:[],next_cursor:null}));
   vi.stubGlobal('fetch',fetcher);
   render(<Agents token="offline"/>);
   fireEvent.click(await screen.findByRole('button',{name:'编辑助手'}));
-  expect(screen.getByLabelText('默认模型')).toHaveValue('90');
+  expect(screen.getByLabelText('聊天模型')).toHaveValue('90');
   fireEvent.change(screen.getByLabelText('系统提示词'),{target:{value:'尚未保存的修改'}});
   fireEvent.click(screen.getByRole('button',{name:'保存 Agent'}));
   expect(await screen.findByText('配置版本冲突')).toBeInTheDocument();
@@ -44,7 +82,7 @@ it('关联未加载时保留 ID，冲突保留草稿，只提交修改字段', a
 it('重新打开编辑时读取最新模型状态，不沿用页面首次访问的停用快照', async () => {
   let enabled = false;
   const item = { id: 1, revision: 1, code: 'helper', name: '助手', description: '', enabled: true,
-    model_id: 9, skill_ids: [], mcp_ids: [], tools: [], system_prompt: '', max_steps: 3, options: {} };
+    model_id: 9, vision_model_id: null, fallback_model_id: null, skill_ids: [], mcp_ids: [], tools: [], system_prompt: '', max_steps: 3, options: {} };
   vi.stubGlobal('fetch', vi.fn(async url => {
     if (String(url).includes('/ai/models?')) return Response.json({ items: [
       { id: 9, revision: 1, alias: 'local-model', upstream_model: 'qwen', provider_id: 1, enabled },
@@ -53,21 +91,21 @@ it('重新打开编辑时读取最新模型状态，不沿用页面首次访问�
   }));
   render(<Agents token="offline" />);
   fireEvent.click(await screen.findByRole('button', { name: '编辑助手' }));
-  expect(await screen.findByRole('option', { name: 'local-model（停用）' })).toBeInTheDocument();
+  expect(await within(screen.getByLabelText('聊天模型')).findByRole('option', { name: 'local-model（停用）' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /取\s*消/ }));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   // 对应切换至供应商页面启用模型，再回到仍挂载着的 Agent 页面。
   enabled = true;
   fireEvent.click(screen.getByRole('button', { name: '编辑助手' }));
-  expect(await screen.findByRole('option', { name: 'local-model' })).toBeInTheDocument();
-  expect(screen.getByLabelText('默认模型')).toHaveValue('9');
-  expect(screen.queryByRole('option', { name: /local-model（停用）/ })).not.toBeInTheDocument();
+  expect(await within(screen.getByLabelText('聊天模型')).findByRole('option', { name: 'local-model' })).toBeInTheDocument();
+  expect(screen.getByLabelText('聊天模型')).toHaveValue('9');
+  expect(within(screen.getByLabelText('聊天模型')).queryByRole('option', { name: /local-model（停用）/ })).not.toBeInTheDocument();
 });
 
 it('模型翻页保留已选 ID，刷新失败明确报错而不把未知状态显示为停用', async () => {
   let failed = false;
   const item = { id: 1, revision: 1, code: 'helper', name: '助手', description: '', enabled: true,
-    model_id: 90, skill_ids: [], mcp_ids: [], tools: [], system_prompt: '', max_steps: 3, options: {} };
+    model_id: 90, vision_model_id: null, fallback_model_id: null, skill_ids: [], mcp_ids: [], tools: [], system_prompt: '', max_steps: 3, options: {} };
   vi.stubGlobal('fetch', vi.fn(async url => {
     if (String(url).includes('/ai/models?')) {
       if (failed) return Response.json({ message: '目录暂时不可用' }, { status: 503 });
@@ -83,13 +121,13 @@ it('模型翻页保留已选 ID，刷新失败明确报错而不把未知状态�
   fireEvent.click(await screen.findByRole('button', { name: '编辑助手' }));
   fireEvent.change(screen.getByLabelText('系统提示词'), { target: { value: '保留草稿' } });
   fireEvent.click(await screen.findByRole('button', { name: '加载更多模型' }));
-  expect(await screen.findByRole('option', { name: 'enabled-model' })).toBeInTheDocument();
-  expect(screen.getByRole('option', { name: 'disabled-model（停用）' })).toBeInTheDocument();
-  expect(screen.getByLabelText('默认模型')).toHaveValue('90');
+  expect(await within(screen.getByLabelText('聊天模型')).findByRole('option', { name: 'enabled-model' })).toBeInTheDocument();
+  expect(within(screen.getByLabelText('聊天模型')).getByRole('option', { name: 'disabled-model（停用）' })).toBeInTheDocument();
+  expect(screen.getByLabelText('聊天模型')).toHaveValue('90');
   failed = true;
   fireEvent.click(screen.getByRole('button', { name: '刷新模型状态' }));
   expect(await screen.findByText(/模型列表读取失败：目录暂时不可用/)).toBeVisible();
   expect(screen.queryByRole('option', { name: /停用/ })).not.toBeInTheDocument();
-  expect(screen.getByLabelText('默认模型')).toHaveValue('90');
+  expect(screen.getByLabelText('聊天模型')).toHaveValue('90');
   expect(screen.getByLabelText('系统提示词')).toHaveValue('保留草稿');
 });

@@ -4,7 +4,8 @@ import type { MediaAsset } from './media-types';
 
 export interface DirectoryDraft { name: string; description: string; enabled: boolean }
 export interface Versioned { id: number; revision: number; created_at?: string; updated_at?: string }
-export interface AgentDraft extends DirectoryDraft { code: string; model_id: number; system_prompt: string; skill_ids: number[]; mcp_ids: number[]; tools: string[]; max_steps: number; options: Record<string, JsonValue> }
+/** 聊天模型沿用原绑定，图片和错误转发空值分别表示沿用及关闭。 */
+export interface AgentDraft extends DirectoryDraft { code: string; model_id: number; vision_model_id?: number | null; fallback_model_id?: number | null; system_prompt: string; skill_ids: number[]; mcp_ids: number[]; tools: string[]; max_steps: number; options: Record<string, JsonValue> }
 export interface Agent extends AgentDraft, Versioned {}
 export interface SkillDraft extends DirectoryDraft { category: string; system_prompt: string; sample_prompt: string; tools: string[] }
 export interface Skill extends SkillDraft, Versioned {}

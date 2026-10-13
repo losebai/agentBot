@@ -10,6 +10,7 @@ coverage.xml
 !/.env.example
 .superpowers/
 dist/
+build/
 dist-ci/
 reports/
 .uv-cache/

@@ -19,6 +19,7 @@ from agent_bot.agent.contracts import (
 )
 from agent_bot.agent.engine import AgentEngine, PreparedRun
 from agent_bot.agent.errors import AgentError
+from agent_bot.agent.model_routing import AgentModelRouter
 from agent_bot.agent.tools.policy import LEGACY_TOOLS
 from agent_bot.ai.contracts import TokenUsage
 from agent_bot.ai.errors import AiError
@@ -81,23 +82,23 @@ class AgentService:
         ):
             raise AgentError("MEDIA_INPUT_UNAUTHORIZED", status_code=403)
         has_images = bool(request.image_urls or request.attachment_ids)
-        if has_images and not model.model.media.vision_enabled:
-            raise AgentError("MEDIA_VISION_UNSUPPORTED", status_code=422)
         if (
             has_images
             and request.tools is not None
             and not set(request.tools) <= set(authority.allowed_tools)
         ):
             raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
-        provider = self.providers[model.provider.protocol]
-        credential = self.credentials.resolve(model.provider)
         options = LlmRequestOptions(
             **{
                 **(snapshot.agent.options.model_dump(exclude_none=True) if snapshot.agent else {}),
                 **request.options.model_dump(exclude_none=True),
             }
         )
-        provider.validate_options(options)
+        router = AgentModelRouter(
+            snapshot, self.providers, self.credentials, options,
+            has_images=has_images, timeout_seconds=request.timeout_seconds,
+        )
+        model, provider, credential = router.resolved, router.provider, router.credential
         maximum = snapshot.agent.max_steps if snapshot.agent else 3
         if request.max_steps is not None:
             if snapshot.agent and request.max_steps > maximum:
@@ -136,7 +137,7 @@ class AgentService:
             timeout_seconds=remaining_timeout(request.timeout_seconds),
         )
         return PreparedRun(
-            execution_id, request, snapshot, authority, call, maximum, scope, images
+            execution_id, request, snapshot, authority, call, maximum, scope, images, router
         ), provider
 
     async def complete(self, request, authority):
@@ -199,11 +200,16 @@ class AgentService:
                             session_id=request.session_id,
                             request_id=request.request_id,
                             entry=authority.entry,
-                            model=prepared.snapshot.resolved.model.upstream_model,
+                            model=prepared.call.resolved.model.upstream_model,
                             prompt=request.prompt,
                             revisions=prepared.snapshot.revisions,
                             request_context={
                                 'agent_code': request.agent_code,
+                                'model_routes': {
+                                    'primary': prepared.snapshot.resolved.model.alias,
+                                    'fallback': prepared.snapshot.fallback.model.alias
+                                    if prepared.snapshot.fallback else None,
+                                },
                                 'model': prepared.call.resolved.model.upstream_model,
                                 'messages': [
                                     {'role': message.role, 'content': message.text}
@@ -228,6 +234,12 @@ class AgentService:
                             media_scope=prepared.media_scope,
                             images=prepared.images,
                         ) as tools:
+                            if prepared.model_router.initial_warning:
+                                yield AgentEvent(
+                                    kind="warning", execution_id=execution_id, sequence=0,
+                                    code="AGENT_MODEL_FORWARDED",
+                                    message=prepared.model_router.initial_warning,
+                                )
                             for warning in tools.warnings:
                                 yield AgentEvent(
                                     kind="warning",
@@ -285,7 +297,9 @@ class AgentService:
                                         else "completed"
                                         if item.kind == "tool_result"
                                         else "started",
-                                        summary=item.code or "",
+                                        summary=item.message
+                                        if item.code == "AGENT_MODEL_FORWARDED"
+                                        else item.code or "",
                                     ),
                                 )
                             yield item

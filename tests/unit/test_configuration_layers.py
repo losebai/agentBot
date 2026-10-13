@@ -240,7 +240,7 @@ def test_export_roundtrip_preserves_backslashes_and_literal_secret(
         "chat_session_secret": secret,
         "onebot_v11_access_token": config().onebot_v11_access_token.get_secret_value(),
         "command_start": ["\\", "C:\\bots", "O'Reilly"],
-        "nickname": ["${REVIEW_LITERAL}"],
+        "superusers": ["${REVIEW_LITERAL}"],
         "onebot_v11_secret": None,
         "chat_max_input_chars": "not-json",
     }
@@ -263,7 +263,7 @@ def test_export_roundtrip_preserves_backslashes_and_literal_secret(
     loaded = load_static_config(env_file=str(target))
     assert loaded.command_start == {"\\", "C:\\bots", "O'Reilly"}
     assert loaded.chat_session_secret.get_secret_value() == secret
-    assert loaded.nickname == {"${REVIEW_LITERAL}"}
+    assert loaded.superusers == {"${REVIEW_LITERAL}"}
     assert loaded.onebot_v11_secret is None
     # 显式旧环境导入也必须使用静态秘密字面值，不能在整体验证前改写它。
     imported = load_legacy_runtime_config(env_file=str(target))

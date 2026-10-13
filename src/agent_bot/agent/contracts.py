@@ -44,8 +44,12 @@ class CodedItem(DirectoryItem):
 
 
 class AgentCreate(CodedItem):
+    """Agent 聊天绑定与可选图片、错误转发路由，空值保持既有行为。"""
+
     system_prompt: str = Field(default="", max_length=32000)
     model_id: int = Field(ge=1)
+    vision_model_id: int | None = Field(default=None, ge=1)
+    fallback_model_id: int | None = Field(default=None, ge=1)
     skill_ids: tuple[int, ...] = Field(default=(), max_length=256)
     tools: tuple[str, ...] = Field(default=(), max_length=256)
     mcp_ids: tuple[int, ...] = Field(default=(), max_length=3)
@@ -203,10 +207,13 @@ class ExecutionAuthority(AiModel):
 
 
 class AgentSnapshot(AiModel):
+    """主模型和备用模型固定在同一目录事务，运行时不重读配置。"""
+
     agent: AgentView | None = None
     skills: tuple[SkillView, ...] = ()
     mcps: tuple[McpView, ...] = ()
     resolved: ResolvedModel
+    fallback: ResolvedModel | None = None
     revisions: dict[str, int] = Field(default_factory=dict)
     search_mcp: McpView | None = None
 

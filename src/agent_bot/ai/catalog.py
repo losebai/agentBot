@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 
+import pymysql
+
 from agent_bot.ai.contracts import (
     CatalogReadiness,
     ModelCreate,
@@ -275,7 +277,9 @@ class AiCatalog(AiDatabase):
         return await self._update("model", id, body)
 
     async def _delete(self, kind: str, id: int, expected_revision: int):
+        """停用后才能删除，主模型及两项路由引用都返回明确的占用错误。"""
         def write(connection):
+            """引用检查与删除同属事务，数据库外键仍防止并发引用被破坏。"""
             current = self._get(connection, kind, id, lock=True)
             if current.revision != expected_revision or current.enabled:
                 raise AiError("AI_CONFIG_CONFLICT", status_code=409)
@@ -286,6 +290,21 @@ class AiCatalog(AiDatabase):
                 one=True,
             ):
                 raise AiError("AI_CONFIG_IN_USE", status_code=409)
+            if kind == "model":
+                # 独立 AI 目录可能尚未初始化 Agent 表，此时仍保持原删除能力。
+                try:
+                    referenced = query(
+                        connection,
+                        "SELECT id FROM agent_bot_agent WHERE model_id=%s "
+                        "OR vision_model_id=%s OR fallback_model_id=%s LIMIT 1",
+                        (id, id, id), one=True,
+                    )
+                except (pymysql.OperationalError, pymysql.ProgrammingError) as error:
+                    if error.args[0] != 1146:
+                        raise
+                    referenced = None
+                if referenced:
+                    raise AiError("AI_CONFIG_IN_USE", status_code=409)
             with connection.cursor() as cursor:
                 cursor.execute(f"DELETE FROM {_TABLES[kind]} WHERE id=%s", (id,))
 

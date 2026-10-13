@@ -37,6 +37,7 @@ agent-bot = "agent_bot.__main__:main"
 chat = "agent_bot.bot_cli:main"
 
 [project.optional-dependencies]
+desktop = ["pywebview>=6.0,<7; sys_platform == 'win32'"]
 dev = [
   "nonebug>=0.4.3,<1.0",
   "fakeredis>=2.31,<3.0",
@@ -48,10 +49,13 @@ dev = [
   "ruff>=0.12,<1.0",
 ]
 
+[dependency-groups]
+windows-build = ["pyinstaller>=6.16,<7; sys_platform == 'win32'"]
+
 [tool.hatch.build]
 exclude = [
   "/AGENTS.md", "/.superpowers", "/.venv", "/web/node_modules",
-  "/.pytest_cache", "/.ruff_cache", "/.coverage*", "/dist",
+  "/.pytest_cache", "/.ruff_cache", "/.coverage*", "/dist", "/build",
   "/.env", "/.env.*",
   "/data", "/logs", "/tts", "*.log", "tts-*.wav",
   "*.db", "*.sqlite", "*.sqlite3", "*-wal", "*-shm", "*-journal",
@@ -79,6 +83,8 @@ path = "tools/build_hook.py"
 "src/resources" = "agent_bot/resources"
 "sql/2026-10-13-unified-call-records.sql" = "agent_bot/resources/2026-10-13-unified-call-records.sql"
 "sql/2026-10-13-unified-call-records.sqlite.sql" = "agent_bot/resources/2026-10-13-unified-call-records.sqlite.sql"
+"sql/2026-10-13-agent-model-routing.sql" = "agent_bot/resources/2026-10-13-agent-model-routing.sql"
+"sql/2026-10-13-agent-model-routing.sqlite.sql" = "agent_bot/resources/2026-10-13-agent-model-routing.sqlite.sql"
 "sql/agent_bot_init.sql" = "agent_bot/resources/agent_bot_init.sql"
 "sql/agent_bot_init.sqlite.sql" = "agent_bot/resources/agent_bot_init.sqlite.sql"
 "sql/2026-10-13-chat-index-names.sql" = "agent_bot/resources/2026-10-13-chat-index-names.sql"

@@ -244,7 +244,7 @@ Job 执行检查及结果轮询间隔由 `chat_job_poll_seconds` 控制。首次
 
 ## 开发与验证
 
-GitLab CI、Docker 构建、服务器变量和回滚流程见 [CI/CD 部署说明](docs/gitlab-cicd.md)。流水线检查通过后才允许构建镜像与手动生产部署。
+GitLab CI、Linux 服务器 `192.168.1.5` 的 Web 部署、Windows 安装包构建、Runner 配置与回滚流程见 [CI/CD 部署说明](deploy/README.md)。检查通过后可手动发布 Web；Windows 安装包使用独立 Windows Runner 手动构建，不阻塞 Linux 部署。
 
 前端开发：
 

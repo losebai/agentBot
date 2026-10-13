@@ -57,6 +57,69 @@ def test_shell_scripts_parse_without_running_commands():
     subprocess.run([bash_path(), "-n", shell_path(ROOT / "tools/ci/deploy-via-ssh.sh")], check=True)
 
 
+@pytest.mark.parametrize("port", ["8080", "8443", "0", "65536", "8080;exit 0"])
+def test_ssh_deployment_transfers_network_settings_and_rejects_invalid_ports(tmp_path, port):
+    """真实执行 SSH 发布入口，以命令替身捕获清单，非法端口不能触发任何远端操作。"""
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    for name, script in {
+        "ssh": '#!/usr/bin/env bash\nprintf "ssh\\n" >> "$REMOTE_CALL_LOG"\n',
+        "scp": """#!/usr/bin/env bash
+printf 'scp\\n' >> "$REMOTE_CALL_LOG"
+if [[ "${!#}" == */release.env ]]; then
+    arguments=("$@")
+    cp "${arguments[-2]}" "$MANIFEST_CAPTURE"
+fi
+""",
+    }.items():
+        command = binaries / name
+        command.write_text(script, "utf-8", newline="\n")
+        command.chmod(0o755)
+    key = tmp_path / "key"
+    hosts = tmp_path / "hosts"
+    key.write_text("offline-placeholder", "utf-8")
+    hosts.write_text("offline-placeholder", "utf-8")
+    log = tmp_path / "remote-calls.txt"
+    manifest = tmp_path / "manifest.env"
+    result = subprocess.run(
+        # Git Bash 启动时会前置系统 PATH，进入 shell 后再限定替身路径。
+        [bash_path(), "-c", 'export PATH="$1:/usr/bin:/bin"; exec bash "$2"',
+         "--", shell_path(binaries), shell_path(ROOT / "tools/ci/deploy-via-ssh.sh")],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "HOME": shell_path(tmp_path / "home"),
+            "PATH": f"{shell_path(binaries)}:/usr/bin:/bin",
+            "DEPLOY_HOST": "192.168.1.5",
+            "DEPLOY_USER": "deploy",
+            "DEPLOY_PATH": "/opt/agentbot",
+            "DEPLOY_PORT": "22",
+            "SSH_PRIVATE_KEY": shell_path(key),
+            "SSH_KNOWN_HOSTS": shell_path(hosts),
+            "CI_PIPELINE_ID": "123",
+            "AGENTBOT_IMAGE": f"registry.example/agentbot@sha256:{'a' * 64}",
+            "AGENTBOT_BIND_ADDRESS": "192.168.1.5",
+            "AGENTBOT_HTTP_PORT": port,
+            "REMOTE_CALL_LOG": shell_path(log),
+            "MANIFEST_CAPTURE": shell_path(manifest),
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=20,
+    )
+    if port in {"8080", "8443"}:
+        assert result.returncode == 0, result.stderr
+        assert log.read_text("utf-8").splitlines() == ["ssh", "scp", "scp", "ssh"]
+        fields = dict(line.split("=", 1) for line in manifest.read_text("utf-8").splitlines())
+        assert fields["AGENTBOT_BIND_ADDRESS"] == "192.168.1.5"
+        assert fields["AGENTBOT_HTTP_PORT"] == port
+        assert fields["AGENTBOT_RUNTIME_ENV_FILE"] == "/opt/agentbot/runtime.env"
+    else:
+        assert result.returncode != 0
+        assert not log.exists()
+
+
 @pytest.mark.parametrize("failure", ["none", "pull", "health"])
 def test_deploy_preserves_or_rolls_back_current_release(tmp_path, failure):
     """以 Docker 替身验证成功切换、拉取失败和健康失败三个真实 shell 分支。"""

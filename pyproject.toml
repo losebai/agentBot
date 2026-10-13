@@ -67,6 +67,8 @@ artifacts = ["src/static/**"]
 # 只把根目录示例加入源码包，避免否定通配规则重新纳入本地基线中的同名文件。
 [tool.hatch.build.targets.sdist.force-include]
 ".env.example" = ".env.example"
+# 日期命名的迁移脚本被 Git 忽略规则排除，源码包必须显式保留完整 SQL 基线。
+"sql" = "sql"
 
 [tool.hatch.build.targets.wheel]
 # 当前源码位于 src/agent_bot，资源目录通过下方规则放到同一发布包。
@@ -79,6 +81,7 @@ dev-mode-dirs = ["."]
 path = "tools/build_hook.py"
 
 [tool.hatch.build.targets.wheel.force-include]
+"assets/desktop/agentbot-icon-v2.ico" = "agent_bot/desktop_icon.ico"
 "src/static" = "agent_bot/static"
 "src/resources" = "agent_bot/resources"
 "sql/2026-10-13-unified-call-records.sql" = "agent_bot/resources/2026-10-13-unified-call-records.sql"

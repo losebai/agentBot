@@ -16,6 +16,9 @@ variables:
   UV_VERSION: "0.11.2"
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
   UV_LINK_MODE: "copy"
+  # 部署作业必须由能访问 192.168.1.5 的内网 Docker Runner 执行。
+  DEPLOY_RUNNER_TAG: "linux-lan"
+  WINDOWS_RUNNER_TAG: "windows"
   PYTHONUTF8: "1"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   DOCKER_VERSION: "29.9.0"
@@ -84,6 +87,35 @@ package:
     expire_in: 14 days
     paths: [dist-ci/]
 
+# Windows 安装器使用原生 shell Runner；手动构建不会阻塞仅有 Linux Runner 的 Web 发布。
+windows-installer:
+  stage: package
+  tags: ["$WINDOWS_RUNNER_TAG"]
+  needs:
+    - job: python-check
+      artifacts: false
+    - job: frontend-check
+      artifacts: false
+    - job: deployment-check
+      artifacts: false
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && ($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/)'
+      when: manual
+      allow_failure: true
+  script:
+    - '$ErrorActionPreference = "Stop"'
+    - '& uv --version; if ($LASTEXITCODE -ne 0) { throw "Windows Runner 未安装 uv" }'
+    - '& powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_windows.ps1 -BuildInstaller; if ($LASTEXITCODE -ne 0) { throw "Windows 安装包构建失败" }'
+    # 无需交互桌面，通过临时 SQLite 验收打包后的真实后端。
+    - '& uv run --locked --extra dev --extra desktop python tools/check_windows.py dist/windows/AgentBot --first-run; if ($LASTEXITCODE -ne 0) { throw "Windows 包首次启动验收失败" }'
+  artifacts:
+    name: "agentbot-windows-$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
+    expire_in: 30 days
+    paths:
+      - dist/windows/AgentBot/
+      - dist/windows/installer/*-Setup.exe
+      - dist/windows/installer/SHA256SUMS.txt
+
 container-image:
   stage: image
   image: "docker:${DOCKER_VERSION}-cli"
@@ -112,12 +144,15 @@ container-image:
 deploy-production:
   stage: deploy
   image: alpine:3.22
+  tags: ["$DEPLOY_RUNNER_TAG"]
   needs: [container-image]
   interruptible: false
   resource_group: agentbot-production
   environment:
     name: production
+    url: http://192.168.1.5:8080
   variables:
+    DEPLOY_HOST: "192.168.1.5"
     DEPLOY_PORT: "22"
     DEPLOY_PATH: "/opt/agentbot"
   rules:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 import os
@@ -11,8 +12,10 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 _READY = "AGENT_BOT_DESKTOP_READY "
 _STAGE = "AGENT_BOT_DESKTOP_STAGE "
@@ -81,10 +84,13 @@ class BackendProcess:
 
     def wait_ready(
         self, timeout: float = 60, *, on_status: Callable[[str], None] | None = None,
+        cancelled: threading.Event | None = None,
     ) -> str:
         """从进程启动时计时并同步阶段，配置失败不再只给出泛化的等待提示。"""
         previous = None
         while True:
+            if cancelled is not None and cancelled.is_set():
+                raise RuntimeError("后端启动已取消。")
             if on_status is not None and self.stage != previous:
                 previous = self.stage
                 on_status(self.stage)
@@ -113,6 +119,84 @@ class BackendProcess:
             self.process.terminate()
             self.process.wait(timeout=5)
         self.finished.wait(timeout=2)
+
+
+class DesktopController:
+    """串行管理本窗口所属的后端，旧进程退出通知不能覆盖新实例的界面。"""
+
+    def __init__(
+        self, directory: Path, command: list[str], show_status: Callable[[str], None],
+        open_url: Callable[[str], None],
+    ) -> None:
+        """注入窗口操作，进程管理不依赖原生 GUI，便于验证实际子进程生命周期。"""
+        self.directory, self.command = directory, command
+        self.show_status, self.open_url = show_status, open_url
+        self.closed = threading.Event()
+        self.backend: BackendProcess | None = None
+        self._operation = threading.Lock()
+
+    def restart(self, port: int | None = None) -> None:
+        """先验证和保存新端口，再停止旧后端，整个交接只允许一个操作进行。"""
+        from agent_bot.desktop_settings import check_port_available, connection_settings, save_port
+
+        if not self._operation.acquire(blocking=False):
+            raise ValueError("后端正在启动或重启，请稍后再试。")
+        try:
+            if self.closed.is_set():
+                return
+            if port is not None:
+                host, port = connection_settings(self.directory, port_override=port)
+                current = self.backend
+                owns_port = (
+                    current is not None and current.url is not None
+                    and current.process is not None and current.process.poll() is None
+                    and urlsplit(current.url).port == port
+                )
+                if not owns_port:
+                    check_port_available(host, port)
+                save_port(self.directory, port)
+            self.show_status("正在重启后端…" if self.backend else "正在启动服务…")
+            if self.backend is not None:
+                self.backend.stop()
+            if self.closed.is_set():
+                return
+            backend = BackendProcess(
+                self.command, self.directory, self.directory / "logs" / "desktop-backend.log",
+            )
+            self.backend = backend
+            try:
+                backend.start()
+                url = backend.wait_ready(
+                    on_status=lambda stage: self.show_status(f"正在启动服务…\n{stage}"),
+                    cancelled=self.closed,
+                )
+                if not self.closed.is_set():
+                    self.open_url(url)
+                    threading.Thread(target=self._watch, args=(backend,), daemon=True).start()
+            except (OSError, RuntimeError) as exc:
+                backend.stop()
+                if not self.closed.is_set():
+                    message = str(exc) if isinstance(exc, RuntimeError) else "无法启动后端进程。"
+                    self.show_status(
+                        f"{message}\n可通过“服务”菜单修改端口或重启后端。\n"
+                        "详情：logs/desktop-backend.log",
+                    )
+        finally:
+            self._operation.release()
+
+    def _watch(self, backend: BackendProcess) -> None:
+        """仅当前进程的意外退出可改变界面，正常重启时忽略旧实例结束通知。"""
+        backend.finished.wait()
+        with self._operation:
+            if not self.closed.is_set() and self.backend is backend:
+                self.show_status("后端已停止，可通过“服务”菜单重新启动。\n详情：logs/desktop-backend.log")
+
+    def stop(self) -> None:
+        """先取消等待再串行停止进程，避免关窗与重启竞争留下后台服务。"""
+        self.closed.set()
+        with self._operation:
+            if self.backend is not None:
+                self.backend.stop()
 
 
 def serve(app: Any, host: str, port: int) -> None:
@@ -175,19 +259,39 @@ def run_backend() -> int:
     return 0
 
 
+@lru_cache(maxsize=1)
+def status_icon() -> str:
+    """内嵌随程序分发的图标，后端未启动时也可显示且无需重复读取。"""
+    icon = Path(__file__).with_name("desktop_icon.ico")
+    if not icon.is_file():
+        # 源码开发直接复用图标资产；wheel 与 EXE 由打包规则放入包目录。
+        icon = Path(__file__).resolve().parents[2] / "assets/desktop/agentbot-icon-v2.ico"
+    return "data:image/x-icon;base64," + base64.b64encode(icon.read_bytes()).decode("ascii")
+
+
 def status_page(message: str) -> str:
-    """无服务时也显示清晰状态；错误文字转义后展示，不注入脚本。"""
+    """图标与状态文字整体居中；脱敏错误转义后显示，后端未启动也可独立渲染。"""
     return (
         '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
-        '<style>body{font:16px system-ui;margin:64px;color:#303030;background:#fafafa}'
-        'h1{font-size:24px}p{line-height:1.8;white-space:pre-wrap}</style>'
-        f"<h1>AgentBot</h1><p>{html.escape(message)}</p></html>"
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>AgentBot</title><style>'
+        '*{box-sizing:border-box}body{font:16px system-ui;margin:0;color:#303030;'
+        'background:#fafafa;min-height:100vh;display:grid;place-items:center;padding:32px}'
+        'main{display:flex;flex-direction:column;align-items:center;text-align:center;'
+        'max-width:560px;width:100%;gap:20px}'
+        'img{width:96px;height:96px;object-fit:contain}'
+        'p{margin:0;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}</style>'
+        f'<body><main><img src="{status_icon()}" alt="AgentBot">'
+        f'<p role="status" aria-live="polite">{html.escape(message)}</p></main></body></html>'
     )
 
 
 def main() -> int:
-    """打开独立 WebView2 窗口，关窗或 GUI 失败时释放所属后端。"""
+    """通过桌面服务菜单重启或修改端口，网页不获得本机进程控制能力。"""
     import webview
+    from webview.menu import Menu, MenuAction
+
+    from agent_bot.desktop_settings import connection_settings, port_dialog, show_error
 
     directory = prepare_directory()
     command = (
@@ -195,44 +299,52 @@ def main() -> int:
         if getattr(sys, "frozen", False)
         else [sys.executable, "-m", "agent_bot.desktop", "--desktop-child"]
     )
-    backend = BackendProcess(command, directory, directory / "logs" / "desktop-backend.log")
-    closed = threading.Event()
     window = webview.create_window(
         "AgentBot", html=status_page("正在启动服务…"), width=1280, height=860,
         min_size=(800, 600), text_select=True,
     )
-    window.events.closed += closed.set
 
-    def show_status(stage: str) -> None:
-        """启动过程显示可定位的阶段，关窗后不再操作已销毁的 WebView。"""
-        if not closed.is_set():
-            window.load_html(status_page(f"正在启动服务…\n{stage}"))
+    def show_status(message: str) -> None:
+        """显示已脱敏状态，关闭窗口后不再操作 WebView。"""
+        if not controller.closed.is_set():
+            window.load_html(status_page(message))
 
-    def load_frontend() -> None:
-        """GUI 就绪后等待后端；启动错误留在窗口中，便于读取日志和初始化。"""
+    controller = DesktopController(directory, command, show_status, window.load_url)
+    window.events.closed += controller.closed.set
+
+    def restart() -> None:
+        """原生菜单在工作线程调用，重启期间不阻塞窗口事件循环。"""
         try:
-            url = backend.wait_ready(on_status=show_status)
-            if closed.is_set():
-                return
-            window.load_url(url)
-            backend.finished.wait()
-            if not closed.is_set():
-                window.load_html(status_page("后端已停止，请查看 logs/desktop-backend.log。"))
-        except RuntimeError as exc:
-            backend.stop()
-            if not closed.is_set():
-                window.load_html(status_page(
-                    f"{exc}\n详情：logs/desktop-backend.log\n"
-                    "首次使用会自动生成配置；已有部署请按 WINDOWS_README.md 检查配置与数据。"
-                ))
+            controller.restart()
+        except ValueError as exc:
+            if not controller.closed.is_set():
+                show_error(window, str(exc))
+
+    def change_port() -> None:
+        """弹窗保存仅开放端口字段，文件错误不会回显配置或中断当前服务。"""
+        try:
+            try:
+                _, current = connection_settings(directory)
+            except ValueError:
+                # 无效端口导致启动失败时，仍允许用户用表单修复。
+                current = 8080
+            port = port_dialog(window, current)
+            if port is not None:
+                controller.restart(port=port)
+        except ValueError as exc:
+            if not controller.closed.is_set():
+                show_error(window, str(exc))
+        except OSError:
+            if not controller.closed.is_set():
+                show_error(window, "端口保存失败，请检查启动配置文件的写入权限。")
 
     try:
-        backend.start()
         # 明确使用现代内核，避免退回不支持 React 管理页面的旧 IE 内核。
-        webview.start(load_frontend, gui="edgechromium", private_mode=True)
+        webview.start(restart, gui="edgechromium", private_mode=True, menu=[
+            Menu("服务", [MenuAction("重启后端", restart), MenuAction("修改端口…", change_port)]),
+        ])
     finally:
-        closed.set()
-        backend.stop()
+        controller.stop()
     return 0
 
 

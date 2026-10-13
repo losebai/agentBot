@@ -1,4 +1,4 @@
-# MySQL、Redis 由现有基础设施提供；该文件只管理 agentBot 服务和文件卷。
+# 默认业务库与队列使用持久卷中的 SQLite；可显式选择已有 MySQL/Redis 服务。
 services:
   agentbot:
     image: ${AGENTBOT_IMAGE:?必须指定待部署的镜像或摘要}
@@ -7,9 +7,9 @@ services:
     restart: unless-stopped
     init: true
     stop_grace_period: 180s
-    # 默认仅向本机反向代理开放，外部 NapCat 通过代理连接 WebSocket。
+    # 发布到指定局域网网卡；使用反向代理时可改成 127.0.0.1。
     ports:
-      - "127.0.0.1:8080:8080"
+      - "${AGENTBOT_BIND_ADDRESS:-192.168.1.5}:${AGENTBOT_HTTP_PORT:-8080}:8080"
     volumes:
       - agentbot-data:/app/data
     read_only: true

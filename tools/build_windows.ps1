@@ -1,5 +1,9 @@
 ﻿# 构建独立 Windows 桌面包；不修改开发虚拟环境，不读取本地运行配置。
-param([string]$OutputDirectory = "dist/windows")
+param(
+    [string]$OutputDirectory = "dist/windows",
+    [switch]$BuildInstaller,
+    [string]$IsccPath = $env:ISCC_PATH
+)
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -53,6 +57,13 @@ try {
 
     Copy-Item -LiteralPath ".env.example" -Destination $bundle
     Copy-Item -LiteralPath "WINDOWS_README.md" -Destination $bundle
+    # 便携包与安装器共用同一份已构建程序，版本来自已安装的发布包。
+    if ($BuildInstaller) {
+        $version = & $buildPython -c "from importlib.metadata import version; print(version('agent-bot'))"
+        if ($LASTEXITCODE -ne 0) { throw "无法读取 Windows 包版本" }
+        & (Join-Path $PSScriptRoot "build_installer.ps1") -BundleDirectory $bundle `
+            -OutputDirectory (Join-Path $outputRoot "installer") -Version $version -IsccPath $IsccPath
+    }
     Write-Host "桌面包已生成：$bundle"
     Write-Host "请分发整个 AgentBot 文件夹；双击 AgentBot.exe 打开界面。"
 } finally {

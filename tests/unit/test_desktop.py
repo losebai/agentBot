@@ -112,3 +112,82 @@ def test_startup_timeout_identifies_waiting_stage(tmp_path):
             backend.wait_ready(timeout=2)
     finally:
         backend.stop()
+
+
+def test_desktop_controller_restarts_on_new_port_and_releases_old_process(tmp_path, monkeypatch):
+    """真实子进程重启后端并切换端口，旧服务退出且端口持久化。"""
+    import socket
+
+    from agent_bot.desktop import DesktopController
+
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.delenv("HOST", raising=False)
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        initial_port = listener.getsockname()[1]
+    (tmp_path / ".env").write_text(f"PORT={initial_port}\n", encoding="utf-8")
+    code = (
+        "from fastapi import FastAPI\n"
+        "from dotenv import dotenv_values\n"
+        "from agent_bot.desktop import serve\n"
+        "serve(FastAPI(), '127.0.0.1', int(dotenv_values('.env')['PORT']))\n"
+    )
+    urls, statuses = [], []
+    desktop = DesktopController(
+        tmp_path, [sys.executable, "-c", code], statuses.append, urls.append,
+    )
+    try:
+        desktop.restart()
+        first = desktop.backend.process
+        desktop.restart(port=initial_port)
+        assert first.poll() == 0
+        assert desktop.backend.process.pid != first.pid
+        second = desktop.backend.process
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            with pytest.raises(ValueError, match=r"占用|使用"):
+                desktop.restart(port=listener.getsockname()[1])
+            assert second.poll() is None
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            new_port = listener.getsockname()[1]
+        desktop.restart(port=new_port)
+        assert second.poll() == 0
+        assert urls[-1] == f"http://127.0.0.1:{new_port}/"
+        assert f"PORT={new_port}" in (tmp_path / ".env").read_text("utf-8")
+    finally:
+        desktop.stop()
+    assert desktop.backend.process.poll() == 0
+
+
+def test_close_during_startup_cancels_pending_restart_without_orphan(tmp_path):
+    """慢启动期间拒绝重复重启，关窗及时取消等待并停止所属子进程。"""
+    import threading
+
+    from agent_bot.desktop import DesktopController
+
+    started = threading.Event()
+    code = (
+        "import sys\n"
+        "print('AGENT_BOT_DESKTOP_STAGE \"waiting-test\"', flush=True)\n"
+        "sys.stdin.read()\n"
+    )
+
+    def status(message):
+        """子进程确实开始工作后再触发关闭，避免依赖固定睡眠。"""
+        if "waiting-test" in message:
+            started.set()
+
+    desktop = DesktopController(tmp_path, [sys.executable, "-c", code], status, lambda _: None)
+    worker = threading.Thread(target=desktop.restart)
+    worker.start()
+    try:
+        assert started.wait(timeout=5)
+        with pytest.raises(ValueError, match="正在启动或重启"):
+            desktop.restart()
+    finally:
+        desktop.stop()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert desktop.backend.process.poll() == 0

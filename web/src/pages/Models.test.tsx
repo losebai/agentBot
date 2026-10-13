@@ -7,6 +7,58 @@ const provider: Provider = { id: 1, revision: 1, name: '本机', enabled: true,
   protocol: 'openai-chat', base_url: 'https://offline.invalid/v1', description: '',
   credential_set: false, credential_available: true };
 
+it('开启或关闭图片理解时保存当前版本并保留图片生成、音频及模型状态', async () => {
+  let model: AiModel = { id: 1, revision: 3, alias: 'vision', upstream_model: 'upstream-vision',
+    provider_id: 1, enabled: true, media_initialized: true,
+    media: { vision_enabled: false, image_api_profile: 'gpt-image', audio_chat_enabled: true } };
+  const patches: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    if (init?.method === 'PATCH') {
+      const patch = JSON.parse(String(init.body)); patches.push(patch);
+      model = { ...model, media: patch.media, revision: model.revision + 1 };
+      return Response.json(model);
+    }
+    return Response.json({ items: [model], next_cursor: null });
+  }));
+  render(<Models token="offline" provider={provider} />);
+  fireEvent.click(await screen.findByRole('switch', { name: '图片理解 vision' }));
+  await waitFor(() => expect(screen.getByRole('switch', { name: '图片理解 vision' })).toBeChecked());
+  fireEvent.click(screen.getByRole('switch', { name: '图片理解 vision' }));
+  await waitFor(() => expect(screen.getByRole('switch', { name: '图片理解 vision' })).not.toBeChecked());
+  expect(patches).toEqual([
+    { expected_revision: 3, media: { vision_enabled: true, image_api_profile: 'gpt-image', audio_chat_enabled: true } },
+    { expected_revision: 4, media: { vision_enabled: false, image_api_profile: 'gpt-image', audio_chat_enabled: true } },
+  ]);
+  expect(screen.getByRole('switch', { name: '启用 vision' })).toBeChecked();
+  expect(screen.getByText('upstream-vision')).toBeVisible();
+});
+
+it('图片理解保存冲突后显示数据库状态，再次操作使用新版本', async () => {
+  let model: AiModel = { id: 1, revision: 3, alias: 'vision', upstream_model: 'model',
+    provider_id: 1, enabled: true, media_initialized: true,
+    media: { vision_enabled: false, image_api_profile: 'none', audio_chat_enabled: false } };
+  const patches: { expected_revision: number }[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    if (init?.method === 'PATCH') {
+      const patch = JSON.parse(String(init.body)); patches.push(patch);
+      if (patch.expected_revision === 3) {
+        model = { ...model, revision: 4 };
+        return Response.json({ message: '版本冲突' }, { status: 409 });
+      }
+      model = { ...model, media: patch.media, revision: 5 };
+      return Response.json(model);
+    }
+    return Response.json({ items: [model], next_cursor: null });
+  }));
+  render(<Models token="offline" provider={provider} />);
+  fireEvent.click(await screen.findByRole('switch', { name: '图片理解 vision' }));
+  expect(await screen.findByText(/版本冲突/)).toBeVisible();
+  expect(screen.getByRole('switch', { name: '图片理解 vision' })).not.toBeChecked();
+  fireEvent.click(screen.getByRole('switch', { name: '图片理解 vision' }));
+  await waitFor(() => expect(screen.getByRole('switch', { name: '图片理解 vision' })).toBeChecked());
+  expect(patches.map(patch => patch.expected_revision)).toEqual([3, 4]);
+});
+
 it('切换模型启用状态时提交当前版本且不覆盖媒体能力', async () => {
   let model: AiModel = { id: 1, revision: 3, alias: 'local-qwen', upstream_model: 'Qwen/Qwen3.5-9B',
     provider_id: 1, enabled: false, media_initialized: true,

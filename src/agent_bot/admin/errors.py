@@ -46,6 +46,7 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         ),
         "AGENT_CONFIG_CONFLICT": "此配置已有更新，请保留草稿并重新加载后合并修改",
         "AGENT_CONFIG_IN_USE": "配置仍被 Agent 引用，请先解除关联",
+        "AGENT_MODEL_ROUTE_INVALID": "错误转发模型必须与聊天、图片理解模型不同",
         "AGENT_CONFIG_DISABLED": "Agent、Skill 或 MCP 配置已停用",
         "AGENT_TOOL_UNAUTHORIZED": "当前入口或 Agent 未授权这些工具",
         "AGENT_TOOL_UNAVAILABLE": "预设工具不可用，请检查工具名称及 MCP 白名单",

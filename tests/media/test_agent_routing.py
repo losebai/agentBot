@@ -16,7 +16,7 @@ from agent_bot.agent.contracts import (
     ModelTurn,
     ToolCall,
 )
-from agent_bot.ai.contracts import ModelCreate, ModelUpdate
+from agent_bot.ai.contracts import ModelCreate, ModelUpdate, ProviderCreate
 from agent_bot.ai.errors import AiError
 from agent_bot.media.inputs import ImagePreparer
 from media.test_inputs import picture
@@ -122,6 +122,25 @@ async def test_backup_reference_blocks_model_deletion(media_database, agent_para
     changed = await ai.update_model(backup.id, ModelUpdate(expected_revision=1, enabled=False))
     with pytest.raises(AiError, match="AI_CONFIG_IN_USE"):
         await ai.delete_model(backup.id, changed.revision)
+
+
+async def test_backup_cannot_repeat_a_primary_route(media_database, agent_params, media_model):
+    """相同主备模型无法实现接管，保存时应明确拒绝，不能静默忽略。"""
+    service, agent, chat, vision, _ = await routed_service(
+        media_database,
+        agent_params,
+        media_model,
+    )
+    for model in (chat, vision):
+        with pytest.raises(AiError, match="AGENT_MODEL_ROUTE_INVALID"):
+            await service.catalog.update_agent(
+                agent.id,
+                AgentUpdate(
+                    expected_revision=1,
+                    fallback_model_id=model.id,
+                ),
+            )
+    assert (await service.catalog.get_agent(agent.id)).revision == 1
 
 
 class FailingProvider(Provider):
@@ -327,7 +346,9 @@ async def test_new_request_starts_with_primary_again(media_database, agent_param
 
 
 async def test_backup_preserves_its_own_later_continuation(
-    media_database, agent_params, media_model,
+    media_database,
+    agent_params,
+    media_model,
 ):
     """接管仅去除原模型延续；备用生成的延续必须保留给其后续工具轮次。"""
     service, _, _, _, _ = await routed_service(media_database, agent_params, media_model)
@@ -342,11 +363,15 @@ async def test_backup_preserves_its_own_later_continuation(
                 raise AiError("AI_UPSTREAM_UNAVAILABLE")
             if not call.final_only:
                 self.calls.append(call)
-                yield ModelEvent(kind="turn_end", turn=ModelTurn(
-                    model="backup-upstream", content="",
-                    calls=(ToolCall(call_id="backup-call", name="lookup", arguments={}),),
-                    continuation=({"backup_thinking": "owned"},),
-                ))
+                yield ModelEvent(
+                    kind="turn_end",
+                    turn=ModelTurn(
+                        model="backup-upstream",
+                        content="",
+                        calls=(ToolCall(call_id="backup-call", name="lookup", arguments={}),),
+                        continuation=({"backup_thinking": "owned"},),
+                    ),
+                )
             else:
                 async for event in super().stream_turn(call):
                     yield event
@@ -355,3 +380,28 @@ async def test_backup_preserves_its_own_later_continuation(
     service.providers["openai-chat"] = provider
     await service.complete(request(), ExecutionAuthority(entry="qq", allowed_tools=("lookup",)))
     assert provider.calls[-1].messages[-2].continuation == ({"backup_thinking": "owned"},)
+
+
+async def test_forward_uses_backup_provider_protocol(media_database, agent_params, media_model):
+    """转发到其他供应商时必须同步切换协议端口，不只替换模型名称。"""
+    service, _, _, _, backup = await routed_service(media_database, agent_params, media_model)
+    ai = media_model[0]
+    provider = await ai.create_provider(
+        ProviderCreate(
+            name="备用供应商",
+            protocol="openai-responses",
+            base_url="https://backup.invalid/v1",
+            enabled=True,
+        )
+    )
+    await ai.update_model(backup.id, ModelUpdate(expected_revision=1, provider_id=provider.id))
+    primary, secondary = FailingProvider(), Provider()
+    service.providers.update({"openai-chat": primary, "openai-responses": secondary})
+    result = await service.complete(
+        request(), ExecutionAuthority(entry="qq", allowed_tools=("lookup",))
+    )
+    assert result.content == "最终回答"
+    assert [call.resolved.model.alias for call in primary.calls] == ["chat", "chat"]
+    assert [call.resolved.model.alias for call in secondary.calls] == ["backup"]
+    assert secondary.calls[0].resolved.provider.base_url == "https://backup.invalid/v1"
+    assert service.tool_runtime.invoked == ["c1"]

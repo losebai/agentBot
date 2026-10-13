@@ -67,6 +67,7 @@ export function AgentModelSelect({ token, value, onChange, visionValue, fallback
         {model.media?.vision_enabled ? '（支持图片理解）' : '（未启用图片理解）'}
       </option>)}
     </select></label>}
+    {onVisionChange && <p className="field-help">无法选择的模型尚未启用图片理解。请先在“供应商与模型”的模型列表中开启“图片理解”，开关会立即保存，再点击下方“刷新模型状态”。</p>}
     {onFallbackChange && <label>错误转发模型<select value={fallbackValue ?? ''} disabled={busy}
       onChange={event => onFallbackChange(event.target.value ? Number(event.target.value) : null)}>
       <option value="">不启用错误转发</option>

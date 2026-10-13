@@ -122,6 +122,10 @@ class AgentCatalog(AiDatabase):
 
     def _validate_models(self, connection, values: dict) -> None:
         """引用必须存在；停用配置仍可编辑，实际启用状态在使用时检查。"""
+        if values["fallback_model_id"] is not None and values["fallback_model_id"] in {
+            values["model_id"], values["vision_model_id"],
+        }:
+            raise AgentError("AGENT_MODEL_ROUTE_INVALID", status_code=422)
         for field in ("model_id", "vision_model_id", "fallback_model_id"):
             if values[field] is not None:
                 model = AiCatalog._get(self, connection, "model", values[field], lock=True)

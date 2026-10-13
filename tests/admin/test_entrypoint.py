@@ -31,12 +31,12 @@ def test_unknown_command_does_not_start_service():
         main(["unknown-command"])
 
 
-def test_missing_admin_credential_fails_before_database(monkeypatch, capsys):
-    """缺失管理员凭据时给出操作提示，并在数据库访问前返回失败。"""
+def test_invalid_admin_password_fails_before_database(monkeypatch, capsys):
+    """无效管理员密码时给出操作提示，并在数据库访问前返回失败。"""
     from agent_bot.__main__ import main
     from agent_bot.admin.config import AdminConfig
 
-    monkeypatch.setattr(AdminConfig, "from_environment", Mock(side_effect=ValueError("missing")))
+    monkeypatch.setattr(AdminConfig, "from_environment", Mock(side_effect=ValueError("invalid")))
     assert main([]) == 1
     assert "AGENT_BOT_ADMIN_TOKEN" in capsys.readouterr().out
 
@@ -49,6 +49,44 @@ def test_non_fastapi_driver_is_rejected(admin_runtime):
     config = admin_runtime.config.model_copy(update={"driver": "~none"})
     with pytest.raises(ValueError, match="FastAPI"):
         create_application(VersionedSettings(config, 1), AdminConfig(token="x" * 48))
+
+
+@pytest.mark.parametrize("entrypoint", ["agent-bot", "chat"])
+def test_forward_ws_requires_client_driver_before_adapter_registration(
+    monkeypatch, admin_runtime, admin_store, entrypoint,
+):
+    """正向地址存在时缺客户端驱动必须明确失败，不能忽略地址后继续运行。"""
+    from types import SimpleNamespace
+
+    import nonebot
+    from fastapi import FastAPI
+
+    from agent_bot import bot_cli
+    from agent_bot.admin.config import AdminConfig
+    from agent_bot.application import create_application
+    from agent_bot.plugin import application as plugin
+    from agent_bot.settings import VersionedSettings
+
+    config = admin_runtime.config.model_copy(update={
+        "driver": "~fastapi", "onebot_v11_ws_urls": {"ws://onebot.test:3001/"},
+    })
+    driver = SimpleNamespace(
+        config=SimpleNamespace(), register_adapter=Mock(), server_app=FastAPI(),
+    )
+    monkeypatch.setattr(nonebot, "init", Mock())
+    monkeypatch.setattr(nonebot, "get_driver", lambda: driver)
+    monkeypatch.setattr(nonebot, "load_plugin", lambda _: object())
+    monkeypatch.setattr(nonebot, "run", Mock())
+    monkeypatch.setattr(plugin, "get_settings_store", lambda: admin_store)
+    monkeypatch.setattr(bot_cli, "load_startup_settings", lambda: VersionedSettings(config, 1))
+
+    with pytest.raises(ValueError, match=r"DRIVER=.*websockets"):
+        if entrypoint == "chat":
+            bot_cli.run_bot()
+        else:
+            create_application(VersionedSettings(config, 1), AdminConfig(token="x" * 48))
+
+    driver.register_adapter.assert_not_called()
 
 
 def test_application_import_does_not_initialize_plugin_or_open_database():

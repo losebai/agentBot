@@ -75,6 +75,29 @@ def onebot_mock() -> AsyncMock:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error", [
+    ModelNotAvailableError("private model detail"),
+    ChatAiRejectedError("private detail", error_code="AGENT_MODEL_UNAVAILABLE"),
+])
+@pytest.mark.parametrize("tools", [(), ("mention_member",)])
+async def test_missing_model_reports_fixed_configuration_error_without_reply_model(
+    monkeypatch, chat_plugin, error, tools,
+) -> None:
+    """已有任务模型失效时直接投递配置错误，不使用不存在的模型生成解释。"""
+    composer = RecordingComposer()
+    bot = onebot_mock()
+    monkeypatch.setattr(chat_plugin, "_reply_composer", composer)
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
+
+    await chat_plugin._ConversationProcessor().deliver_failure(queued_job(chatTools=tools), error)
+
+    bot.call_api.assert_awaited_once()
+    assert "模型未配置或未启用" in str(bot.call_api.await_args.kwargs["message"])
+    assert "private" not in str(bot.call_api.await_args.kwargs["message"])
+    assert composer.intents == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [
     ChatBusyError("busy"), ChatRateLimitedError("limited"),
     ConversationQueueFullError("full"), ConversationJobExpiredError("expired"),
 ])
@@ -909,13 +932,12 @@ async def test_processor_composes_sanitized_failure_once(monkeypatch, chat_plugi
     ChatAiUnavailableError("sensitive", status_code=503),
     ChatAiRejectedError("sensitive", status_code=403),
     ChatAiProtocolError("sensitive"),
-    ModelNotAvailableError("sensitive"),
     ModelGuardUnavailableError("sensitive"),
 ])
 async def test_processor_model_failure_does_not_compose_or_send(
     monkeypatch, chat_plugin, error,
 ) -> None:
-    """主模型不可用、拒绝或协议错误不能触发第二个模型或 OneBot 消息。"""
+    """模型调用拒绝、协议或目录故障不能触发第二个模型或 OneBot 消息。"""
 
     composer = RecordingComposer()
     bot = onebot_mock()

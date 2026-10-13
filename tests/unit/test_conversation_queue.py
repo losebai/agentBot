@@ -476,6 +476,40 @@ async def test_transient_model_failure_retries_but_permanent_failure_goes_dead_l
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("error", [
+    ChatAiRejectedError("private detail", error_code="AGENT_MODEL_UNAVAILABLE", status_code=400),
+    ChatAiRejectedError("private detail", error_code="AI_MODEL_NOT_FOUND", status_code=404),
+])
+async def test_missing_model_in_existing_queue_reports_error_without_dead_letter(
+    queue_store, caplog, error,
+) -> None:
+    """入队后模型失效是配置拒绝，清理任务并报错，不保存死信或生成结果。"""
+    await queue_store.enqueue(text_job())
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    processor = processor_mock()
+    processor.generate.side_effect = error
+    queue = ConversationQueue(
+        store=queue_store, processor=processor,
+        policy=QueuePolicy(
+            workers=1, max_attempts=2, job_ttl_seconds=600,
+            retry_initial_seconds=0.01, retry_max_seconds=0.01,
+        ),
+        clock=lambda: 1_800_000_000,
+    )
+
+    await queue.process_entry(entry)
+
+    processor.generate.assert_awaited_once()
+    processor.deliver_failure.assert_awaited_once_with(entry.job, error)
+    processor.deliver_part.assert_not_awaited()
+    processor.commit.assert_not_awaited()
+    assert await queue_store.source_length() == 0
+    assert await queue_store.dead_letter_length() == 0
+    assert error.error_code in caplog.text
+    assert "private detail" not in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["generate", "commit"])
 async def test_memory_disconnect_retries_without_duplicate_delivery(
     queue_store, caplog, stage: str,

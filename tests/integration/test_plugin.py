@@ -183,6 +183,60 @@ async def test_validation_context_reaches_real_reply_service_and_model(
 
 
 @pytest.mark.integration
+async def test_missing_model_reports_error_before_queue_or_model_call(
+    monkeypatch, chat_plugin, reply_chat,
+) -> None:
+    """缺少模型直接返回配置错误，不创建队列任务或调用解释模型。"""
+    from agent_bot.model_guard import ModelNotAvailableError
+
+    guard = Mock(ensure_enabled=AsyncMock(side_effect=ModelNotAvailableError("AI_MODEL_NOT_FOUND")))
+    monkeypatch.setattr(chat_plugin.chat_service, "_model_guard", guard)
+    matcher = Mock(send=AsyncMock(), finish=AsyncMock(side_effect=FinishedException))
+
+    with pytest.raises(FinishedException):
+        await chat_plugin._conversation_handler.natural_chat(
+            Mock(self_id="90001"), private_event("画一只猫"), matcher=matcher,
+            mention_handler=AsyncMock(return_value=None),
+        )
+
+    guard.ensure_enabled.assert_awaited_once()
+    chat_plugin.conversation_queue.enqueue.assert_not_awaited()
+    reply_chat.assert_not_awaited()
+    assert "模型未配置或未启用" in str(matcher.send.await_args.args[0])
+    matcher.finish.assert_awaited_once_with()
+
+
+@pytest.mark.integration
+async def test_native_mention_preflight_uses_final_tools_and_chat_model(
+    monkeypatch, chat_plugin, reply_chat,
+) -> None:
+    """原生 At 移除提醒工具后，关闭联网时必须预检普通聊天模型。"""
+    from agent_bot.content_classifier import ContentCategory
+
+    guard = Mock(ensure_enabled=AsyncMock())
+    monkeypatch.setattr(chat_plugin.chat_service, "_model_guard", guard)
+    monkeypatch.setattr(chat_plugin.chat_service, "_web_search_enabled", False)
+    monkeypatch.setattr(chat_plugin.chat_service, "_mcp_services_enabled", False)
+    monkeypatch.setattr(chat_plugin._conversation_handler, "_available_tools_provider",
+                        lambda _event: ("mention_member",))
+    matcher = Mock(send=AsyncMock(), finish=AsyncMock(side_effect=FinishedException))
+    mention = Message([MessageSegment.at(20002), MessageSegment.text("你好")])
+
+    with pytest.raises(FinishedException):
+        await chat_plugin._conversation_handler.natural_chat(
+            Mock(self_id="90001"), group_event("提醒他打招呼"), matcher=matcher,
+            mention_handler=AsyncMock(return_value=mention),
+        )
+
+    guard.ensure_enabled.assert_awaited_once_with(
+        chat_plugin.chat_service.model_router.model_for(ContentCategory.TEXT),
+        capability="ordinary-text",
+    )
+    assert chat_plugin.conversation_queue.enqueue.await_args.args[0].chat_tools == ()
+    reply_chat.assert_not_awaited()
+
+
+@pytest.mark.integration
 async def test_model_answer_enters_gateway_once_without_rewriting_or_truncation_marker(
     monkeypatch: pytest.MonkeyPatch, chat_plugin, reply_chat: AsyncMock,
 ) -> None:

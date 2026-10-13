@@ -33,7 +33,7 @@ Python 源码平铺在 `src/`，通过构建配置和开发安装钩子映射为
 - Python 3.12 和 uv。
 - MySQL 或内置 SQLite，用于运行配置、记忆及业务记录；Redis 用于任务队列。
 - Node.js 22，用于前端开发和源码构建；安装已构建的 wheel 后无需 Node.js。
-- QQ 接入需要 NapCat，并使用 OneBot V11 反向 WebSocket。
+- QQ 接入需要 NapCat，支持 OneBot V11 正向或反向 WebSocket。
 - 自动发言需要一个提供 `laya_predict` 的 MCP 服务，通过管理端目录登记。
 - 使用本地绘图或语音工具时，分别需要 ComfyUI 或 GPT-SoVITS。
 
@@ -63,7 +63,9 @@ Copy-Item .env.example .env
 
 新安装示例默认 `CHAT_DB_BACKEND=sqlite`，数据库保存到 `CHAT_DB_SQLITE_PATH=data/agent_bot.sqlite3`，不需要 MySQL 服务。使用 MySQL 时显式设置 `CHAT_DB_BACKEND=mysql`，填写 `CHAT_DB_HOST`、`CHAT_DB_PORT`、`CHAT_DB_USER`、`CHAT_DB_PASSWORD`、`CHAT_DB_NAME`，并先创建独立数据库及专用账户。未指定后端仍默认为 MySQL，保持旧部署兼容；连接失败不会切换数据库。SQLite 适合单实例部署，Redis 仍负责队列。
 
-填写 Redis 连接参数。示例 Token 是无效占位符，运行以下命令三次生成不同随机值，分别填写 `AGENT_BOT_ADMIN_TOKEN`、`ONEBOT_V11_ACCESS_TOKEN`、`CHAT_SESSION_SECRET`：
+填写 Redis 连接参数。管理员密码沿用 `AGENT_BOT_ADMIN_TOKEN` 配置名，支持自定义 8–256 位字母、数字及常见符号，不含空格；含 `#` 等 dotenv 特殊字符时用引号包裹。留空或不配置时直接进入系统，所有管理接口均无需密码。已有随机令牌仍可作为登录密码。
+
+OneBot Token 和会话密钥仍需使用不同随机值。示例 Token 是无效占位符，运行以下命令两次，分别填写 `ONEBOT_V11_ACCESS_TOKEN`、`CHAT_SESSION_SECRET`：
 
 ```powershell
 uv run python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -72,11 +74,12 @@ uv run python -c "import secrets; print(secrets.token_urlsafe(48))"
 | 配置分类 | 内容 | 存储与生效方式 |
 | --- | --- | --- |
 | 静态引导 | 数据库类型与连接、Redis、管理员凭据、媒体目录 | `.env`／环境变量，修改后重启 |
-| 静态机器人与资源 | 监听地址、OneBot 连接和 Token、会话密钥、命令匹配、MCP 挂载、目录、连接池、固定队列参数 | `.env`／环境变量，管理页面只读，修改后重启 |
+| 静态机器人与资源 | 驱动、监听地址、OneBot Token 和签名密钥、会话密钥、命令匹配、MCP 挂载、目录、连接池、固定队列参数 | `.env`／环境变量，管理页面只读，修改后重启 |
+| OneBot 接入地址 | 正向 WebSocket 地址、HTTP API 根地址 | 所选数据库，管理页面可修改，重启适配器连接后生效 |
 | 运行行为 | 模型别名、提示词、访问名单、业务开关、生成参数、历史与记忆策略、任务及自动发言行为 | 所选数据库，管理页面或离线命令保存后热刷新 |
 | 供应商／MCP 目录 | 每条记录独立的 URL、协议、密钥和工具权限 | 所选数据库，管理页面录入，新请求使用最新配置 |
 
-静态参数中环境变量优先于 `.env`；动态环境变量不会覆盖数据库。供应商和 MCP 地址及凭据不从环境变量读取。三个启动凭据职责不同，必须使用不同的值。每个实例使用独立数据库、Redis 键前缀及媒体目录，不提交真实凭据或运行文件。
+静态参数中环境变量优先于 `.env`，管理员密码环境变量显式留空也会关闭登录校验；动态环境变量不会覆盖数据库。供应商和 MCP 地址及凭据不从环境变量读取。管理员密码、OneBot Token 和会话密钥职责不同，设置时使用不同的值。每个实例使用独立数据库、Redis 键前缀及媒体目录，不提交真实凭据或运行文件。
 
 ### 3. 显式初始化数据库
 
@@ -109,7 +112,7 @@ uv run agent-bot settings export-static .env.static-export
 
 导出包含 OneBot Token、会话密钥等敏感值；终端只报告路径，目标文件必须不存在。备份当前 `.env` 后，把导出的静态字段合并到启动文件，保留数据库、Redis、管理员凭据和媒体目录；确认 `CHAT_DB_BACKEND=mysql` 后启动。不要在合并前运行配置保存：新版本读取时忽略历史静态行，下一次动态保存会清理这些行。导出文件合并后按部署权限管理，勿提交。
 
-静态密钥缺失时启动明确失败，不会从数据库回填。运行配置缺失或数据库结构不匹配时按错误提示初始化或升级；SQLite 错误需检查文件路径、目录权限与结构，MySQL 错误需检查服务、账户与数据库。错误不回显配置值或驱动原文。
+静态 OneBot Token 或会话密钥缺失时启动明确失败，不会从数据库回填。管理员密码可选，非空时须满足上述格式要求。运行配置缺失或数据库结构不匹配时按错误提示初始化或升级；SQLite 错误需检查文件路径、目录权限与结构，MySQL 错误需检查服务、账户与数据库。错误不回显配置值或驱动原文。
 
 切换 `CHAT_DB_BACKEND` 只选择另一份独立数据库，不迁移业务数据；本次不提供 MySQL／SQLite 数据互迁。旧 MySQL 库从 `dispatch_chat_*` 改名后若缺少当前索引，执行 `sql/2026-10-13-chat-index-names.sql` 原位升级，保留历史记录。
 
@@ -121,9 +124,11 @@ uv run agent-bot
 
 也可使用 `uv run python -m agent_bot`。该入口同时启动机器人、管理 API 和浏览器界面。
 
-默认管理地址为 [http://127.0.0.1:8080/](http://127.0.0.1:8080/)，用管理员凭据登录。实际监听地址由静态启动配置 `HOST`、`PORT` 决定。
+默认管理地址为 [http://127.0.0.1:8080/](http://127.0.0.1:8080/)，设置管理员密码时输入密码登录，密码留空时直接进入工作台。密码只保留在本次页面内存，退出或刷新后重新判断登录模式。实际监听地址由静态启动配置 `HOST`、`PORT` 决定。
 
-NapCat 配置 OneBot V11 反向 WebSocket 地址 `ws://127.0.0.1:8080/onebot/v11/ws`，Access Token 与 `ONEBOT_V11_ACCESS_TOKEN` 一致。不要同时运行两个连接同一机器人和队列前缀的实例。
+使用正向 WebSocket 时，在管理页面的“运行配置”中保存 `onebot_v11_ws_urls`，例如 `["ws://10.0.8.6:3001/"]`；启动时从数据库读取，旧 `.env` 中的空地址不会覆盖数据库。`onebot_v11_api_roots` 同样保存在数据库。地址修改后需重启适配器连接，页面会显示重启提示。静态 `DRIVER` 使用 `~fastapi+~websockets`（新默认值），NapCat Access Token 与静态 `ONEBOT_V11_ACCESS_TOKEN` 一致。
+
+使用反向 WebSocket 时，在 NapCat 配置地址 `ws://127.0.0.1:8080/onebot/v11/ws`，跨机器连接时改用 agentBot 所在主机地址。不要同时运行两个连接同一机器人和队列前缀的实例。
 
 ## 管理界面与运行配置
 
@@ -140,6 +145,8 @@ NapCat 配置 OneBot V11 反向 WebSocket 地址 `ws://127.0.0.1:8080/onebot/v11
 3. 从上游列表搜索并勾选模型，设置唯一的本地别名后导入；新模型默认停用，需要在“模型管理”启用。也可在模型管理选择供应商后，从自动获取的列表选择准确上游 ID，或显式手动登记。不同供应商的同名模型使用不同别名，并分别绑定各自供应商。
 4. 将 `chat_model` 设置为已启用的模型别名。在“对话测试”验证同步或流式回复；临时模型选择只影响本次请求。
 5. 编辑已有供应商时，密钥不会回填；留空保留，填写新值替换，明确勾选清除才移除。保存后下一次请求生效，无需重启，已开始执行的请求继续使用原快照。
+
+QQ 对话入队前检查实际使用的模型；模型未登记或未启用时直接返回固定配置错误，不调用模型、不创建任务。已排队请求遇到模型失效时也会报错并清理任务，不进入死信；上游请求拒绝、协议错误等执行故障仍按原队列策略处理。
 
 既有库先执行 `sql/2026-10-13-dynamic-provider-mcp-credentials.sql`，只增加字段并保留旧表和数据。旧环境变量引用需要在页面重新录入密钥；不会自动导入 `.env`。新库直接使用统一初始化脚本。
 

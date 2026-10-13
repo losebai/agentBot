@@ -11,9 +11,10 @@ export class ApiClient {
   constructor(protected token: string) {}
 
   protected async request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
+    // 免登录模式省略认证头，避免把空密码伪装成 Bearer 凭据。
     const response = await fetch(`/api/v1/${path}`, {
       method,
-      headers: { Authorization: `Bearer ${this.token}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      headers: { ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal,
     });
@@ -23,6 +24,8 @@ export class ApiClient {
     return value as T;
   }
 
+  /** 查询公开登录模式，不读取任何管理员密码。 */
+  auth(signal?: AbortSignal) { return this.request<{ password_required: boolean }>('auth', 'GET', undefined, signal); }
   status() { return this.request<ServiceStatus>('status'); }
   bots() { return this.request<BotInfo[]>('bots'); }
   settings() { return this.request<SettingsSnapshot>('settings'); }

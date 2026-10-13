@@ -42,6 +42,37 @@ async def test_liveness_is_public_but_management_requires_credentials(api):
     assert response.headers["cache-control"] == "no-store"
 
 
+@pytest.mark.parametrize("password", ["", "Easy!123"])
+async def test_auth_mode_and_management_password_boundary(admin_store, admin_runtime, password):
+    """公开接口只报告是否需要密码；读写管理接口遵循同一权限边界。"""
+    from agent_bot.admin.config import AdminConfig
+    from agent_bot.admin.routes import install_admin
+
+    app = FastAPI()
+    install_admin(app, admin_store, admin_runtime, AdminConfig(token=password))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://offline.test"
+    ) as client:
+        mode = await client.get("/api/v1/auth")
+        assert mode.status_code == 200
+        assert mode.json() == {"password_required": bool(password)}
+        assert mode.headers["cache-control"] == "no-store"
+        update = {"expected_revision": 1, "values": {"chat_model": "new-model"}}
+        read = await client.get("/api/v1/settings")
+        write = await client.patch("/api/v1/settings", json=update)
+        assert read.status_code == (401 if password else 200)
+        assert write.status_code == (401 if password else 200)
+        if password:
+            wrong = await client.get(
+                "/api/v1/settings", headers={"Authorization": "Bearer Wrong!123"}
+            )
+            assert wrong.status_code == 401
+            headers = {"Authorization": f"Bearer {password}"}
+            assert (await client.get("/api/v1/settings", headers=headers)).status_code == 200
+            saved = await client.patch("/api/v1/settings", json=update, headers=headers)
+            assert saved.status_code == 200
+
+
 async def test_status_without_connected_bots_is_ready(api):
     response = await api.get("/api/v1/status", headers=HEADERS)
     assert response.status_code == 200

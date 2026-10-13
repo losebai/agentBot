@@ -4,7 +4,9 @@ import pytest
 
 from agent_bot.agent.contracts import RunFinish, RunStart, StepWrite
 from agent_bot.agent.records import AgentRunStore
+from agent_bot.ai.contracts import TokenUsage
 from agent_bot.ai.errors import AiError
+from ai.mysql_identifiers import reject_unquoted_usage
 
 
 async def test_run_terminal_transition_and_step_order(agent_database, agent_params):
@@ -64,3 +66,42 @@ async def test_keyset_pages_same_timestamp(agent_database, agent_params):
     two = await store.list_runs(limit=2, cursor=one.next_cursor)
     assert len({r.execution_id for r in one.items + two.items}) == 3
     assert all(r.status == "running" for r in one.items + two.items)
+
+
+@pytest.mark.parametrize("mysql_semantics", [False, True], ids=["sqlite", "mysql"])
+async def test_reserved_usage_roundtrips_run_lifecycle(
+    agent_database, agent_params, monkeypatch, mysql_semantics
+):
+    """Agent 的开始、终态更新和摘要读取均保留真实 token 用量。"""
+    if mysql_semantics:
+        reject_unquoted_usage(monkeypatch)
+    store = AgentRunStore(agent_params, connect=agent_database.connect)
+    execution_id = "d" * 32
+    await store.begin(
+        RunStart(
+            execution_id=execution_id,
+            session_id="usage-session",
+            request_id="request",
+            entry="admin",
+            model="test",
+            prompt="hello",
+            created_at=datetime(2026, 10, 12),
+        )
+    )
+    await store.append_step(
+        StepWrite(execution_id=execution_id, sequence=1, turn=1, kind="model", status="completed")
+    )
+    await store.finish(
+        RunFinish(
+            execution_id=execution_id,
+            status="completed",
+            content="answer",
+            usage=TokenUsage(prompt_tokens=4, completion_tokens=3, total_tokens=7),
+        )
+    )
+    summary = (await store.list_runs(session_id="usage-session")).items[0]
+    detail = await store.get_run(execution_id)
+    assert summary.status == detail.status == "completed"
+    assert summary.usage.total_tokens == detail.usage.total_tokens == 7
+    assert detail.content == "answer"
+    assert [step.sequence for step in (await store.list_steps(execution_id)).items] == [1]

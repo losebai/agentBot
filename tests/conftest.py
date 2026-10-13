@@ -70,6 +70,11 @@ def chat_plugin(
 ):
     from agent_bot.plugin import application as chat_plugin_module
 
+    # 入队预检同样访问目录；普通插件测试使用显式替身，配置失败另有定向测试。
+    monkeypatch.setattr(
+        chat_plugin_module.chat_service, "_model_guard",
+        Mock(ensure_enabled=AsyncMock()),
+    )
     monkeypatch.setattr(
         chat_plugin_module,
         "_resolve_group_name",

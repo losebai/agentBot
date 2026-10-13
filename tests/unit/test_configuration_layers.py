@@ -141,6 +141,60 @@ def test_startup_static_environment_and_database_dynamic_values(
     assert loaded.config.chat_model == "saved-model"
 
 
+def test_onebot_connection_addresses_load_from_database_not_environment(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """正向 WS 和 HTTP 地址由数据库保存，旧环境中的空地址不能清除已保存连接。"""
+    from agent_bot.bootstrap import load_startup_settings
+
+    params = DatabaseParams(backend="sqlite", sqlite_path=str(tmp_path / "bot.db"))
+    initialize_database(params)
+    initial = config(
+        onebot_v11_ws_urls={"ws://onebot.test:3001/"},
+        onebot_v11_api_roots={"123456": "http://onebot.test:3000/"},
+    )
+    SettingsStore(params, static_config=config()).initialize(initial)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CHAT_DB_BACKEND", "sqlite")
+    monkeypatch.setenv("CHAT_DB_SQLITE_PATH", params.sqlite_path)
+    token = initial.onebot_v11_access_token.get_secret_value()
+    monkeypatch.setenv("ONEBOT_V11_ACCESS_TOKEN", token)
+    monkeypatch.setenv("CHAT_SESSION_SECRET", initial.chat_session_secret.get_secret_value())
+    monkeypatch.setenv("ONEBOT_V11_WS_URLS", "[]")
+    monkeypatch.setenv("ONEBOT_V11_API_ROOTS", "{}")
+
+    loaded = load_startup_settings()
+
+    assert loaded.config.onebot_v11_ws_urls == initial.onebot_v11_ws_urls
+    assert loaded.config.onebot_v11_api_roots == initial.onebot_v11_api_roots
+    assert loaded.config.onebot_v11_access_token.get_secret_value() == token
+
+
+def test_onebot_address_updates_are_editable_but_require_restart(tmp_path: Path) -> None:
+    """接入地址可在数据库中修改，运行中的适配器连接必须明确标记待重启。"""
+    from types import SimpleNamespace
+
+    from agent_bot.admin.settings import SettingsService
+
+    params = DatabaseParams(backend="sqlite", sqlite_path=str(tmp_path / "bot.db"))
+    initialize_database(params)
+    initial = config()
+    store = SettingsStore(params, static_config=initial)
+    store.initialize(initial)
+    manager = SettingsService(store, SimpleNamespace(config=initial, revision=1))
+    request = SettingsUpdate(
+        expected_revision=1, values={"onebot_v11_ws_urls": ["ws://onebot.test:3001/"]},
+    )
+
+    snapshot = manager.update(request)
+
+    field = next(item for item in snapshot.fields if item.name == "onebot_v11_ws_urls")
+    assert field.scope == "runtime" and not field.read_only and field.restart_required
+    assert snapshot.restart_required_fields == ["onebot_v11_ws_urls"]
+    assert str(next(iter(store.load().config.onebot_v11_ws_urls))) == "ws://onebot.test:3001/"
+    assert not initial.onebot_v11_ws_urls
+
+
 def test_export_static_is_explicit_secret_safe_and_refuses_overwrite(
     tmp_path: Path, capsys
 ) -> None:

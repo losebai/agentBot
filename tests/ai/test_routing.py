@@ -13,6 +13,41 @@ from agent_bot.models import ChatMessage, LlmRequestOptions
 from .test_service import make_service
 
 
+async def test_agent_preflight_checks_preset_model_instead_of_chat_alias() -> None:
+    """预设 Agent 已绑定模型时，入队预检不能因普通聊天别名未登记而误拒绝。"""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    catalog = Mock(resolve=AsyncMock(side_effect=AssertionError("wrong model lookup")))
+    agent_catalog = Mock(snapshot=AsyncMock(return_value=SimpleNamespace(resolved=object())))
+    guard = RoutedModelGuard(catalog, agent_catalog=agent_catalog, agent_code="drawing-agent")
+
+    await guard.ensure_enabled("unregistered-chat-alias", capability="agent")
+
+    catalog.resolve.assert_not_awaited()
+    request = agent_catalog.snapshot.await_args.args[0]
+    assert request.agent_code == "drawing-agent" and request.model is None
+
+
+async def test_disabled_agent_configuration_does_not_report_missing_model() -> None:
+    """禁用预设属于 Agent 配置拒绝，不能进入模型缺失的清理和通知路径。"""
+    from unittest.mock import AsyncMock, Mock
+
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.model_guard import model_configuration_error_code
+
+    agent_catalog = Mock(snapshot=AsyncMock(side_effect=AgentError(
+        "AGENT_CONFIG_DISABLED", status_code=409,
+    )))
+    guard = RoutedModelGuard(Mock(), agent_catalog=agent_catalog, agent_code="disabled-agent")
+
+    with pytest.raises(ChatAiRejectedError) as caught:
+        await guard.ensure_enabled("valid-chat-alias", capability="agent")
+
+    assert caught.value.error_code == "AGENT_CONFIG_DISABLED"
+    assert model_configuration_error_code(caught.value) is None
+
+
 async def test_default_text_resolves_local_model(catalog, ai_params, ai_database):
     """没有后端配置仍可按本地别名完成对话，缺失模型在发请求前拒绝。"""
     calls = []

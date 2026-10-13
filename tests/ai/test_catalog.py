@@ -2,6 +2,7 @@ import pytest
 
 from agent_bot.ai.contracts import ModelCreate, ProviderCreate, ProviderUpdate
 from agent_bot.ai.errors import AiError
+from ai.mysql_identifiers import reject_unquoted_usage
 
 
 async def seed(catalog):
@@ -75,3 +76,13 @@ async def test_schema_validation_and_config_timestamps(catalog, ai_database):
     assert provider.created_at is not None and provider.updated_at is not None
     ai_database.connection.execute("ALTER TABLE agent_bot_ai_provider DROP COLUMN description")
     assert not (await catalog.readiness()).initialized
+
+
+@pytest.mark.parametrize("mysql_semantics", [False, True], ids=["sqlite", "mysql"])
+async def test_readiness_accepts_reserved_usage_column(catalog, monkeypatch, mysql_semantics):
+    """完整结构的目录不会因 usage 保留字被误报为数据库不可用。"""
+    if mysql_semantics:
+        reject_unquoted_usage(monkeypatch)
+    ready = await catalog.readiness()
+    assert ready.initialized
+    assert ready.code is None

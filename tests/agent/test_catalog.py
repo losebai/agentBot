@@ -4,6 +4,7 @@ from agent_bot.agent.catalog import AgentCatalog
 from agent_bot.agent.contracts import AgentCreate, AgentRequest, AgentUpdate, SkillCreate
 from agent_bot.ai.contracts import ModelUpdate, ProviderUpdate
 from agent_bot.ai.errors import AiError
+from ai.mysql_identifiers import reject_unquoted_usage
 
 
 async def test_crud_cas_and_references(agent_database, agent_params, seeded_model):
@@ -60,3 +61,15 @@ async def test_missing_tables_leave_plain_catalog_usable(agent_params):
         assert (await AiCatalog(agent_params, connect=db.connect).readiness()).initialized
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("mysql_semantics", [False, True], ids=["sqlite", "mysql"])
+async def test_readiness_accepts_reserved_usage_column(
+    agent_database, agent_params, monkeypatch, mysql_semantics
+):
+    """Agent 记录表存在时，usage 保留字不会导致健康检查误报。"""
+    if mysql_semantics:
+        reject_unquoted_usage(monkeypatch)
+    ready = await AgentCatalog(agent_params, connect=agent_database.connect).readiness()
+    assert ready.initialized
+    assert ready.code is None

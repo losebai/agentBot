@@ -22,7 +22,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "mcp" },
     { name = "nonebot-adapter-onebot" },
-    { name = "nonebot2", extra = ["fastapi"] },
+    { name = "nonebot2", extra = ["fastapi", "websockets"] },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pymysql" },
@@ -54,7 +54,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.26,<5.0" },
     { name = "mcp", specifier = ">=2.0.0,<3.0" },
     { name = "nonebot-adapter-onebot", specifier = ">=2.4.6,<3.0" },
-    { name = "nonebot2", extras = ["fastapi"], specifier = ">=2.5.0,<3.0" },
+    { name = "nonebot2", extras = ["fastapi", "websockets"], specifier = ">=2.5.0,<3.0" },
     { name = "nonebug", marker = "extra == 'dev'", specifier = ">=0.4.3,<1.0" },
     { name = "pillow", specifier = ">=11.0,<13.0" },
     { name = "pydantic", specifier = ">=2.12,<3.0" },
@@ -1301,6 +1301,10 @@ wheels = [
 fastapi = [
     { name = "fastapi" },
     { name = "uvicorn", extra = ["standard"] },
+]
+websockets = [
+    { name = "websockets", version = "16.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "websockets", version = "17.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [[package]]

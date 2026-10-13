@@ -1,6 +1,6 @@
-import { Alert, Button, ConfigProvider, Input } from 'antd';
+import { Alert, Button, ConfigProvider, Input, Spin } from 'antd';
 import { DashboardOutlined, LogoutOutlined, MessageOutlined, SettingOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ApiClient, errorMessage } from './api';
 import { Overview } from './pages/Overview';
 import { Settings } from './pages/Settings';
@@ -14,26 +14,48 @@ import { McpServers } from './pages/McpServers';
 
 const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', chat:'对话测试', providers:'供应商管理', models:'模型管理', sessions:'会话记录', agents:'Agent 管理', skills:'Skill 管理', mcps:'MCP 服务'};
 
-/** 管理凭据只保留在内存；离开对话与记录页面时卸载活动媒体资源。 */
+/** 按服务端登录模式进入工作台，密码只保留在内存中。 */
 export function App() {
-  const [token, setToken] = useState('');
+  // null 表示尚未登录，空字符串表示后端明确启用了免登录。
+  const [token, setToken] = useState<string | null>(null);
+  const [access, setAccess] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [candidate, setCandidate] = useState('');
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
   const [page, setPage] = useState('overview');
   const [visited, setVisited] = useState(['overview']);
-  /** 先认证状态接口，成功后才把凭据放入本次页面内存。 */
+  useEffect(() => {
+    const controller = new AbortController();
+    /** 先确认是否需要密码；查询失败时保留错误，不能自动放行。 */
+    async function checkAccess() {
+      try {
+        const mode = await new ApiClient('').auth(controller.signal);
+        if (controller.signal.aborted) return;
+        if (mode.password_required === false) setToken('');
+        setAccess('ready');
+      } catch (failure) {
+        if (controller.signal.aborted) return;
+        setError(errorMessage(failure));
+        setAccess('failed');
+      }
+    }
+    void checkAccess();
+    // 卸载或 StrictMode 重建时取消旧查询，防止旧响应改变入口状态。
+    return () => controller.abort();
+  }, []);
+  /** 先验证密码，成功后才把密码放入本次页面内存。 */
   async function connect() {
     if (!candidate.trim() || connecting) return;
     setConnecting(true); setError('');
-    try { await new ApiClient(candidate.trim()).status(); setToken(candidate.trim()); setCandidate(''); }
+    try { await new ApiClient(candidate).status(); setToken(candidate); setCandidate(''); }
     catch (failure) { setError(errorMessage(failure)); }
     finally { setConnecting(false); }
   }
   function navigate(next: string) { setPage(next); setVisited(previous => [...new Set([...previous, next])]); }
   return <ConfigProvider theme={{ token: { colorPrimary: '#16766c', borderRadius: 8, fontFamily: 'Inter, Segoe UI, Microsoft YaHei, sans-serif' } }}>
-    {!token ? <main className="login-screen"><div className="login-identity"><div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot</span></div><h1>你的机器人，<br />一个工作台。</h1><p>配置、连接与对话测试，集中管理。</p><div className="login-decoration"><i /><i /><i /></div></div>
-      <form className="login-form" onSubmit={event => { event.preventDefault(); void connect(); }}><SafetyCertificateOutlined className="login-icon" /><p className="eyebrow">MANAGEMENT ACCESS</p><h2>连接管理服务</h2><p>输入服务启动时设置的管理员凭据。</p>{error && <Alert message={error} type="error" showIcon className="notice" />}<label htmlFor="admin-token">管理员凭据</label><Input.Password id="admin-token" value={candidate} autoComplete="off" size="large" placeholder="输入管理员凭据" onChange={event => setCandidate(event.target.value)} /><Button block type="primary" size="large" htmlType="submit" loading={connecting} disabled={!candidate.trim()}>连接服务</Button><span className="login-note">凭据只保留在本次浏览器会话中。</span></form></main>
+    {access !== 'ready' ? <main className="page-content">{access === 'loading' ? <Spin tip="正在连接管理服务"><div className="loading" /></Spin> : <Alert message={error} type="error" showIcon />}</main>
+      : token === null ? <main className="login-screen"><div className="login-identity"><div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot</span></div><h1>你的机器人，<br />一个工作台。</h1><p>配置、连接与对话测试，集中管理。</p><div className="login-decoration"><i /><i /><i /></div></div>
+      <form className="login-form" onSubmit={event => { event.preventDefault(); void connect(); }}><SafetyCertificateOutlined className="login-icon" /><p className="eyebrow">MANAGEMENT ACCESS</p><h2>登录管理系统</h2><p>输入你设置的管理员密码。</p>{error && <Alert message={error} type="error" showIcon className="notice" />}<label htmlFor="admin-password">管理员密码</label><Input.Password id="admin-password" value={candidate} autoComplete="off" size="large" placeholder="输入管理员密码" onChange={event => setCandidate(event.target.value)} /><Button block type="primary" size="large" htmlType="submit" loading={connecting} disabled={!candidate.trim()}>登录</Button><span className="login-note">密码只保留在本次浏览器会话中。</span></form></main>
       : <div className="workspace"><aside className="sidebar"><div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot<small>机器人工作台</small></span></div><p className="nav-label">工作空间</p><nav aria-label="主导航">{[
         { key: 'overview', label: '运行概览', icon: <DashboardOutlined /> },
         { key: 'settings', label: '机器人配置', icon: <SettingOutlined /> },
@@ -44,7 +66,7 @@ export function App() {
         { key: 'agents', label: 'Agent 管理', icon: <DashboardOutlined /> },
         { key: 'skills', label: 'Skill 管理', icon: <SettingOutlined /> },
         { key: 'mcps', label: 'MCP 服务', icon: <SettingOutlined /> },
-      ].map(item => <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接<button onClick={() => { setToken(''); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button></div></aside>
+      ].map(item => <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
         <main className="main-area"><header className="topbar"><span>工作空间 / {titles[page]}</span><span className="workspace-label">AgentBot · 第四阶段</span></header>
           <section hidden={page !== 'overview'}>{visited.includes('overview') && <Overview token={token} />}</section>
           <section hidden={page !== 'settings'}>{visited.includes('settings') && <Settings token={token} />}</section>

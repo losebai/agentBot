@@ -294,7 +294,7 @@ class AgentCatalog(AiDatabase):
         try:
 
             def check(connection):
-                """在同一只读事务检查必需结构，公开附件不要求新增历史表列。"""
+                """检查必需结构；附件和统一记录请求快照不要求新增历史表列。"""
                 for kind, view in VIEW.items():
                     fields = set(view.model_fields) - {*RELATIONS}
                     query(
@@ -305,9 +305,10 @@ class AgentCatalog(AiDatabase):
                     query(
                         connection, f"SELECT agent_id,{kind}_id FROM agent_bot_agent_{kind} LIMIT 0"
                     )
+                run_fields = set(RunStart.model_fields) - {"attachments", "request_context"}
                 query(
                     connection,
-                    f"SELECT {sql_columns(set(RunStart.model_fields) - {'attachments'})} "
+                    f"SELECT {sql_columns(run_fields)} "
                     "FROM agent_bot_agent_run LIMIT 0",
                 )
                 query(

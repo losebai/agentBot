@@ -46,7 +46,7 @@ class AiCatalog(AiDatabase):
     """模型目录与关联能力共享版本和提交边界。"""
 
     async def readiness(self, model: str | None = None) -> CatalogReadiness:
-        """引用保留字列名检查纯文本结构，不依赖可选媒体表。"""
+        """检查纯文本结构；统一记录的请求快照不属于旧会话表字段。"""
         try:
             await self.run(
                 lambda connection: [
@@ -60,7 +60,10 @@ class AiCatalog(AiDatabase):
                             _TABLES["model"],
                             {*_COLUMNS["model"], "id", "revision", "created_at", "updated_at"},
                         ),
-                        ("agent_bot_ai_session", set(SessionWrite.model_fields)),
+                        (
+                            "agent_bot_ai_session",
+                            set(SessionWrite.model_fields) - {"request_context"},
+                        ),
                     ]
                 ]
             )

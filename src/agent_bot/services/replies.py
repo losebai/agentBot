@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent_bot.models import ChatContext
 from agent_bot.services.chat import ChatService
@@ -149,13 +150,20 @@ class ReplyIntent(BaseModel):
 
 
 class GeneratedReply(BaseModel):
-    """带有明确 LLM 来源证明的不可变回复。"""
+    """带有明确 LLM 来源证明且不含连续换行或空白行的不可变回复。"""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
 
     text: str = Field(min_length=1, max_length=1_000_000)
     request_id: str = Field(alias="requestId", min_length=1, max_length=128)
     source: Literal["LLM"] = "LLM"
+
+    @field_validator("text")
+    @classmethod
+    def normalize_line_breaks(cls, value: str) -> str:
+        """统一换行并移除空白行，保留正文缩进及分段边界的单个换行。"""
+        normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+        return re.sub(r"\n(?:[^\S\n]*\n)+", "\n", normalized)
 
 
 class ReplyIntentPromptBuilder:

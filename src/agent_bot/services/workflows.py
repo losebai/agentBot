@@ -598,7 +598,7 @@ def prepare_workflow_prompt(
 
 
 def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
-    """图生图必须明确绑定同一原图和完整编辑链；文生图保留原绑定语义。"""
+    """校验完整编辑链；固定底图兼容已迁入的旧目录，仍只允许摘要文件名。"""
     if not definition.executable:
         raise WorkflowValidationError("workflow bindings are incomplete")
     if definition.workflow_type == "text_to_image":
@@ -640,7 +640,7 @@ def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
             if node["class_type"] != class_type or not isinstance(node["inputs"].get(field), str):
                 raise WorkflowValidationError("image workflow binding is invalid")
         if definition.workflow_type == "fixed_reference" and not re.fullmatch(
-            r"chat-reference/[a-f0-9]{64}\.(png|jpg|webp)",
+            r"(?:chat-reference|dispatch-chat-reference)/[a-f0-9]{64}\.(png|jpg|webp)",
             workflow[definition.input_image_node_id]["inputs"]["image"],
         ):
             raise WorkflowValidationError("fixed reference path is invalid")

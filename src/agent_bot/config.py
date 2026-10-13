@@ -696,6 +696,12 @@ class RuntimeConfig(PluginConfig):
     onebot_v11_ws_urls: set[WSUrl] = Field(default_factory=set, repr=False)
     onebot_v11_api_roots: dict[str, AnyUrl] = Field(default_factory=dict, repr=False)
 
+    @field_validator("nickname")
+    @classmethod
+    def normalize_bot_names(cls, values: set[str]) -> set[str]:
+        """清理触发名称的首尾空白并去重，空列表表示仅靠 At 或回复触发。"""
+        return {name.strip() for name in values if name.strip()}
+
     @field_validator("session_expire_timeout", mode="before")
     @classmethod
     def parse_session_timeout_seconds(cls, value: object) -> object:
@@ -811,7 +817,7 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "log_level": "日志级别",
     "api_timeout": "API 超时时间 (秒)",
     "superusers": "超级用户 QQ 号列表",
-    "nickname": "机器人昵称",
+    "nickname": "机器人名称与触发别名",
     "command_start": "命令前缀",
     "command_sep": "命令分隔符",
     "session_expire_timeout": "会话过期时间 (秒)",

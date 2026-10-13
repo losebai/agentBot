@@ -15,6 +15,8 @@ function initialValue(field: SettingField): string | boolean {
   // 空布尔值表示不传该参数，不能折叠为 false；密钥不回填实际内容。
   if (field.value === null) return '';
   if (field.kind === 'boolean') return field.value === true;
+  // 名称列表按行展示，管理员无需编辑 JSON。
+  if (field.name === 'nickname') return (field.value as string[]).join('\n');
   return field.kind === 'json' ? JSON.stringify(field.value, null, 2) : String(field.value);
 }
 
@@ -22,6 +24,10 @@ function patchValue(field: SettingField, value: string | boolean): JsonValue {
   // 只转换被编辑的运行字段，完整约束与版本冲突由服务端校验。
   if (value === '' && field.nullable) return null;
   if (field.kind === 'boolean') return value === true;
+  if (field.name === 'nickname') {
+    // 留空明确关闭名称触发；名称在后端统一去重并随运行快照生效。
+    return String(value).split(/\r?\n/).map(name => name.trim()).filter(Boolean);
+  }
   if (field.kind === 'number') {
     if (String(value).trim() === '' || !Number.isFinite(Number(value))) throw new Error(`${field.description}需要填写数字`);
     return Number(value);
@@ -73,7 +79,9 @@ export function Settings({ token }: { token: string }) {
   }
 
   const fields = snapshot?.fields.filter(field => fieldTab(field) === scope
-    && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase())) || [];
+    && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase()))
+    // 名称是群聊触发入口，在运行配置中优先展示。
+    .sort((left, right) => Number(right.name === 'nickname') - Number(left.name === 'nickname')) || [];
   return <div className="page-content">
     <div className="page-heading"><div><p className="eyebrow">CONFIGURATION</p>
       <h1>机器人配置</h1>
@@ -105,7 +113,10 @@ export function Settings({ token }: { token: string }) {
         return <div className="setting-row" key={field.name}>
           <div className="setting-description"><label htmlFor={id}>{field.description}</label>{field.restart_required && <Tag>重启生效</Tag>}<code>{field.name}</code></div>
           <div className="setting-control">
-            {field.kind === 'boolean' && field.nullable ? <select id={id} disabled={readOnly}
+            {field.name === 'nickname' ? <Input.TextArea id={id} disabled={readOnly}
+              value={String(value)} placeholder="每行填写一个名称或别名，如：桃桃"
+              autoSize={{minRows: 2, maxRows: 6}} onChange={event => change(event.target.value)} />
+              : field.kind === 'boolean' && field.nullable ? <select id={id} disabled={readOnly}
               value={String(value)} onChange={event => change(event.target.value === '' ? '' : event.target.value === 'true')}>
               <option value="">未设置（不传此参数）</option><option value="true">启用</option><option value="false">禁用</option>
             </select>
@@ -113,6 +124,7 @@ export function Settings({ token }: { token: string }) {
               : field.kind === 'secret' ? <Input.Password id={id} disabled={readOnly} value={String(value)} placeholder={field.secret_is_set ? readOnly ? '已设置' : '已设置 · 留空保持原值' : '未设置'} autoComplete="new-password" onChange={event => change(event.target.value)} />
               : field.kind === 'json' || (field.kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
               : <Input id={id} disabled={readOnly} type={field.kind === 'number' ? 'number' : 'text'} step="any" value={String(value)} onChange={event => change(event.target.value)} />}
+            {field.name === 'nickname' && <small>每行一个名称或别名，保存后热更新；留空关闭名字触发。</small>}
             {!readOnly && field.kind === 'secret' && field.nullable && field.secret_is_set && <Button size="small" type="text" danger onClick={() => change('')}>清除此密钥</Button>}
           </div>
         </div>;

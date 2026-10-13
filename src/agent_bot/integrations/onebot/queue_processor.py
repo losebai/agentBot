@@ -129,18 +129,23 @@ class ConversationQueueProcessor:
         return result
 
     async def _generate(self, job: ConversationJob) -> ConversationResult:
-        """在运行时租约内生成文本或媒体结果，工作流只持久化第一张已验证图片。"""
+        """生成文本或媒体并规范化已生成任务正文，工作流只持久化首张已验证图片。"""
 
         async with self._runtime_lease():
             if (execution := active_image_task.get()) is not None:
                 await execution.check_cancelled()
             if job.ai_job_reply is not None:
+                # 已生成的任务也先走回复格式校验，确保持久化正文与发送分段相同。
+                generated = generated_reply_from_model(job.ai_job_reply.text, job.request_id)
                 return ConversationResult(
-                    kind="TEXT", reply=job.ai_job_reply,
+                    kind="TEXT",
+                    reply=PersistedGeneratedReply.model_validate(
+                        generated.model_dump(by_alias=True),
+                    ),
                     deliveryParts=tuple(split_reply(
-                        job.ai_job_reply.text,
+                        generated.text,
                         chunk_chars=self._config_provider().chat_chunk_chars,
-                        max_reply_chars=len(job.ai_job_reply.text),
+                        max_reply_chars=len(generated.text),
                     )),
                 )
             if job.background_image and job.workflow_request is not None:

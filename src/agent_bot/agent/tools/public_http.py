@@ -1,10 +1,12 @@
-"""Public-only HTTP with validated numeric connections and bounded decoding."""
+"""仅连接校验后的公开地址，限制解码大小并记录脱敏的网页失败原因。"""
 
 import asyncio
 import ipaddress
+import logging
 import socket
 import ssl
 import zlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
@@ -14,6 +16,8 @@ import httpx
 from httpcore._backends.anyio import AnyIOBackend
 
 from agent_bot.agent.errors import AgentError
+
+logger = logging.getLogger(__name__)
 
 
 def public_address(value):
@@ -192,10 +196,14 @@ class PageText:
 
 
 class PublicPageReader:
-    def __init__(self, *, transport=None):
+    """读取公开网页，原始链接参数和响应正文不能进入失败日志。"""
+
+    def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        """允许测试注入传输，正式请求使用经过地址校验的连接后端。"""
         self.transport = transport
 
-    async def read(self, url, *, remaining):
+    async def read(self, url: str, *, remaining: Callable[[], float]) -> PageText:
+        """按剩余预算读取网页，仅记录目标主机、HTTP 状态或异常类型。"""
         try:
             async with httpx.AsyncClient(
                 transport=self.transport or PublicTransport(),
@@ -213,6 +221,10 @@ class PublicPageReader:
                             url = urljoin(url, response.headers["location"])
                             continue
                         if not 200 <= response.status_code < 300:
+                            logger.warning(
+                                "公开网页读取失败：host=%s status=%s",
+                                urlsplit(url).hostname, response.status_code,
+                            )
                             raise AgentError("AGENT_PAGE_UNAVAILABLE", status_code=503)
                         content_type = (
                             response.headers.get("content-type", "").split(";")[0].lower()
@@ -267,4 +279,8 @@ class PublicPageReader:
             OSError,
             zlib.error,
         ) as error:
+            logger.warning(
+                "公开网页读取失败：host=%s error=%s",
+                urlsplit(url).hostname, type(error).__name__,
+            )
             raise AgentError("AGENT_PAGE_UNAVAILABLE", status_code=503) from error

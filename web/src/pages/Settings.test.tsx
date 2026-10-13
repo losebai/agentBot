@@ -13,6 +13,29 @@ const snapshot = {
 };
 
 describe('配置编辑', () => {
+  it('机器人名称按行编辑并以名称列表保存，清空后关闭名字触发', async () => {
+    let submitted: unknown;
+    const fields = [{name: 'nickname', description: '机器人名称与触发别名', kind: 'json',
+      value: ['桃桃', '小桃'], nullable: false, secret_is_set: false, restart_required: false,
+      scope: 'runtime', read_only: false}];
+    vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+      if (init?.method === 'PATCH') submitted = JSON.parse(init.body);
+      return Response.json({...snapshot, fields});
+    }));
+    render(<Settings token="offline-token" />);
+    const names = await screen.findByLabelText('机器人名称与触发别名');
+    expect(names).toBeEnabled();
+    expect(names).toHaveValue('桃桃\n小桃');
+    fireEvent.change(names, {target: {value: ' 新名字 \n\n 新别名 '}});
+    fireEvent.click(screen.getByRole('button', {name: '保存修改'}));
+    await waitFor(() => expect(submitted).toEqual({expected_revision: 1,
+      values: {nickname: ['新名字', '新别名']}}));
+    await waitFor(() => expect(screen.getByRole('button', {name: '保存修改'})).toBeDisabled());
+    fireEvent.change(names, {target: {value: ''}});
+    fireEvent.click(screen.getByRole('button', {name: '保存修改'}));
+    await waitFor(() => expect(submitted).toEqual({expected_revision: 1, values: {nickname: []}}));
+  });
+
   it.each([null, false, true])('可空布尔值 %s 能保留原值并显式清除为 null', async initial => {
     let submitted: unknown;
     const fields = [{ name: 'chat_llm_enable_thinking', description: '深度思考', kind: 'boolean',

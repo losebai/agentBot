@@ -53,9 +53,31 @@ def test_fixed_prompt_keeps_reference_and_rejects_uploaded_override():
         )
 
 
+def test_legacy_fixed_reference_directory_preserves_existing_image() -> None:
+    """迁入的旧固定底图目录仍可执行，准备请求时不改路径或替换图片。"""
+    definition = fixed_definition()
+    api = json.loads(definition.api_json)
+    reference = "dispatch-chat-reference/" + "d" * 64 + ".png"
+    api["1"]["inputs"]["image"] = reference
+    definition = replace(definition, api_json=json.dumps(api))
+    validate_workflow_bindings(definition)
+    result = prepare_workflow_prompt(
+        definition, positive_prompt="换成雪景", negative_prompt="", seed=42,
+    )
+    assert result["1"]["inputs"]["image"] == reference
+    with pytest.raises(WorkflowValidationError):
+        prepare_workflow_prompt(
+            definition, positive_prompt="换背景", negative_prompt="", seed=42,
+            input_image=uploaded_image(),
+        )
+
+
 @pytest.mark.parametrize("path", [
     "sample.png", "../outside.png", "C:/secret.png", "https://example.com/a.png",
     "chat-reference/../a.png", "chat-reference/" + "d" * 64 + ".png [output]",
+    "dispatch-chat-reference/../a.png",
+    "dispatch-chat-reference/" + "d" * 64 + ".png [output]",
+    "dispatch-chat-reference/uncontrolled.png",
 ])
 def test_fixed_reference_rejects_uncontrolled_paths(path):
     """固定底图只接受受控目录内按摘要命名的图片。"""

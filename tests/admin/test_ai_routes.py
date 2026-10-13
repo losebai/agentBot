@@ -215,6 +215,9 @@ async def test_system_records_api_filters_and_validates_category(python_api):
     assert [r["source_id"] for r in normal.json()["items"]] == ["1"]
     system = await api.get("/api/v1/ai/records?category=system", headers=HEADERS)
     assert {r["system_kind"] for r in system.json()["items"]} == {"auto_speak", "command"}
+    # 调用记录接口默认只查普通分组，客户端省略 category 也不会混入系统调用。
+    default = await api.get("/api/v1/ai/records", headers=HEADERS)
+    assert [r["source_id"] for r in default.json()["items"]] == ["1"]
     commands = await api.get(
         "/api/v1/ai/records?category=system&system_kind=command", headers=HEADERS,
     )

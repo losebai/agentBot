@@ -44,14 +44,14 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
     @router.get("/ai/records", response_model=Page[CallSummary])
     async def unified_records(
         type: CallType | None = None,
-        category: CallCategory | None = None,
+        category: CallCategory = "conversation",
         system_kind: SystemKind | None = None,
         session_id: str | None = Query(None, max_length=255),
         status: str | None = Query(None, max_length=16),
         limit: int = Query(50, ge=1, le=100),
         cursor: str | None = Query(None, max_length=2048),
     ):
-        """按普通或系统调用分组查询，类型、会话和游标一起约束结果。"""
+        """默认排除系统调用；系统页显式选择分组，类型、会话和游标一起约束。"""
         return await call_records(
             "list_calls",
             type=type,

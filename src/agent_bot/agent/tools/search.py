@@ -31,9 +31,10 @@ class SearchTool:
         self.connector, self.server = connector, server
 
     async def call(self, call):
+        """校验搜索配置后调用指定服务；配置缺失不可按网络故障重试。"""
         args = ToolSchema.validate_arguments(self.definition, call.arguments)
         if self.server is None or self.server.category != "search":
-            raise AgentError("AGENT_SEARCH_UNAVAILABLE", status_code=503)
+            raise AgentError("AGENT_SEARCH_UNAVAILABLE", status_code=409)
         query = args["query"].strip()
         if not query:
             raise AgentError("AGENT_TOOL_ARGUMENTS_INVALID", status_code=422)

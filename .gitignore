@@ -29,3 +29,7 @@ data/
 *.db-shm
 .pytest-*-results.txt
 .ruff-*-results.txt
+docs/**
+/docs/migration/
+/docs/superpowers/
+2026*

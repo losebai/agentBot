@@ -75,3 +75,29 @@ async def test_command_context_is_task_local_and_reaches_database_worker(ai_para
     store = CallRecordStore(ai_params, connect=ai_database.connect)
     assert [r.request_id for r in (await store.list_calls(category="system")).items] == ["a"]
     assert [r.request_id for r in (await store.list_calls(category="conversation")).items] == ["b"]
+
+
+async def test_old_system_markers_excluded_even_with_ordinary_type(ai_params, ai_database):
+    """历史记录类型未更新时，查询仍按已有决策标记排除，且分页不漏普通记录。"""
+    store = CallRecordStore(ai_params, connect=ai_database.connect)
+    raw = [
+        {"id": 1, "data": {"choices": []}},
+        {"id": 2, "data": {"type": "auto_speak_decision"}},
+        {"id": 3, "request_id": "auto-decision-old"},
+        {"id": 4, "data": {"system_kind": "auto_speak"}},
+        {"id": 5, "request_context": {"state": "旧状态"}, "data": {"shouldSpeak": False}},
+        {"id": 6, "data": {"original_data": {"system_kind": "command"}}},
+        {"id": 7, "data": {"choices": []}},
+        {"id": 8},
+    ]
+    rows = [{**legacy_record(row, "history"), "type": "ordinary"} for row in raw]
+    rows[-1]["source"] = "python:agent_bot_auto_speak_decision"
+    await store.import_batch(rows)
+    first = await store.list_calls(category="conversation", limit=1)
+    second = await store.list_calls(category="conversation", limit=1, cursor=first.next_cursor)
+    assert {row.source_id for row in first.items + second.items} == {"1", "7"}
+    assert second.next_cursor is None
+    system = await store.list_calls(category="system")
+    assert {row.source_id for row in system.items} == {"2", "3", "4", "5", "6", "8"}
+    for item in system.items:
+        assert (await store.get_call(item.id)).system_kind == item.system_kind

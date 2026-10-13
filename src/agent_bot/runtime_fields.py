@@ -1,4 +1,4 @@
-"""Restart-only configuration fields, safe to import before bot startup."""
+"""需要重启的启动与连接字段；机器人名称由运行快照热更新。"""
 
 RESTART_REQUIRED_FIELDS = frozenset(
     {
@@ -8,7 +8,6 @@ RESTART_REQUIRED_FIELDS = frozenset(
         "log_level",
         "api_timeout",
         "superusers",
-        "nickname",
         "command_start",
         "command_sep",
         "session_expire_timeout",

@@ -183,7 +183,7 @@ def _build_runtime_state(
 
 
 def _publish_runtime_state(state: _RuntimeState) -> None:
-    """把不可变运行时快照发布为入口兼容属性。"""
+    """发布运行时快照，同时更新适配器名称，避免旧名称继续触发 to_me。"""
 
     global plugin_config, _session_secret, _naraka_default_role_id
     global access_policy, ai_client, model_guard, conversation_store, chat_service
@@ -208,6 +208,8 @@ def _publish_runtime_state(state: _RuntimeState) -> None:
         )
     )
     plugin_config = state.config
+    # OneBot 在插件规则之前识别名称，适配器与插件必须使用同一份名称快照。
+    get_driver().config.nickname = set(state.config.nickname)
     _session_secret = state.session_secret
     _naraka_default_role_id = state.naraka_default_role_id
     access_policy = state.access_policy

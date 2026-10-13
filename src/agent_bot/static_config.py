@@ -39,7 +39,6 @@ class StaticConfigBase(BaseModel):
             return None
         if info.field_name in {
             "superusers",
-            "nickname",
             "command_start",
             "command_sep",
             "chat_mcp_allowed_hosts",

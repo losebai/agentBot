@@ -17,16 +17,27 @@ CallCategory = Literal["conversation", "system"]
 SystemKind = Literal["auto_speak", "command"]
 _TABLE = "agent_bot_call_record"
 _RECORD_TIMEZONE = timezone(timedelta(hours=8))
-# 新指令使用任务标记；历史记录只依据项目已有请求前缀或明确的指令输入识别。
+# 查询兼容已入库但类型未重新归类的决策，不要求重写历史数据。
+_DECISION_CONDITION = """(
+    type = 'auto_speak'
+    OR source = 'python:agent_bot_auto_speak_decision'
+    OR SUBSTR(request_id, 1, 14) = 'auto-decision-'
+    OR JSON_EXTRACT(data, '$.type') IN ('auto_speak_decision', '"auto_speak_decision"')
+    OR JSON_EXTRACT(data, '$.system_kind') IN ('auto_speak', '"auto_speak"')
+    OR (JSON_EXTRACT(request_context, '$.state') IS NOT NULL
+        AND JSON_EXTRACT(data, '$.shouldSpeak') IS NOT NULL)
+)"""
+# 新指令使用任务标记；历史记录依据已有请求前缀、指令输入及超长归档的原数据识别。
 _COMMAND_CONDITION = """(
     COALESCE(JSON_EXTRACT(data, '$.system_kind') IN ('command', '"command"'), 0)
+    OR JSON_EXTRACT(data, '$.original_data.system_kind') IN ('command', '"command"')
     OR SUBSTR(request_id, 1, 11) = 'qq-summary-'
     OR SUBSTR(request_id, 1, 8) = 'qq-draw-'
     OR SUBSTR(session_Id, -15) = ':quoted-summary'
     OR (SUBSTR(request_id, 1, 9) = 'qq-reply-' AND SUBSTR(content, 1, 1) = '/')
 )"""
 _SYSTEM_KIND = (
-    "CASE WHEN type='auto_speak' THEN 'auto_speak' "
+    f"CASE WHEN {_DECISION_CONDITION} THEN 'auto_speak' "
     f"WHEN {_COMMAND_CONDITION} THEN 'command' ELSE NULL END"
 )
 _SECRET = re.compile(

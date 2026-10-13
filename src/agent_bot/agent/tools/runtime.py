@@ -50,7 +50,7 @@ class ToolRuntime:
 
     @asynccontextmanager
     async def open(self, snapshot, request, authority, *, media_scope=None, images=()):
-        """显式空工具列表不打开服务，其余能力遵循预设与入口授权交集。"""
+        """工具遵循预设与入口授权交集，缺少搜索绑定时返回不可重试的配置拒绝。"""
         if request.tools == ():
             yield BoundTools((), {})
             return
@@ -133,5 +133,5 @@ class ToolRuntime:
                 available=tuple(definitions),
             )
             if any(t.name == "web_search" for t in selected) and snapshot.search_mcp is None:
-                raise AgentError("AGENT_SEARCH_UNAVAILABLE", status_code=503)
+                raise AgentError("AGENT_SEARCH_UNAVAILABLE", status_code=409)
             yield BoundTools(selected, handlers, remote.warnings)

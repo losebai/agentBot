@@ -1,0 +1,81 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { expect, it, vi } from 'vitest';
+import { Agents } from './Agents';
+import { Settings } from './Settings';
+import type { SettingField, SettingsSnapshot } from '../types';
+
+const common = { nullable: false, secret_is_set: false, restart_required: false };
+const agentFields: SettingField[] = [
+  { ...common, name: 'chat_agent_enabled', description: '启用 QQ Agent', kind: 'boolean', value: true },
+  { ...common, name: 'chat_python_agent_code', description: '默认 Agent 预设', kind: 'string', value: 'helper', nullable: true },
+  { ...common, name: 'chat_agent_max_steps', description: 'Agent 工具轮次', kind: 'number', value: 3, nullable: true },
+  { ...common, name: 'chat_mcp_services', description: '通用 MCP 服务', kind: 'json', value: ['memory'] },
+  { ...common, name: 'chat_python_search_mcp_code', description: '搜索 MCP 服务', kind: 'string', value: 'search', nullable: true },
+  { ...common, name: 'chat_web_search_enabled', description: '联网搜索授权', kind: 'boolean', value: true },
+  { ...common, name: 'chat_web_search_max_steps', description: '联网推理轮次', kind: 'number', value: 3 },
+  { ...common, name: 'chat_mention_tool_enabled', description: '群成员提及工具授权', kind: 'boolean', value: false },
+];
+const snapshot: SettingsSnapshot = { database_revision: 4, applied_revision: 4, restart_required_fields: [], fields: [
+  ...agentFields,
+  { ...common, name: 'chat_model', description: '聊天模型', kind: 'string', value: 'local-model' },
+  { ...common, name: 'port', description: '监听端口', kind: 'number', value: 8080, scope: 'static', read_only: true },
+] };
+
+it('机器人配置移除 Agent 字段，仍显示普通聊天和只读静态配置', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(snapshot)));
+  render(<Settings token="offline" />);
+  expect(await screen.findByLabelText('聊天模型')).toBeVisible();
+  for (const field of agentFields) expect(screen.queryByLabelText(field.description)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: '静态配置' }));
+  expect(await screen.findByLabelText('监听端口')).toBeDisabled();
+});
+
+it('Agent 管理中编辑运行配置，仅保存本页修改并保留原有版本边界', async () => {
+  let submitted: unknown;
+  vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+    if (String(url).endsWith('/settings')) {
+      if (init?.method === 'PATCH') {
+        submitted = JSON.parse(String(init.body));
+        return Response.json({ ...snapshot, database_revision: 5 });
+      }
+      return Response.json(snapshot);
+    }
+    return Response.json({ items: [], next_cursor: null });
+  }));
+  render(<Agents token="offline" />);
+  fireEvent.click(screen.getByRole('tab', { name: '运行配置' }));
+  expect(await screen.findByLabelText('启用 QQ Agent')).toBeChecked();
+  for (const field of agentFields) expect(screen.getByLabelText(field.description)).toBeVisible();
+  expect(screen.queryByLabelText('聊天模型')).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: '静态配置' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('启用 QQ Agent'));
+  fireEvent.change(screen.getByLabelText('默认 Agent 预设'), { target: { value: '' } });
+  fireEvent.change(screen.getByLabelText('Agent 工具轮次'), { target: { value: '5' } });
+  fireEvent.change(screen.getByLabelText('通用 MCP 服务'), { target: { value: '["memory", "tools"]' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+  await waitFor(() => expect(submitted).toEqual({ expected_revision: 4, values: {
+    chat_agent_enabled: false, chat_python_agent_code: null, chat_agent_max_steps: 5,
+    chat_mcp_services: ['memory', 'tools'],
+  } }));
+  expect(await screen.findByText(/数据库版本 5/)).toBeVisible();
+  expect(screen.getByText('等待热刷新')).toBeVisible();
+});
+
+it('切换 Agent 页签保留草稿，保存冲突仍保留输入', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+    if (String(url).endsWith('/settings')) return init?.method === 'PATCH'
+      ? Response.json({ code: 'SETTINGS_CONFLICT', message: '配置已被修改，请重新加载' }, { status: 409 })
+      : Response.json(snapshot);
+    return Response.json({ items: [], next_cursor: null });
+  }));
+  render(<Agents token="offline" />);
+  fireEvent.click(screen.getByRole('tab', { name: '运行配置' }));
+  fireEvent.change(await screen.findByLabelText('默认 Agent 预设'), { target: { value: 'unsaved-agent' } });
+  fireEvent.click(screen.getByRole('tab', { name: 'Agent 列表' }));
+  expect(screen.getByRole('button', { name: '新增 Agent' })).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '运行配置' }));
+  expect(screen.getByLabelText('默认 Agent 预设')).toHaveValue('unsaved-agent');
+  fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+  expect(await screen.findByText('配置已被修改，请重新加载')).toBeVisible();
+  expect(screen.getByLabelText('默认 Agent 预设')).toHaveValue('unsaved-agent');
+});

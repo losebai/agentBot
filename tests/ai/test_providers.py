@@ -115,7 +115,12 @@ def stream_body(protocol):
         values = [
             {"type": "response.output_text.delta", "delta": "你"},
             {"type": "response.output_text.delta", "delta": "好"},
-            {"type": "response.completed", "response": {"status": "completed", "model": "Qwen/X"}},
+            {"type": "response.completed", "response": {
+                "status": "completed", "model": "Qwen/X", "output": [{
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": "你好"}],
+                }],
+            }},
         ]
     elif protocol == "openai-chat":
         values = [
@@ -124,8 +129,8 @@ def stream_body(protocol):
         ]
     else:
         values = [
-            {"model": "Qwen/X", "message": {"content": "你"}, "done": False},
-            {"model": "Qwen/X", "message": {"content": "好"}, "done": True},
+            {"model": "Qwen/X", "message": {"role": "assistant", "content": "你"}, "done": False},
+            {"model": "Qwen/X", "message": {"role": "assistant", "content": "好"}, "done": True},
         ]
     if protocol == "ollama":
         return "\n".join(json.dumps(value, ensure_ascii=False) for value in values).encode()

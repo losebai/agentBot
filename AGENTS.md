@@ -5,7 +5,7 @@
 - `src/`：平铺保存统一 agent_bot 包的源码，包含服务入口、应用装配、管理 API、AI/Agent/媒体模块、打包静态资源，以及机器人行为、配置、业务服务、插件及 OneBot、Redis、模型供应商、ComfyUI 集成；打包时映射为 agent_bot。
 - `web/src/`：React/TypeScript 管理界面，包含页面、组件、API 客户端、样式及同目录测试。
 - `tests/`：Python 单元、集成、管理 API 和 AI 测试，以及共享替身与夹具。
-- `sql/agent_bot_init.sql` 与 `sql/agent_bot_init.sqlite.sql`：MySQL、SQLite 的新库初始化脚本；`sql/legacy/`：原样归档的历史脚本；独立注释增量脚本仅用于既有表。`tools/`：迁移及包检查工具；`docs/`：设计决策与实施计划。
+- `sql/agent_bot_init.sql` 与 `sql/agent_bot_init.sqlite.sql`：MySQL、SQLite 的新库初始化脚本；`sql/legacy/`：原样归档的历史脚本；独立注释增量脚本仅用于既有表。`src/tools/`：迁移及包检查工具；`docs/`：设计决策与实施计划。
 
 ## 构建、测试与开发命令
 

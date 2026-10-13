@@ -1,14 +1,13 @@
-"""Shared validation and typed provider boundary, with no protocol guessing."""
+"""保留模型发现与媒体共用的校验和文本供应商接口。"""
 
 import json
 from collections.abc import AsyncIterator
-from typing import ClassVar, Protocol
+from typing import Protocol
 
 from pydantic import ValidationError
 
 from agent_bot.ai.contracts import ProviderCall, ProviderDelta, ProviderResult, TokenUsage
 from agent_bot.ai.errors import AiError
-from agent_bot.ai.providers.transport import ProviderTransport
 from agent_bot.models import LlmRequestOptions
 
 
@@ -57,49 +56,3 @@ def usage(value, *, responses: bool = False) -> TokenUsage:
         )
     except ValidationError as error:
         raise AiError("AI_RESPONSE_INVALID") from error
-
-
-class BaseProvider:
-    path: str
-    options: ClassVar[dict[str, str]]
-
-    def __init__(self, transport: ProviderTransport):
-        self.transport = transport
-
-    def validate_options(self, options: LlmRequestOptions) -> None:
-        if set(options.model_dump(exclude_none=True)) - self.options.keys():
-            raise AiError("AI_OPTION_UNSUPPORTED", status_code=422)
-
-    def mapped_options(self, call: ProviderCall) -> dict:
-        self.validate_options(call.request.options)
-        return {
-            self.options[name]: value
-            for name, value in call.request.options.model_dump(exclude_none=True).items()
-        }
-
-    def headers(self, call: ProviderCall) -> dict[str, str]:
-        result = {"Content-Type": "application/json"}
-        if call.credential is not None:
-            result["Authorization"] = f"Bearer {call.credential.get_secret_value()}"
-        return result
-
-    async def read(self, call: ProviderCall, payload: dict) -> dict:
-        return object_value(
-            await self.transport.read_json(
-                call.resolved.provider.base_url + self.path,
-                payload=payload,
-                headers=self.headers(call),
-                timeout_seconds=call.request.timeout_seconds,
-            )
-        )
-
-    def bytes(self, call: ProviderCall, payload: dict):
-        return self.transport.iter_bytes(
-            call.resolved.provider.base_url + self.path,
-            payload=payload,
-            headers=self.headers(call),
-            timeout_seconds=call.request.timeout_seconds,
-        )
-
-    async def aclose(self):
-        await self.transport.aclose()

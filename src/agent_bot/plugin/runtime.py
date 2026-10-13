@@ -18,13 +18,7 @@ from agent_bot.ai.auto_speak import AutoSpeakDecisionService
 from agent_bot.ai.auto_speak_records import AutoSpeakRecords
 from agent_bot.ai.catalog import AiCatalog
 from agent_bot.ai.credentials import CredentialResolver
-from agent_bot.ai.providers.agent_chat import AgentChatProvider
-from agent_bot.ai.providers.agent_ollama import AgentOllamaProvider
-from agent_bot.ai.providers.agent_responses import AgentResponsesProvider
-from agent_bot.ai.providers.chat_completions import ChatCompletionsProvider
-from agent_bot.ai.providers.ollama import OllamaProvider
-from agent_bot.ai.providers.responses import ResponsesProvider
-from agent_bot.ai.providers.transport import ProviderTransport
+from agent_bot.ai.providers.langchain import LangChainProvider
 from agent_bot.ai.routing import RoutedModelGuard, RoutingAiClient
 from agent_bot.ai.service import AiService
 from agent_bot.ai.sessions import AiSessionStore
@@ -132,9 +126,9 @@ def build_runtime_state(
         AiSessionStore(database, connect=database_pool.connect),
         CredentialResolver(),
         {
-            "openai-responses": ResponsesProvider(ProviderTransport()),
-            "openai-chat": ChatCompletionsProvider(ProviderTransport()),
-            "ollama": OllamaProvider(ProviderTransport()),
+            "openai-responses": LangChainProvider("openai-responses"),
+            "openai-chat": LangChainProvider("openai-chat"),
+            "ollama": LangChainProvider("ollama"),
         },
     )
     comfy_client: ComfyClient | None = None
@@ -196,9 +190,9 @@ def build_runtime_state(
             ),
             CredentialResolver(),
             {
-                "openai-chat": AgentChatProvider(ProviderTransport()),
-                "openai-responses": AgentResponsesProvider(ProviderTransport()),
-                "ollama": AgentOllamaProvider(ProviderTransport()),
+                "openai-chat": LangChainProvider("openai-chat"),
+                "openai-responses": LangChainProvider("openai-responses"),
+                "ollama": LangChainProvider("ollama"),
             },
             ToolRuntime(
                 mcp_connector,

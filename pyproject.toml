@@ -24,6 +24,12 @@ dependencies = [
   "pillow>=11.0,<13.0",
   "pymysql>=1.1,<2.0",
   "redis>=5.2,<7.0",
+  "langchain>=1,<2",
+  "langchain-core>=1,<2",
+  "langchain-openai>=1,<2",
+  "langchain-ollama>=1,<2",
+  "langgraph>=1,<2",
+  "langsmith>=0.14,<1",
 ]
 
 [project.scripts]

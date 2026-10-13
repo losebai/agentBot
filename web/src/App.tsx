@@ -6,13 +6,12 @@ import { Overview } from './pages/Overview';
 import { Settings } from './pages/Settings';
 import { Chat } from './pages/Chat';
 import { Providers } from './pages/Providers';
-import { Models } from './pages/Models';
 import { Sessions } from './pages/Sessions';
 import { Agents } from './pages/Agents';
 import { Skills } from './pages/Skills';
 import { McpServers } from './pages/McpServers';
 
-const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', chat:'对话测试', providers:'供应商管理', models:'模型管理', sessions:'会话记录', agents:'Agent 管理', skills:'Skill 管理', mcps:'MCP 服务'};
+const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理', skills:'Skill 管理', mcps:'MCP 服务'};
 
 /** 按服务端登录模式进入工作台，密码只保留在内存中。 */
 export function App() {
@@ -60,8 +59,7 @@ export function App() {
         { key: 'overview', label: '运行概览', icon: <DashboardOutlined /> },
         { key: 'settings', label: '机器人配置', icon: <SettingOutlined /> },
         { key: 'chat', label: '对话测试', icon: <MessageOutlined /> },
-        { key: 'providers', label: '供应商管理', icon: <SettingOutlined /> },
-        { key: 'models', label: '模型管理', icon: <DashboardOutlined /> },
+        { key: 'providers', label: '供应商与模型', icon: <SettingOutlined /> },
         { key: 'sessions', label: '会话记录', icon: <MessageOutlined /> },
         { key: 'agents', label: 'Agent 管理', icon: <DashboardOutlined /> },
         { key: 'skills', label: 'Skill 管理', icon: <SettingOutlined /> },
@@ -72,7 +70,6 @@ export function App() {
           <section hidden={page !== 'settings'}>{visited.includes('settings') && <Settings token={token} />}</section>
           <section hidden={page !== 'chat'}>{page === 'chat' && <Chat token={token} />}</section>
           <section hidden={page !== 'providers'}>{visited.includes('providers') && <Providers token={token} />}</section>
-          <section hidden={page !== 'models'}>{visited.includes('models') && <Models token={token} />}</section>
           <section hidden={page !== 'sessions'}>{page === 'sessions' && <Sessions token={token} />}</section>
           <section hidden={page !== 'agents'}>{visited.includes('agents') && <Agents token={token} />}</section>
           <section hidden={page !== 'skills'}>{visited.includes('skills') && <Skills token={token} />}</section>

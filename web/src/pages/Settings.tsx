@@ -4,6 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import type { JsonValue, SettingField, SettingsSnapshot } from '../types';
 
+// Agent 运行入口及工具授权集中展示；聊天、媒体和启动字段不按描述关键词猜测归属。
+const agentSettingNames = new Set([
+  'chat_agent_enabled', 'chat_python_agent_code', 'chat_agent_max_steps',
+  'chat_mcp_services', 'chat_python_search_mcp_code', 'chat_web_search_enabled',
+  'chat_web_search_max_steps', 'chat_mention_tool_enabled',
+]);
+
 function initialValue(field: SettingField): string | boolean {
   // 密钥只显示是否已设置，不从快照构造掩码或实际值。
   if (field.kind === 'boolean') return field.value === true;
@@ -23,8 +30,8 @@ function patchValue(field: SettingField, value: string | boolean): JsonValue {
   return String(value);
 }
 
-export function Settings({ token }: { token: string }) {
-  // 分组展示启动配置和运行配置，草稿仅记录可在线修改字段。
+/** 机器人和 Agent 共用字段编辑及版本校验，每个页面只展示和提交所属配置。 */
+export function Settings({ token, category = 'bot' }: { token: string; category?: 'bot' | 'agent' }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [snapshot, setSnapshot] = useState<SettingsSnapshot>();
   const [draft, setDraft] = useState<Record<string, string | boolean>>({});
@@ -42,14 +49,20 @@ export function Settings({ token }: { token: string }) {
   }, [api]);
   useEffect(() => { void load(); }, [load]);
 
+  /** 静态配置始终在机器人页面只读展示；Agent 页面只管理明确列出的运行字段。 */
+  function belongsToCategory(field: SettingField): boolean {
+    const agentField = field.scope !== 'static' && agentSettingNames.has(field.name);
+    return category === 'agent' ? agentField : !agentField;
+  }
+
   async function save() {
-    // 即使草稿含过期字段，也不能把静态参数提交为运行更新。
+    // 限定本页字段并排除静态参数，两个页面仍共享服务器的配置版本边界。
     if (!snapshot || saving) return;
     setError(''); setSaved(false); setSaving(true);
     try {
       const values: Record<string, JsonValue> = {};
       for (const field of snapshot.fields) {
-        if (!field.read_only && field.scope !== 'static' && Object.hasOwn(draft, field.name)) {
+        if (belongsToCategory(field) && !field.read_only && field.scope !== 'static' && Object.hasOwn(draft, field.name)) {
           values[field.name] = patchValue(field, draft[field.name]);
         }
       }
@@ -59,10 +72,12 @@ export function Settings({ token }: { token: string }) {
     finally { setSaving(false); }
   }
 
-  const fields = snapshot?.fields.filter(field => (field.scope || 'runtime') === scope
+  const fields = snapshot?.fields.filter(field => belongsToCategory(field) && (field.scope || 'runtime') === scope
     && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase())) || [];
   return <div className="page-content">
-    <div className="page-heading"><div><p className="eyebrow">CONFIGURATION</p><h1>机器人配置</h1><p>调整聊天行为、模型和接入设置。</p></div>
+    <div className="page-heading"><div><p className="eyebrow">CONFIGURATION</p>
+      <h1>{category === 'agent' ? 'Agent 运行配置' : '机器人配置'}</h1>
+      <p>{category === 'agent' ? '设置 QQ 对话使用的 Agent、工具轮次和工具授权。' : '调整聊天行为、模型和接入设置。'}</p></div>
       <div className="heading-actions"><Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading} disabled={saving}>
         {Object.keys(draft).length ? '放弃修改并重新加载' : '重新加载'}</Button>
         <Button type="primary" icon={<SaveOutlined aria-hidden />} loading={saving} disabled={!Object.keys(draft).length || loading} onClick={() => void save()}>保存修改</Button></div>
@@ -72,9 +87,9 @@ export function Settings({ token }: { token: string }) {
     {snapshot && <div className="version-strip"><span>数据库版本 {snapshot.database_revision} · 运行时版本 {snapshot.applied_revision}</span>
       <Tag color={snapshot.database_revision === snapshot.applied_revision && !snapshot.restart_required_fields.length ? 'green' : 'gold'}>
         {snapshot.restart_required_fields.length ? `需要重启：${snapshot.restart_required_fields.join(', ')}` : snapshot.database_revision !== snapshot.applied_revision ? '等待热刷新' : '已应用'}</Tag></div>}
-    <Tabs activeKey={scope} onChange={setScope} items={[
+    {category === 'bot' && <Tabs activeKey={scope} onChange={setScope} items={[
       { key: 'runtime', label: '运行配置' }, { key: 'static', label: '静态配置' },
-    ]} />
+    ]} />}
     {scope === 'static' && <Alert message="静态配置只读，请修改启动文件或环境变量后重启服务。" type="info" showIcon className="notice" />}
     <Input prefix={<SearchOutlined />} placeholder="搜索设置名称或描述" aria-label="搜索配置" value={filter} onChange={event => setFilter(event.target.value)} className="settings-search" />
     {loading ? <div className="loading"><Spin /></div> : <div className="settings-card">

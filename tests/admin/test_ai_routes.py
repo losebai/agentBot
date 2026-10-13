@@ -134,7 +134,12 @@ async def python_api(admin_store, admin_runtime):
                             if __import__("json").loads(req.content)["stream"]
                             else httpx.Response(
                                 200,
-                                json={"message": {"content": "真实 mock 协议回复"}, "done": True},
+                                json={
+                                    "message": {
+                                        "role": "assistant", "content": "真实 mock 协议回复",
+                                    },
+                                    "done": True,
+                                },
                             )
                         )
                     )

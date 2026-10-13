@@ -1,74 +1,149 @@
 import { Alert, Button, Tag } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AiApi, changes } from '../ai-api';
 import { errorMessage } from '../api';
+import { CatalogDialog } from '../components/CatalogDialog';
 import { CredentialInput } from '../components/CredentialInput';
-import { ProviderModels } from '../components/ProviderModels';
+import { Models } from './Models';
 import type { Page, Provider, ProviderDraft, ProviderProtocol } from '../ai-types';
 
-const empty: ProviderDraft = {name:'', protocol:'openai-responses', base_url:'', enabled:false, description:''};
-// 多供应商独立保存 URL 和 Key，密码字段只用于写入。
-export function Providers({token}: {token:string}) {
+const empty: ProviderDraft = { name: '', protocol: 'openai-responses', base_url: '', enabled: false, description: '' };
+
+/** 左侧选择供应商，右侧管理其模型；供应商密钥仅在弹窗中写入，不从响应回填。 */
+export function Providers({ token }: { token: string }) {
   const api = useMemo(() => new AiApi(token), [token]);
-  const [page, setPage] = useState<Page<Provider>>({items:[],next_cursor:null});
+  const [page, setPage] = useState<Page<Provider>>({ items: [], next_cursor: null });
   const [cursor, setCursor] = useState<string>();
   const [previous, setPrevious] = useState<(string | undefined)[]>([]);
+  const [selectedId, setSelectedId] = useState<number>();
+  const [savedSelection, setSavedSelection] = useState<Provider>();
   const [editing, setEditing] = useState<Provider | null>();
   const [draft, setDraft] = useState<ProviderDraft>(empty);
-  const [discovery, setDiscovery] = useState<Provider>();
+  const [modelRefresh, setModelRefresh] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  // 保存成功之后独立刷新目录，模型获取失败不改变保存结果。
+  const controller = useRef<AbortController>();
+  // 离开供应商页后停止模型同步，已完成的批次可在下次手动刷新时续接。
+  useEffect(() => {
+    const current = new AbortController(); controller.current = current;
+    return () => current.abort();
+  }, [api]);
+  // 新保存的供应商可能不在当前分页；保留该记录，避免新增模型误归属首行。
+  const items = savedSelection && !page.items.some(item => item.id === savedSelection.id)
+    ? [...page.items, savedSelection] : page.items;
+  const selected = items.find(item => item.id === selectedId) || items[0];
+
+  /** 刷新供应商页，已选供应商仍存在时保持选择。 */
   async function load() {
     setBusy(true);
-    try {setPage(await api.providers(cursor));setError('');}
-    catch(failure) {setError(errorMessage(failure));}
-    finally {setBusy(false);}
+    try { setPage(await api.providers(cursor)); setError(''); }
+    catch (failure) { setError(errorMessage(failure)); }
+    finally { setBusy(false); }
   }
-  useEffect(() => {void load();}, [api, cursor]);
-  // 编辑从公开字段生成草稿，不读取或回填旧密钥。
+  useEffect(() => { void load(); }, [api, cursor]);
+
+  /** 从公开字段生成编辑草稿，保留数据库中的旧密钥。 */
   function fields(item: Provider): ProviderDraft {
-    return {name:item.name,protocol:item.protocol,base_url:item.base_url,enabled:item.enabled,description:item.description};
+    return { name: item.name, protocol: item.protocol, base_url: item.base_url, enabled: item.enabled, description: item.description };
   }
+  /** 新增和编辑都使用弹窗，打开时清空上次输入和提示。 */
   function edit(item: Provider | null) {
-    setEditing(item);setDraft(item?fields(item):{...empty});setError('');setNotice('');
+    setEditing(item); setDraft(item ? fields(item) : { ...empty }); setError(''); setNotice('');
   }
-  // undefined 保留原密钥，null 只由明确清除操作产生。
+  /** 关闭时释放未提交的供应商密钥。 */
+  function cancel() {
+    setEditing(undefined); setDraft({ ...empty }); setError('');
+  }
+  /** 供应商保存成功就释放密钥草稿；自动同步失败单独提示，避免重复创建供应商。 */
   async function save() {
-    setBusy(true);setError('');setNotice('');
+    const current = controller.current;
+    if (busy || !current || current.signal.aborted) return;
+    setBusy(true); setError(''); setNotice('');
     try {
-      let saved:Provider;
-      if(editing) {
-        const patch=changes(fields(editing),draft);
-        saved=Object.keys(patch).length?await api.updateProvider(editing.id,editing.revision,patch):editing;
-      } else saved=await api.createProvider(draft);
-      setDraft({...empty});setEditing(undefined);setNotice('供应商配置已保存。');
-      setDiscovery(saved);await load();
-    } catch(failure) {setError(errorMessage(failure));}
-    finally {setBusy(false);}
+      let saved: Provider;
+      if (editing) {
+        const patch = changes(fields(editing), draft);
+        saved = Object.keys(patch).length ? await api.updateProvider(editing.id, editing.revision, patch) : editing;
+      } else saved = await api.createProvider(draft);
+      if (current.signal.aborted) return;
+      setDraft({ ...empty }); setEditing(undefined); setNotice('供应商已保存，正在同步全部模型…');
+      let syncError = '';
+      try {
+        const result = await api.syncModels(saved.id, saved.revision, current.signal);
+        if (!current.signal.aborted) setNotice('供应商已保存，已同步 ' + result.total + ' 个模型，新增 ' + result.added + ' 个。新模型默认停用。');
+      } catch (failure) {
+        syncError = '供应商已保存，模型同步失败：' + errorMessage(failure) + '。可点击刷新模型继续。';
+        if (!current.signal.aborted) setNotice('');
+      }
+      if (current.signal.aborted) return;
+      setSavedSelection(saved); setSelectedId(saved.id); setModelRefresh(value => value + 1);
+      await load();
+      if (syncError) setError(syncError);
+    } catch (failure) { if (!current.signal.aborted) setError(errorMessage(failure)); }
+    finally { if (!current.signal.aborted) setBusy(false); }
   }
-  // 删除沿用停用和版本校验，关闭该供应商的模型列表。
+  /** 删除沿用停用及版本校验，刷新后选择当前页仍存在的供应商。 */
   async function remove(item: Provider) {
     setBusy(true);
-    try {await api.deleteProvider(item.id,item.revision);if(discovery?.id===item.id)setDiscovery(undefined);await load();}
-    catch(failure) {setError(errorMessage(failure));}
-    finally {setBusy(false);}
+    try {
+      await api.deleteProvider(item.id, item.revision);
+      if (savedSelection?.id === item.id) setSavedSelection(undefined);
+      await load();
+    }
+    catch (failure) { setError(errorMessage(failure)); }
+    finally { setBusy(false); }
   }
-  return <div className="page-content"><div className="page-heading"><div><p className="eyebrow">AI PROVIDERS</p><h1>供应商管理</h1><p>每个供应商独立配置协议、API 根地址和数据库密钥。</p></div><Button disabled={busy} onClick={() => edit(null)}>新增供应商</Button></div>
-    {error && <Alert type="error" showIcon className="notice" message={error}/>}
-    {notice && <Alert type="success" showIcon className="notice" message={notice}/>}
-    <div className="panel table-wrap"><table className="data-table"><thead><tr><th>供应商</th><th>协议 / API 根地址</th><th>凭据</th><th>状态</th><th>操作</th></tr></thead><tbody>{page.items.map(item => <tr key={item.id}><td><strong>{item.name}</strong><small>版本 {item.revision}</small></td><td>{item.protocol}<small>{item.base_url}</small></td><td>{item.credential_set?'已设置':item.credential_available?'无需凭据':'需要重新设置凭据'}</td><td><Tag color={item.enabled?'green':'default'}>{item.enabled?'启用':'停用'}</Tag></td><td><Button disabled={busy} aria-label={`编辑${item.name}`} onClick={() => edit(item)}>编辑</Button> <Button disabled={busy} aria-label={`获取${item.name}模型`} onClick={()=>setDiscovery(item)}>获取模型</Button> <Button danger disabled={busy || item.enabled} onClick={() => void remove(item)}>删除</Button></td></tr>)}</tbody></table>{!page.items.length && <p className="empty-list">暂无供应商。请新增模型服务。</p>}</div>
-    <div className="catalog-pagination"><Button disabled={!previous.length || busy} onClick={() => {setCursor(previous[previous.length-1]);setPrevious(previous.slice(0,-1));}}>上一页</Button><Button disabled={!page.next_cursor || busy} onClick={() => {setPrevious([...previous,cursor]);setCursor(page.next_cursor!);}}>下一页</Button><Button loading={busy} onClick={() => void load()}>刷新</Button></div>
-    {editing !== undefined && <form className="panel catalog-form" onSubmit={event => {event.preventDefault();void save();}}><h2>{editing?'编辑供应商':'新增供应商'}</h2>
-      <label htmlFor="provider-name">供应商名称</label><input id="provider-name" required maxLength={100} value={draft.name} onChange={event => setDraft({...draft,name:event.target.value})}/>
-      <label htmlFor="provider-protocol">协议</label><select id="provider-protocol" value={draft.protocol} onChange={event => setDraft({...draft,protocol:event.target.value as ProviderProtocol})}><option value="openai-responses">OpenAI Responses</option><option value="openai-chat">兼容 Chat Completions</option><option value="ollama">Ollama</option></select>
-      <label htmlFor="provider-url">API 根地址</label><input id="provider-url" required type="url" maxLength={2048} placeholder={draft.protocol==='ollama'?'http://127.0.0.1:11434':'https://api.example.com/v1'} value={draft.base_url} onChange={event => setDraft({...draft,base_url:event.target.value})}/>
-      <CredentialInput label="API 密钥" value={draft.credential} onChange={credential=>setDraft({...draft,credential})} editing={Boolean(editing)} configured={editing?.credential_set||false} available={editing?.credential_available??true}/>
-      <label htmlFor="provider-description">描述</label><input id="provider-description" maxLength={1000} value={draft.description} onChange={event => setDraft({...draft,description:event.target.value})}/>
-      <label className="checkbox-label"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft({...draft,enabled:event.target.checked})}/>启用供应商</label>
-      <p>保存后自动获取此供应商的模型列表。API 根地址不包含完整的生成端点。</p>
-      <div className="heading-actions"><Button type="primary" htmlType="submit" loading={busy}>保存供应商</Button><Button onClick={() => {setEditing(undefined);setDraft({...empty});}}>取消</Button></div></form>}
-    {discovery&&<ProviderModels key={`${discovery.id}:${discovery.revision}`} token={token} provider={discovery}/>}
+  /** 切换时卸载旧模型面板，使分页和进行中的请求只属于当前供应商。 */
+  function select(item: Provider) {
+    setSelectedId(item.id);
+  }
+
+  return <div className="page-content">
+    <div className="page-heading"><div><p className="eyebrow">AI CATALOG</p><h1>供应商与模型</h1>
+      <p>在左侧选择供应商，在右侧管理该供应商的模型。</p></div>
+      <Button disabled={busy} onClick={() => edit(null)}>新增供应商</Button></div>
+    {error && editing === undefined && <Alert type="error" showIcon className="notice" message={error} />}
+    {notice && <Alert type="success" showIcon className="notice" message={notice} />}
+    <div className="provider-layout">
+      <aside className="panel provider-list"><h2>供应商</h2>
+        <div role="tablist" aria-label="供应商列表" aria-orientation="vertical" className="provider-tabs">
+          {items.map(item => <div className="provider-item" key={item.id}>
+            <button type="button" role="tab" id={'provider-tab-' + item.id} aria-controls="provider-model-panel"
+              aria-selected={selected?.id === item.id} disabled={busy} onClick={() => select(item)}>
+              <strong>{item.name}</strong><span>{item.protocol}</span><small>{item.base_url}</small>
+              <Tag color={item.enabled ? 'green' : 'default'}>{item.enabled ? '启用' : '停用'}</Tag>
+              <small>{item.credential_set ? '密钥已设置' : item.credential_available ? '无需凭据' : '需要重新设置凭据'}</small>
+            </button>
+            <div className="provider-item-actions"><Button size="small" disabled={busy} aria-label={'编辑' + item.name} onClick={() => edit(item)}>编辑</Button>
+              <Button size="small" danger disabled={busy || item.enabled} aria-label={'删除' + item.name} onClick={() => void remove(item)}>删除</Button></div>
+          </div>)}
+        </div>
+        {!items.length && <p className="empty-list">{busy ? '正在加载…' : '暂无供应商。请先新增供应商。'}</p>}
+        <div className="catalog-pagination">
+          <Button size="small" disabled={!previous.length || busy} onClick={() => { setSavedSelection(undefined); setCursor(previous.at(-1)); setPrevious(previous.slice(0, -1)); }}>上一页</Button>
+          <Button size="small" disabled={!page.next_cursor || busy} onClick={() => { setSavedSelection(undefined); setPrevious([...previous, cursor]); setCursor(page.next_cursor!); }}>下一页</Button>
+          <Button size="small" loading={busy} onClick={() => void load()}>刷新</Button>
+        </div>
+      </aside>
+      <section id="provider-model-panel" role="tabpanel" aria-labelledby={selected ? 'provider-tab-' + selected.id : undefined} className="provider-model-panel">
+        {selected ? <Models key={selected.id + ':' + selected.revision + ':' + modelRefresh} token={token} provider={selected} />
+          : <div className="panel empty-list">新增供应商后，即可在这里管理模型。</div>}
+      </section>
+    </div>
+    {editing !== undefined && <CatalogDialog title={editing ? '编辑供应商' : '新增供应商'} busy={busy} error={error} onCancel={cancel}>
+      <form className="catalog-form" onSubmit={event => { event.preventDefault(); if (!busy) void save(); }}>
+        <label htmlFor="provider-name">供应商名称</label><input id="provider-name" required maxLength={100} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} />
+        <label htmlFor="provider-protocol">协议</label><select id="provider-protocol" value={draft.protocol} onChange={event => setDraft({ ...draft, protocol: event.target.value as ProviderProtocol })}>
+          <option value="openai-responses">OpenAI Responses</option><option value="openai-chat">兼容 Chat Completions</option><option value="ollama">Ollama</option>
+        </select>
+        <label htmlFor="provider-url">API 根地址</label><input id="provider-url" required type="url" maxLength={2048} placeholder={draft.protocol === 'ollama' ? 'http://127.0.0.1:11434' : 'https://api.example.com/v1'} value={draft.base_url} onChange={event => setDraft({ ...draft, base_url: event.target.value })} />
+        <CredentialInput label="API 密钥" value={draft.credential} onChange={credential => setDraft({ ...draft, credential })} editing={Boolean(editing)} configured={editing?.credential_set || false} available={editing?.credential_available ?? true} />
+        <label htmlFor="provider-description">描述</label><input id="provider-description" maxLength={1000} value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} />
+        <label className="checkbox-label"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft({ ...draft, enabled: event.target.checked })} />启用供应商</label>
+        <p>保存后自动获取并保存全部模型，按需启用即可。API 根地址不包含完整的生成端点。</p>
+        <div className="heading-actions"><Button type="primary" htmlType="submit" loading={busy}>保存供应商</Button><Button disabled={busy} onClick={cancel}>取消</Button></div>
+      </form>
+    </CatalogDialog>}
   </div>;
 }

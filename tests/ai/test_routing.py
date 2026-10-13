@@ -55,7 +55,9 @@ async def test_default_text_resolves_local_model(catalog, ai_params, ai_database
     def upstream(req):
         """隔离供应商网络，同时记录实际上游模型名。"""
         calls.append(json.loads(req.content))
-        return httpx.Response(200, json={"message": {"content": "本地回复"}, "done": True})
+        return httpx.Response(200, json={
+            "message": {"role": "assistant", "content": "本地回复"}, "done": True,
+        })
 
     service = await make_service(catalog, ai_params, ai_database, upstream)
     router = RoutingAiClient(

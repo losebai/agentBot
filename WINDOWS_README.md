@@ -10,20 +10,24 @@
 ## 首次使用
 
 1. 将程序解压到当前用户可写的目录，例如 `D:\Apps\AgentBot`。
-2. 复制 `.env.example` 为 `.env`，填写 OneBot Token、会话密钥和 Redis 配置。
-   未设置 `CHAT_DB_BACKEND` 时默认 SQLite，文件为 `data/agent_bot.sqlite3`，无需 MySQL。
-   MySQL 部署必须显式设置 `CHAT_DB_BACKEND=mysql`，Redis 仍需单独运行。管理员密码可留空直接进入。
-3. 在程序目录打开 PowerShell，显式初始化数据库和运行配置：
+2. 直接双击 `AgentBot.exe`，无需提前复制配置文件、初始化数据库或安装 Redis。
+3. 首次启动自动生成 `.env`、两个独立随机密钥、默认运行配置，以及
+   `data/agent_bot.sqlite3` 业务库和 `data/queue.sqlite3` 本地持久队列。
+   默认仅监听 `127.0.0.1:8080`，管理员密码为空，直接进入管理界面。
+4. 在管理页面登记模型供应商、模型和机器人接入地址；接入 OneBot 时使用 `.env` 中生成的 Token。
 
-   ```powershell
-   .\agent-bot.exe database init
-   .\agent-bot.exe settings init
-   ```
+已有 `.env` 或 `.env.prod` 会继续使用，不覆盖配置、密钥或数据。
+若已有数据库但配置丢失，请恢复配置备份；程序不会重新生成密钥覆盖已有部署。
+手动部署可复制 `.env.example`，填写密钥后执行 `agent-bot.exe database init` 和
+`agent-bot.exe settings init`；不要对已有配置重复执行初始化。
 
-4. 双击 `AgentBot.exe` 打开独立桌面窗口，在管理页面登记模型供应商等运行配置。
+## 可选 Redis 与 MySQL
 
-普通启动不会创建数据库或覆盖已有配置。已有部署请先备份数据并完成对应版本升级，
-不要对已有配置重复执行 `settings init`。
+默认业务库和任务队列均使用 SQLite，机器人运行不依赖 Redis 或 MySQL。
+本地队列支持单实例持久任务、重启恢复、图片取消和工具副作用去重。
+Redis 是可选后端：在 `.env` 设置 `CHAT_QUEUE_BACKEND=redis`，填写 `CHAT_REDIS_*`，
+启动 Redis 后重启程序。MySQL 业务库则显式设置 `CHAT_DB_BACKEND=mysql`。
+队列后端切换不会迁移待处理任务，请先处理完原队列；连接失败不会自动切换后端。
 
 ## 运行与排查
 
@@ -37,7 +41,7 @@
   启动失败时先检查日志、初始化状态、端口及 Redis；无需密码时管理页面直接进入。
 - 数据库、配置、媒体和日志均不存放在 `_internal`。升级时保留这些外部文件，
   整体替换程序及 `_internal`，不要将运行数据放入构建输出目录后再次执行构建。
-- NapCat/OneBot、Redis、模型供应商以及启用的 MCP/ComfyUI 等服务仍需单独配置和运行。
+- QQ 接入和模型调用仍需配置 NapCat/OneBot 与模型供应商；Redis、MCP、ComfyUI 按需启用。
 - 这是未签名的便携包；尚未包含安装器或自动更新功能。
 
 ## 从源码构建
@@ -53,12 +57,12 @@ powershell -ExecutionPolicy Bypass -File tools/build_windows.ps1
 只附带 `.env.example`，不会打包本地 `.env`、数据库或媒体文件。
 构建目录已有运行数据时会拒绝覆盖，可通过 `-OutputDirectory dist/windows-new` 换目录。
 
-开发依赖已安装时，可在临时 SQLite 和 Redis 替身上验收冻结包：
+开发依赖已安装时，可验收无配置、无 Redis 的首次启动，或可选 Redis 路径：
 
 ```powershell
 uv run --no-sync python tools/check_windows.py dist/windows/AgentBot
 # 同时打开实际桌面窗口，截图后自动关窗并检查后端停机：
-uv run --no-sync python tools/check_windows.py dist/windows/AgentBot --gui-screenshot reports/desktop.png
+uv run --no-sync python tools/check_windows.py dist/windows/AgentBot --first-run --gui-screenshot reports/desktop.png
 ```
 
 验收不会读取部署配置或连接真实 QQ、模型和 Redis；截图验收需要交互式 Windows 桌面。

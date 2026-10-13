@@ -32,6 +32,7 @@ async def after_nonebot_init(after_nonebot_init: None) -> None:
     driver = nonebot.get_driver()
     driver.register_adapter(Adapter)
     bootstrap_environment = {
+        "CHAT_QUEUE_BACKEND": "redis",
         "CHAT_DB_BACKEND": "mysql",
         "CHAT_DB_HOST": "127.0.0.1",
         "CHAT_DB_PORT": "3306",

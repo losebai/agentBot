@@ -64,6 +64,16 @@ class BootstrapConfig(BaseModel):
         return self
 
 
+class QueueBootstrapConfig(BaseModel):
+    """默认持久化到本地队列库；Redis 仅在显式选择时启用。"""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True, hide_input_in_errors=True)
+
+    backend: Literal["sqlite", "redis"] = Field(default="sqlite", alias="chat_queue_backend")
+    sqlite_path: str = Field(default="data/queue.sqlite3", min_length=1,
+                             alias="chat_queue_sqlite_path")
+
+
 class RedisBootstrapConfig(BaseModel):
     """Redis 队列连接信息；连接凭据不进入 MySQL 运行时配置。"""
 
@@ -150,6 +160,15 @@ def load_redis_bootstrap_config(
 
     values = _load_environment_values(RedisBootstrapConfig, env_file=env_file)
     return RedisBootstrapConfig.model_validate(values)
+
+
+def load_queue_bootstrap_config(
+    *, env_file: str | tuple[str, ...] | None = None,
+) -> QueueBootstrapConfig:
+    """队列选择独立于业务数据库，显式选择前不读取 Redis 连接字段。"""
+    return QueueBootstrapConfig.model_validate(
+        _load_environment_values(QueueBootstrapConfig, env_file=env_file),
+    )
 
 
 def load_legacy_runtime_config(

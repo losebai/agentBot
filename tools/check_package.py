@@ -25,6 +25,7 @@ def check(path: Path) -> None:
             "agent_bot/admin/streaming.py",
             "agent_bot/resources/agent_bot_init.sql",
             "agent_bot/resources/agent_bot_init.sqlite.sql",
+            "agent_bot/resources/agent_bot_queue_init.sqlite.sql",
             "agent_bot/static_config.py",
             "agent_bot/database.py",
             "agent_bot/sqlite_database.py",

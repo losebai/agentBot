@@ -33,7 +33,7 @@ Python 源码平铺在 `src/`，通过构建配置和开发安装钩子映射为
 ## 环境要求
 
 - Python 3.12 和 uv。
-- MySQL 或内置 SQLite，用于运行配置、记忆及业务记录；Redis 用于任务队列。
+- 默认内置 SQLite 保存运行配置、记忆、业务记录和持久任务队列；MySQL、Redis 均为可选后端。
 - Node.js 22，用于前端开发和源码构建；安装已构建的 wheel 后无需 Node.js。
 - QQ 接入需要 NapCat，支持 OneBot V11 正向或反向 WebSocket。
 - 自动发言需要一个提供 `laya_predict` 的 MCP 服务，通过管理端目录登记。
@@ -54,6 +54,12 @@ uv run agent-bot --help
 
 前端构建产物写入 `src/static/`，由后端提供。不要手动编辑生成文件。
 
+全新目录无需任何配置，直接执行 `uv run agent-bot`（桌面包双击 `AgentBot.exe`）。
+程序自动生成 `.env`、两个独立随机密钥、SQLite 业务库、默认运行配置与本地持久队列。
+默认仅监听本机且免登录，进入管理页面后添加模型供应商和机器人接入地址即可。
+已有配置会原样使用；若存在数据库却丢失配置，应恢复备份，不重新生成密钥。
+以下步骤用于手动部署或既有环境迁移。
+
 ### 2. 配置静态启动参数
 
 从 [.env.example](.env.example) 创建本地配置文件，已有文件不要覆盖：
@@ -63,9 +69,9 @@ if (Test-Path .env) { throw ".env 已存在，请直接编辑已有文件" }
 Copy-Item .env.example .env
 ```
 
-未指定 `CHAT_DB_BACKEND` 时默认使用 SQLite，数据库保存到 `CHAT_DB_SQLITE_PATH=data/agent_bot.sqlite3`，不需要 MySQL 服务。使用 MySQL 时必须显式设置 `CHAT_DB_BACKEND=mysql`，填写 `CHAT_DB_HOST`、`CHAT_DB_PORT`、`CHAT_DB_USER`、`CHAT_DB_PASSWORD`、`CHAT_DB_NAME`，并先创建独立数据库及专用账户；旧 MySQL 部署升级前也需补上后端选择。连接失败不会切换数据库。SQLite 适合单实例部署，Redis 仍负责队列。
+未指定 `CHAT_DB_BACKEND` 时默认使用 SQLite，数据库保存到 `CHAT_DB_SQLITE_PATH=data/agent_bot.sqlite3`，不需要 MySQL 服务。使用 MySQL 时必须显式设置 `CHAT_DB_BACKEND=mysql`，填写 `CHAT_DB_HOST`、`CHAT_DB_PORT`、`CHAT_DB_USER`、`CHAT_DB_PASSWORD`、`CHAT_DB_NAME`，并先创建独立数据库及专用账户；旧 MySQL 部署升级前也需补上后端选择。连接失败不会切换数据库。SQLite 适合单实例部署。
 
-填写 Redis 连接参数。管理员密码沿用 `AGENT_BOT_ADMIN_TOKEN` 配置名，支持自定义 8–256 位字母、数字及常见符号，不含空格；含 `#` 等 dotenv 特殊字符时用引号包裹。留空或不配置时直接进入系统，所有管理接口均无需密码。已有随机令牌仍可作为登录密码。
+队列默认 `CHAT_QUEUE_BACKEND=sqlite`，文件为 `CHAT_QUEUE_SQLITE_PATH=data/queue.sqlite3`，机器人运行不依赖 Redis。需要 Redis 时显式设置 `CHAT_QUEUE_BACKEND=redis` 并填写 `CHAT_REDIS_*` 后重启；原 Redis 部署升级也需显式选择。后端切换不迁移待处理任务，应先清空原队列。管理员密码沿用 `AGENT_BOT_ADMIN_TOKEN` 配置名，支持自定义 8–256 位字母、数字及常见符号，不含空格；含 `#` 等 dotenv 特殊字符时用引号包裹。留空或不配置时直接进入系统，所有管理接口均无需密码。已有随机令牌仍可作为登录密码。
 
 OneBot Token 和会话密钥仍需使用不同随机值。示例 Token 是无效占位符，运行以下命令两次，分别填写 `ONEBOT_V11_ACCESS_TOKEN`、`CHAT_SESSION_SECRET`：
 
@@ -91,9 +97,13 @@ uv run python -c "import secrets; print(secrets.token_urlsafe(48))"
 uv run agent-bot database init
 ```
 
-命令按所选后端创建全部 27 张业务表，覆盖配置、群成员、记忆、工作流、模型、Agent、Skill、MCP、媒体、Job 和记录。SQLite 会在明确初始化时创建文件及父目录，并启用外键和 WAL；普通启动只打开已有文件。MySQL 需先创建数据库，初始化账户需要建表权限。
+命令按所选后端创建业务结构，覆盖配置、群成员、记忆、工作流、模型、Agent、Skill、MCP、媒体、Job 和记录。SQLite 会在首次自动配置或明确初始化时创建文件及父目录，并启用外键和 WAL；已有配置的启动只打开已有业务库。MySQL 需先创建数据库，初始化账户需要建表权限。
 
-两种脚本分别为 [MySQL 初始化](sql/agent_bot_init.sql) 和 [SQLite 初始化](sql/agent_bot_init.sqlite.sql)。重复初始化保留数据，不插入配置或模型，也不修正已有不兼容结构。服务启动不会自动执行完整初始化或媒体 SQL。
+两种脚本分别为 [MySQL 初始化](sql/agent_bot_init.sql) 和 [SQLite 初始化](sql/agent_bot_init.sqlite.sql)。重复初始化保留数据，不插入配置或模型，也不修正已有不兼容结构。已有部署启动不会自动升级业务表；本地队列库由独立的 [队列初始化脚本](sql/agent_bot_queue_init.sqlite.sql) 创建。
+
+本地队列脚本也可作为既有 SQLite 库的独立增量执行；MySQL 结构基线对应
+[队列表增量](sql/2026-10-13-local-queue.sql)。队列运行仍使用独立 SQLite 文件或显式 Redis，
+不会迁移原 Redis 中的任务，也不会使用业务 MySQL 中的同名结构处理任务。
 
 ### 4. 初始化运行配置与迁移旧配置
 

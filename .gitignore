@@ -34,3 +34,4 @@ docs/**
 /docs/migration/
 /docs/superpowers/
 2026*
+!sql/2026-10-13-local-queue.sql

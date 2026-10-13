@@ -44,6 +44,23 @@ def test_no_backend_uses_sqlite_without_creating_database(tmp_path, monkeypatch)
     assert not (tmp_path / "data").exists()
 
 
+def test_queue_defaults_to_local_sqlite_and_redis_is_explicit(tmp_path, monkeypatch):
+    """队列默认无需外部服务；只有明确选用 Redis 才读取连接配置。"""
+    from agent_bot.bootstrap import load_queue_bootstrap_config
+
+    for name in ("CHAT_QUEUE_BACKEND", "CHAT_QUEUE_SQLITE_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    env_file = tmp_path / ".env"
+    local = load_queue_bootstrap_config(env_file=str(env_file))
+    assert local.backend == "sqlite"
+    assert local.sqlite_path == "data/queue.sqlite3"
+    env_file.write_text("CHAT_QUEUE_BACKEND=redis\n", encoding="utf-8")
+    assert load_queue_bootstrap_config(env_file=str(env_file)).backend == "redis"
+    env_file.write_text("CHAT_QUEUE_BACKEND=invalid\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_queue_bootstrap_config(env_file=str(env_file))
+
+
 def write_legacy_env(path: Path) -> None:
     values = {
         "DRIVER": "~fastapi",

@@ -1,4 +1,4 @@
--- 用途：统一初始化 agentBot 0.5.0 的全部 27 张业务表，供新独立数据库使用。
+-- 用途：统一初始化 agentBot 0.5.0 的业务表与可选本地队列表，供新独立数据库使用。
 -- 执行顺序：管理员先创建并选中数据库，再执行本文件，最后用 settings import-env 导入配置。
 -- 数据影响：仅创建不存在的表，不插入配置、不覆盖模型、不清空或迁移现有数据。
 -- 记忆及工作流索引使用 chat 前缀；既有表遗留 dispatch 索引名时执行 2026-10-13-chat-index-names.sql。
@@ -500,3 +500,65 @@ CREATE TABLE IF NOT EXISTS agent_bot_call_record (
   KEY idx_call_session (`session_Id`, `create_time`, `id`) COMMENT '按会话分页',
   KEY idx_call_status (`status`, `create_time`, `id`) COMMENT '按状态分页'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='统一 AI 调用记录';
+
+
+-- 可选本地队列结构同步；运行时默认使用独立 data/queue.sqlite3。
+-- 用途：为既有 MySQL 结构同步可选本地队列的数据结构定义，保持统一初始化基线完整。
+-- 执行顺序：在已有业务初始化脚本之后执行；默认运行时实际使用独立 SQLite 队列文件。
+-- 数据影响：仅创建缺失表，不迁移 Redis 任务、不覆盖业务数据；MySQL 队列表不参与默认运行。
+
+CREATE TABLE IF NOT EXISTS chat_queue_jobs (
+    stream_id BIGINT NOT NULL AUTO_INCREMENT COMMENT '单调递增任务顺序',
+    namespace VARCHAR(128) NOT NULL COMMENT '文本或图片队列命名空间',
+    payload LONGTEXT NOT NULL COMMENT '已验证任务 JSON',
+    claimed_at DOUBLE NULL COMMENT '最近领取时间，空值为未领取',
+    state LONGTEXT NOT NULL COMMENT '重试和投递检查点 JSON',
+    result LONGTEXT NULL COMMENT '已生成结果 JSON，恢复时避免重复模型调用',
+    result_expires_at DOUBLE NULL COMMENT '结果保留截止时间',
+    PRIMARY KEY (stream_id),
+    KEY chat_queue_jobs_namespace (namespace, stream_id) COMMENT '按队列顺序领取及恢复'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='持久任务和执行检查点';
+
+CREATE TABLE IF NOT EXISTS chat_queue_receipts (
+    namespace VARCHAR(128) NOT NULL COMMENT '队列命名空间',
+    job_id VARCHAR(128) NOT NULL COMMENT '稳定任务标识',
+    digest CHAR(64) NOT NULL COMMENT '任务内容摘要',
+    stream_id BIGINT NOT NULL COMMENT '原始任务顺序，完成后仍可返回回执',
+    expires_at DOUBLE NULL COMMENT '回执到期时间，活动任务为空',
+    PRIMARY KEY (namespace, job_id),
+    KEY chat_queue_receipts_expiry (namespace, expires_at) COMMENT '清理已完成的过期回执'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='任务入队去重回执';
+
+CREATE TABLE IF NOT EXISTS chat_queue_deadletters (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '死信写入顺序',
+    namespace VARCHAR(128) NOT NULL COMMENT '队列命名空间',
+    source_id BIGINT NOT NULL COMMENT '原始任务顺序',
+    payload LONGTEXT NULL COMMENT '合法失败任务 JSON，损坏内容不复制',
+    reason VARCHAR(128) NOT NULL COMMENT '有界脱敏失败原因',
+    attempt INT NOT NULL COMMENT '失败时尝试次数',
+    failed_at DOUBLE NOT NULL COMMENT '失败时间',
+    PRIMARY KEY (id),
+    KEY chat_queue_deadletters_namespace (namespace, id) COMMENT '按命名空间裁剪最旧死信'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='有界失败任务记录';
+
+CREATE TABLE IF NOT EXISTS chat_image_tasks (
+    namespace VARCHAR(128) NOT NULL COMMENT '图片队列命名空间',
+    task_id VARCHAR(128) NOT NULL COMMENT '稳定图片任务标识',
+    owner VARCHAR(512) NOT NULL COMMENT '机器人会话用户归属 JSON',
+    created_at DOUBLE NOT NULL COMMENT '创建时间',
+    payload LONGTEXT NOT NULL COMMENT '执行投递取消和上游任务 JSON',
+    expires_at DOUBLE NULL COMMENT '终态保留截止时间，活动任务为空',
+    PRIMARY KEY (namespace, task_id),
+    KEY chat_image_tasks_owner (namespace, owner, created_at) COMMENT '按完整归属列出最近任务',
+    KEY chat_image_tasks_expiry (namespace, expires_at) COMMENT '回收过期终态'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='图片任务及不可撤销取消意图';
+
+CREATE TABLE IF NOT EXISTS chat_tool_operations (
+    namespace VARCHAR(128) NOT NULL COMMENT '服务命名空间',
+    job_id VARCHAR(128) NOT NULL COMMENT '所属对话任务标识',
+    tool VARCHAR(64) NOT NULL COMMENT '授权工具名称',
+    payload LONGTEXT NOT NULL COMMENT '参数摘要执行状态和结果 JSON',
+    expires_at DOUBLE NOT NULL COMMENT '记录保留截止时间',
+    PRIMARY KEY (namespace, job_id, tool),
+    KEY chat_tool_operations_expiry (namespace, expires_at) COMMENT '回收过期执行权和结果'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='工具副作用执行权与持久结果';

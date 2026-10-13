@@ -108,7 +108,34 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
             for referenced in re.findall(r"REFERENCES\s+`?(\w+)`?", declaration, re.I):
                 assert referenced in created, (name, referenced)
         created.add(name)
-    assert len(tables) == 28
+    assert len(tables) == 33
+
+
+def test_local_queue_increment_matches_full_initialization():
+    """本地队列增量与新库结构一致，不修改已有业务表或数据。"""
+    import sqlite3
+
+    mysql = definitions((ROOT / "sql/agent_bot_init.sql").read_text("utf-8"))
+    incremental = definitions((ROOT / "sql/2026-10-13-local-queue.sql").read_text("utf-8"))
+    assert len(incremental) == 5
+    for name, columns in incremental.items():
+        assert normalized(",".join(mysql[name])) == normalized(",".join(columns))
+
+    structures = []
+    for name in ("agent_bot_init.sqlite.sql", "agent_bot_queue_init.sqlite.sql"):
+        connection = sqlite3.connect(":memory:")
+        try:
+            script = (ROOT / "sql" / name).read_text("utf-8")
+            connection.executescript(script)
+            connection.executescript(script)
+            placeholders = ",".join("?" for _ in incremental)
+            structures.append(connection.execute(
+                f"SELECT name,sql FROM sqlite_master WHERE tbl_name IN ({placeholders}) "
+                "ORDER BY name", tuple(incremental),
+            ).fetchall())
+        finally:
+            connection.close()
+    assert structures[0] == structures[1]
 
 
 def test_dynamic_credential_migration_only_adds_columns_and_preserves_auth_requirement():

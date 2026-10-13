@@ -131,6 +131,7 @@ def check(bundle: Path, screenshot: Path | None = None) -> None:
                 port = listener.getsockname()[1]
             (deployment / ".env").write_text(
                 "CHAT_DB_SQLITE_PATH=data/test.sqlite3\n"
+                "CHAT_QUEUE_BACKEND=redis\n"
                 f"CHAT_REDIS_HOST=127.0.0.1\nCHAT_REDIS_PORT={redis.server_address[1]}\n"
                 "CHAT_REDIS_KEY_PREFIX=desktop:qa\nAGENT_BOT_ADMIN_TOKEN=\n"
                 "ONEBOT_V11_ACCESS_TOKEN=desktop-test-onebot-token-at-least-32-characters\n"
@@ -189,10 +190,54 @@ def check(bundle: Path, screenshot: Path | None = None) -> None:
         redis.server_close()
 
 
+def check_first_run(bundle: Path, screenshot: Path | None) -> None:
+    """从没有配置和数据库的真实桌面包启动，验证无需 Redis 且重启保留配置。"""
+    with tempfile.TemporaryDirectory(prefix="agentbot-first-run-") as temporary:
+        deployment = Path(temporary) / "desktop"
+        shutil.copytree(bundle, deployment)
+        assert not (deployment / ".env").exists()
+        assert not (deployment / "data").exists()
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        previous_port = os.environ.get("PORT")
+        # 唯一外部覆盖为隔离测试端口；不创建配置，不启动 Redis 替身。
+        os.environ["PORT"] = str(port)
+        try:
+            if screenshot is not None:
+                check_gui(deployment, port, screenshot)
+            backend = BackendProcess(
+                [str(deployment / "agent-bot.exe"), "--desktop-child"], Path(temporary),
+                deployment / "logs" / "first-run-check.log",
+            )
+            before = (deployment / ".env").read_bytes() if screenshot is not None else None
+            backend.start()
+            try:
+                url = backend.wait_ready(timeout=60)
+                with httpx.Client(base_url=url, trust_env=False) as client:
+                    assert client.get("/api/v1/auth").json() == {"password_required": False}
+                    assert client.get("/api/v1/settings").status_code == 200
+                    assert client.get("/health/ready").status_code == 200
+                assert (deployment / "data" / "agent_bot.sqlite3").is_file()
+                assert (deployment / "data" / "queue.sqlite3").is_file()
+                if before is not None:
+                    assert (deployment / ".env").read_bytes() == before
+            finally:
+                backend.stop()
+            assert backend.process.returncode == 0
+            print("Zero-config startup, local queues and preserved restart verified.", flush=True)
+        finally:
+            if previous_port is None:
+                os.environ.pop("PORT", None)
+            else:
+                os.environ["PORT"] = previous_port
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--gui-screenshot", type=Path)
+    parser.add_argument("--first-run", action="store_true", help="不创建配置、不启动 Redis")
     arguments = parser.parse_args()
     # 避免开发机进程环境覆盖临时 .env，尤其不能继承真实数据库或外部连接配置。
     for key in tuple(os.environ):
@@ -200,4 +245,7 @@ if __name__ == "__main__":
             "HOST", "PORT", "DRIVER", "SUPERUSERS", "ENVIRONMENT",
         }:
             os.environ.pop(key)
-    check(arguments.bundle.resolve(), arguments.gui_screenshot)
+    if arguments.first_run:
+        check_first_run(arguments.bundle.resolve(), arguments.gui_screenshot)
+    else:
+        check(arguments.bundle.resolve(), arguments.gui_screenshot)

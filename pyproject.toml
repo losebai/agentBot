@@ -89,6 +89,8 @@ path = "tools/build_hook.py"
 "sql/2026-10-13-tool-call-payloads.sqlite.sql" = "agent_bot/resources/2026-10-13-tool-call-payloads.sqlite.sql"
 "sql/agent_bot_init.sql" = "agent_bot/resources/agent_bot_init.sql"
 "sql/agent_bot_init.sqlite.sql" = "agent_bot/resources/agent_bot_init.sqlite.sql"
+"sql/agent_bot_queue_init.sqlite.sql" = "agent_bot/resources/agent_bot_queue_init.sqlite.sql"
+"sql/2026-10-13-local-queue.sql" = "agent_bot/resources/2026-10-13-local-queue.sql"
 "sql/2026-10-13-chat-index-names.sql" = "agent_bot/resources/2026-10-13-chat-index-names.sql"
 "sql/2026-10-13-dynamic-provider-mcp-credentials.sql" = "agent_bot/resources/2026-10-13-dynamic-provider-mcp-credentials.sql"
 # 旧分阶段资源仍可读取，供既有部署按版本显式升级；新安装使用统一脚本。

@@ -2,6 +2,7 @@
 
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -35,10 +36,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     from agent_bot.admin.config import AdminConfig
     from agent_bot.bootstrap import load_startup_settings
     from agent_bot.cli_errors import describe_config_error
+    from agent_bot.first_run import FirstRunError, prepare_first_run
     from agent_bot.settings import SettingsError
 
     try:
+        prepare_first_run(Path.cwd())
         admin = AdminConfig.from_environment()
+    except FirstRunError as exc:
+        print(f"启动失败：{exc}")
+        return 1
     except ValueError as exc:
         print(f"启动失败：请检查 AGENT_BOT_ADMIN_TOKEN。{describe_config_error(exc)}")
         return 1

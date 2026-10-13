@@ -34,7 +34,7 @@ def _raise_database_error(error: sqlite3.Error) -> None:
 
 
 def initialize_sqlite(path: str) -> None:
-    """只有显式初始化命令可创建文件和父目录；DDL 与索引在同一事务提交。"""
+    """由首次自动配置或显式初始化调用；DDL 与索引在同一事务提交。"""
     target = Path(path).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     resource = distribution("agent-bot").locate_file(

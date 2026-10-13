@@ -143,7 +143,7 @@ def serve(app: Any, host: str, port: int) -> None:
 
 
 def run_backend() -> int:
-    """桌面后端加载现有配置；不创建数据库，不读取或覆盖动态环境配置。"""
+    """全新安装先生成本地默认配置；已有部署读取数据库中的权威运行值。"""
     # 冻结解释器可能忽略 PYTHONIOENCODING，明确匹配父进程的 UTF-8 日志解码。
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
     sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
@@ -151,12 +151,18 @@ def run_backend() -> int:
     from agent_bot.admin.config import AdminConfig
     from agent_bot.bootstrap import load_startup_settings
     from agent_bot.cli_errors import describe_config_error
+    from agent_bot.first_run import FirstRunError, prepare_first_run
     from agent_bot.settings import SettingsError
 
     try:
+        print(_STAGE + json.dumps("检查首次启动配置"), flush=True)
+        prepare_first_run(Path.cwd())
         print(_STAGE + json.dumps("读取启动配置和数据库"), flush=True)
         admin = AdminConfig.from_environment()
         stored = load_startup_settings()
+    except FirstRunError as exc:
+        print(_ERROR + json.dumps(str(exc)), flush=True)
+        return 1
     except (ValueError, SettingsError) as exc:
         print(_ERROR + json.dumps(describe_config_error(exc)), flush=True)
         return 1
@@ -217,7 +223,7 @@ def main() -> int:
             if not closed.is_set():
                 window.load_html(status_page(
                     f"{exc}\n详情：logs/desktop-backend.log\n"
-                    "首次使用请按 WINDOWS_README.md 配置并执行初始化命令。"
+                    "首次使用会自动生成配置；已有部署请按 WINDOWS_README.md 检查配置与数据。"
                 ))
 
     try:

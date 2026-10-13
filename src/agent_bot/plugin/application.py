@@ -28,6 +28,7 @@ from nonebot.typing import T_State
 from agent_bot.bootstrap import (
     database_params,
     load_bootstrap_config,
+    load_queue_bootstrap_config,
     load_redis_bootstrap_config,
 )
 from agent_bot.config import PluginConfig, RuntimeConfig
@@ -93,6 +94,7 @@ from agent_bot.services.naraka_formatting import (
     format_naraka_summary,
 )
 from agent_bot.services.replies import LlmReplyComposer
+from agent_bot.services.tool_operations import ToolOperationStore
 from agent_bot.services.tool_sessions import ToolSessionStore
 from agent_bot.services.workflows import WorkflowCatalogImporter
 from agent_bot.settings import SettingsStore, VersionedSettings
@@ -134,7 +136,8 @@ def _log_auto_speak_error(error_type: str) -> None:
 
 
 _database_params = database_params(load_bootstrap_config())
-_redis_bootstrap = load_redis_bootstrap_config()
+_queue_bootstrap = load_queue_bootstrap_config()
+_redis_bootstrap = load_redis_bootstrap_config() if _queue_bootstrap.backend == "redis" else None
 plugin_config = get_plugin_config(RuntimeConfig)
 _database_pool = create_database_pool(
     _database_params,
@@ -268,6 +271,22 @@ if plugin_config.chat_mcp_enabled:
         name="chat-mcp",
     )
 
+def _tool_operations() -> ToolOperationStore:
+    """工具副作用与任务使用同一持久后端，热刷新时读取最新保留期限。"""
+    if _queue_bootstrap.backend == "sqlite":
+        from agent_bot.integrations.sqlite_tool_operations import SqliteToolOperationStore
+
+        return SqliteToolOperationStore(
+            _queue_bootstrap.sqlite_path, key_prefix="chat",
+            ttl_seconds=plugin_config.chat_queue_result_ttl_seconds,
+        )
+    assert _redis_bootstrap is not None and _redis_client is not None
+    return RedisToolOperationStore(
+        _redis_client, key_prefix=_redis_bootstrap.key_prefix,
+        ttl_seconds=plugin_config.chat_queue_result_ttl_seconds,
+    )
+
+
 _tool_session_manager = ChatToolSessionManager(
     config_provider=lambda: plugin_config,
     store_provider=lambda: _tool_session_store,
@@ -280,11 +299,7 @@ _tool_session_manager = ChatToolSessionManager(
     memory_store_provider=lambda: (
         _tagged_memory_store if plugin_config.chat_tagged_memory_enabled else None
     ),
-    operation_store_provider=lambda: RedisToolOperationStore(
-        _redis_client,
-        key_prefix=_redis_bootstrap.key_prefix,
-        ttl_seconds=plugin_config.chat_queue_result_ttl_seconds,
-    ),
+    operation_store_provider=_tool_operations,
 )
 
 _runtime_gate = RuntimeLeaseGate()
@@ -346,22 +361,25 @@ class _ConversationProcessor(ConversationQueueProcessor):
             bot_provider=lambda bot_id: _queued_bot(bot_id),
             reply_composer=_reply_composer,
             reply_gateway=_reply_gateway,
-            operation_store_provider=lambda: RedisToolOperationStore(
-                _redis_client,
-                key_prefix=_redis_bootstrap.key_prefix,
-                ttl_seconds=plugin_config.chat_queue_result_ttl_seconds,
-            ),
+            operation_store_provider=_tool_operations,
             image_submitter=lambda job: image_queue.enqueue(job),
             workflow_service_provider=lambda: workflow_service,
         )
 
 
-_queue_resources = build_conversation_queue(
-    _redis_bootstrap,
-    plugin_config,
-    _ConversationProcessor(),
-)
-_redis_client = _queue_resources.redis_client
+if _queue_bootstrap.backend == "sqlite":
+    from agent_bot.integrations.sqlite_queue import build_sqlite_conversation_queue
+
+    _queue_resources = build_sqlite_conversation_queue(
+        _queue_bootstrap.sqlite_path, "chat", plugin_config, _ConversationProcessor(),
+    )
+    _redis_client = None
+else:
+    assert _redis_bootstrap is not None
+    _queue_resources = build_conversation_queue(
+        _redis_bootstrap, plugin_config, _ConversationProcessor(),
+    )
+    _redis_client = _queue_resources.redis_client
 _conversation_queue_store = _queue_resources.store
 conversation_queue = _queue_resources.queue
 image_queue = _queue_resources.image_queue
@@ -474,7 +492,7 @@ async def initialize_workflow_catalog() -> None:
 
 @get_driver().on_startup
 async def start_conversation_queue() -> None:
-    """Require Redis and start persistent natural-chat consumers."""
+    """启动明确选择的本地或 Redis 持久队列，不在连接失败时切换后端。"""
 
     await image_queue.start()
     await conversation_queue.start()
@@ -619,9 +637,10 @@ def acquire_runtime():
 
 
 async def check_management_readiness() -> bool:
-    """检查 Redis 与消费任务状态；QQ 未连接不影响服务就绪。"""
+    """检查所选队列存储与消费者；本地模式不访问 Redis，QQ 未连接不影响就绪。"""
     try:
-        reachable = await asyncio.wait_for(_redis_client.ping(), timeout=2)
+        storage = _queue_resources if _queue_bootstrap.backend == "sqlite" else _redis_client
+        reachable = await asyncio.wait_for(storage.ping(), timeout=2)
     except Exception:
         return False
     return bool(reachable and conversation_queue.running and image_queue.running)
@@ -950,7 +969,8 @@ async def close_clients() -> None:
             await image_queue.stop()
     finally:
         try:
-            await _redis_client.aclose()
+            storage = _queue_resources if _queue_bootstrap.backend == "sqlite" else _redis_client
+            await storage.aclose()
         finally:
             try:
                 if _chat_mcp_server is not None:

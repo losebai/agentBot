@@ -62,7 +62,7 @@ class PluginRuntimeProvider:
         return self.media_resources.store
 
     async def is_ready(self) -> bool:
-        """Confirm Redis reachability and live queue dispatchers without requiring QQ."""
+        """检查所选持久队列与消费者，不要求 QQ 或可选 Redis 已连接。"""
         return await self.plugin.check_management_readiness()
 
     def bots(self) -> list[BotInfo]:

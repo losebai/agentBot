@@ -52,16 +52,17 @@ async def test_status_without_connected_bots_is_ready(api):
 
 
 async def test_settings_conflict_and_secret_validation_are_safe(api):
+    """运行字段保留版本锁，静态字段通过真实 HTTP 请求被拒绝并脱敏。"""
     response = await api.patch(
         "/api/v1/settings",
         headers=HEADERS,
         json={
             "expected_revision": 1,
-            "values": {"port": 8765},
+            "values": {"chat_model": "new-model"},
         },
     )
     assert response.status_code == 200
-    assert response.json()["restart_required_fields"] == ["port"]
+    assert response.json()["restart_required_fields"] == []
     assert response.json()["database_revision"] == 2
     assert response.json()["applied_revision"] == 1
     conflict = await api.patch(
@@ -69,7 +70,7 @@ async def test_settings_conflict_and_secret_validation_are_safe(api):
         headers=HEADERS,
         json={
             "expected_revision": 1,
-            "values": {"port": 9000},
+            "values": {"chat_model": "stale-model"},
         },
     )
     assert conflict.status_code == 409

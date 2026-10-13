@@ -5,7 +5,7 @@
 - `src/`：平铺保存统一 agent_bot 包的源码，包含服务入口、应用装配、管理 API、AI/Agent/媒体模块、打包静态资源，以及机器人行为、配置、业务服务、插件及 OneBot、Redis、模型供应商、ComfyUI 集成；打包时映射为 agent_bot。
 - `web/src/`：React/TypeScript 管理界面，包含页面、组件、API 客户端、样式及同目录测试。
 - `tests/`：Python 单元、集成、管理 API 和 AI 测试，以及共享替身与夹具。
-- `sql/agent_bot_init.sql`：统一的新库初始化脚本；`sql/legacy/`：原样归档的历史脚本；独立注释增量脚本仅用于既有表。`tools/`：迁移及包检查工具；`docs/`：设计决策与实施计划。
+- `sql/agent_bot_init.sql` 与 `sql/agent_bot_init.sqlite.sql`：MySQL、SQLite 的新库初始化脚本；`sql/legacy/`：原样归档的历史脚本；独立注释增量脚本仅用于既有表。`tools/`：迁移及包检查工具；`docs/`：设计决策与实施计划。
 
 ## 构建、测试与开发命令
 
@@ -28,7 +28,7 @@ Python 使用四空格缩进和类型注解；函数、模块采用 `snake_case`
 
 新增或修改的代码需要注释：Python 的模块、类和函数使用中文文档字符串说明职责；TypeScript 的组件、函数及复杂分支补充中文注释。重点解释权限边界、协议差异、状态变化、取消和资源释放的原因，避免只复述语句。修改已有函数时同步修正过时注释，无关代码不做批量格式化。
 
-新增或修改的 SQL 必须使用中文注释：脚本头说明用途、执行顺序和数据影响，表与字段使用中文 `COMMENT`，索引和外键说明设计目的。为已建表补注释时提供单独的增量脚本，保留原字段类型、默认值、可空性和约束；不得通过重建或删除表补注释。旧项目迁入并作为原始基线保存的历史 SQL 不批量改写。
+新增或修改的 SQL 必须使用中文注释（SQLite 不支持 COMMENT，使用中文行注释保留字段与索引说明）：脚本头说明用途、执行顺序和数据影响，表与字段使用中文 `COMMENT`，索引和外键说明设计目的。为已建表补注释时提供单独的增量脚本，保留原字段类型、默认值、可空性和约束；不得通过重建或删除表补注释。旧项目迁入并作为原始基线保存的历史 SQL 不批量改写。
 
 每次涉及数据库表、字段、索引、约束、默认值或注释的修改，都必须同步更新 `sql/agent_bot_init.sql`，保证新数据库仅执行该脚本即可获得当前完整结构。既有数据库的升级同时提供独立增量脚本；核对增量升级后的有效结构与初始化脚本一致，历史兼容列应明确说明。
 
@@ -58,6 +58,6 @@ uv run pytest -m "not e2e" -k "not database_onebot_token_reaches_adapter_without
 
 ## 安全与配置
 
-模型供应商和 MCP 的 URL、密钥及配置通过管理页面保存到 MySQL，不从 `.env` 或环境变量读取。启动引导连接参数和管理员凭据保留在 `.env` 或环境变量中，不得提交凭据。首次导入后，MySQL 是运行配置的权威来源。历史 SQL 必须逐项审查：`sql/legacy/dispatch_chat_setting.sql` 含删除表操作。使用独立数据库和 Redis 键前缀。
+静态配置（数据库后端及连接、Redis、管理员凭据、NoneBot/OneBot 启动字段、会话密钥、目录及固定资源参数）保留在 `.env` 或环境变量中，修改后重启，管理 API 只读。运行配置及模型供应商、MCP 的 URL、密钥通过管理页面保存到所选 MySQL 或 SQLite，不从环境变量读取或覆盖。首次初始化后，所选数据库是运行配置的权威来源。`CHAT_DB_BACKEND` 未指定时兼容旧 MySQL，示例显式选择 SQLite；SQLite 文件由 `CHAT_DB_SQLITE_PATH` 指定，普通启动不得创建文件或自动切换后端。不得提交凭据或数据库文件。历史 SQL 必须逐项审查：`sql/legacy/dispatch_chat_setting.sql` 含删除表操作。使用独立数据库和 Redis 键前缀。
 
-媒体文件目录由 `AGENT_BOT_MEDIA_DIRECTORY` 启动配置指定，默认 `data/media`；禁止把上传文件、TTS 输出和验收数据打包。媒体 SQL 仅手动执行；保留 0.3.0 wheel 用于隔离回退验证。
+媒体文件目录由 `AGENT_BOT_MEDIA_DIRECTORY` 启动配置指定，默认 `data/media`；禁止把上传文件、TTS 输出和验收数据打包。媒体 SQL 仅通过明确初始化命令或手动执行，普通启动不执行；保留 0.3.0 wheel 用于隔离回退验证。

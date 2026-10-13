@@ -54,10 +54,14 @@ def test_conflicting_revision_preserves_saved_configuration(admin_store, admin_r
     assert admin_store.load().config.chat_llm_temperature == 0.4
 
 
-def test_restart_fields_compare_saved_and_running_configuration(admin_store, admin_runtime):
-    result = service(admin_store, admin_runtime).update(update(1, port=8765))
-    assert result.restart_required_fields == ["port"]
-    assert admin_runtime.config.port != 8765
+def test_static_fields_are_read_only_and_api_rejects_changes(admin_store, admin_runtime):
+    """静态配置公开当前值但不可保存，不能通过请求绕过页面只读。"""
+    manager = service(admin_store, admin_runtime)
+    port = next(field for field in manager.read().fields if field.name == "port")
+    assert port.scope == "static" and port.read_only and port.value == 8080
+    with pytest.raises(ValidationError):
+        manager.update(update(1, port=8765))
+    assert admin_store.load().revision == 1
 
 
 @pytest.mark.parametrize(

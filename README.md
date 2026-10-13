@@ -31,7 +31,7 @@ Python 源码平铺在 `src/`，通过构建配置和开发安装钩子映射为
 ## 环境要求
 
 - Python 3.12 和 uv。
-- MySQL 和 Redis，用于运行配置、记忆、记录及任务队列。
+- MySQL 或内置 SQLite，用于运行配置、记忆及业务记录；Redis 用于任务队列。
 - Node.js 22，用于前端开发和源码构建；安装已构建的 wheel 后无需 Node.js。
 - QQ 接入需要 NapCat，并使用 OneBot V11 反向 WebSocket。
 - 自动发言需要一个提供 `laya_predict` 的 MCP 服务，通过管理端目录登记。
@@ -52,57 +52,66 @@ uv run agent-bot --help
 
 前端构建产物写入 `src/static/`，由后端提供。不要手动编辑生成文件。
 
-### 2. 初始化数据库
+### 2. 配置静态启动参数
 
-准备独立的 `agent_bot` 数据库和专用服务账户，使用数据库管理账户执行 [统一初始化脚本](sql/agent_bot_init.sql)：
-
-```powershell
-mysql -h 127.0.0.1 -u root -p agent_bot --execute="source sql/agent_bot_init.sql"
-```
-
-脚本创建全部 28 张业务表，覆盖配置、群成员、聊天记忆、标签记忆、工作流、模型、Agent、Skill、MCP、媒体、Job 和自动发言决策记录。它不插入运行配置或模型；服务不会自动执行该脚本。
-
-### 3. 配置环境
-
-从 [.env.example](.env.example) 创建本地配置文件：
+从 [.env.example](.env.example) 创建本地配置文件，已有文件不要覆盖：
 
 ```powershell
 if (Test-Path .env) { throw ".env 已存在，请直接编辑已有文件" }
 Copy-Item .env.example .env
 ```
 
-填写数据库、Redis 连接参数及所需运行配置。示例中的 Token 是无效占位符；运行以下命令三次，分别生成管理员凭据、OneBot Token 和会话密钥，并填写 `AGENT_BOT_ADMIN_TOKEN`、`ONEBOT_V11_ACCESS_TOKEN` 和 `CHAT_SESSION_SECRET`：
+新安装示例默认 `CHAT_DB_BACKEND=sqlite`，数据库保存到 `CHAT_DB_SQLITE_PATH=data/agent_bot.sqlite3`，不需要 MySQL 服务。使用 MySQL 时显式设置 `CHAT_DB_BACKEND=mysql`，填写 `CHAT_DB_HOST`、`CHAT_DB_PORT`、`CHAT_DB_USER`、`CHAT_DB_PASSWORD`、`CHAT_DB_NAME`，并先创建独立数据库及专用账户。未指定后端仍默认为 MySQL，保持旧部署兼容；连接失败不会切换数据库。SQLite 适合单实例部署，Redis 仍负责队列。
+
+填写 Redis 连接参数。示例 Token 是无效占位符，运行以下命令三次生成不同随机值，分别填写 `AGENT_BOT_ADMIN_TOKEN`、`ONEBOT_V11_ACCESS_TOKEN`、`CHAT_SESSION_SECRET`：
 
 ```powershell
 uv run python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-三项凭据使用不同的值。管理员凭据用于浏览器管理；OneBot Token 用于 NapCat 连接；会话密钥用于会话和记忆身份。需要机器人响应的用户或群，应配置对应的允许名单；示例默认不允许所有会话。
+| 配置分类 | 内容 | 存储与生效方式 |
+| --- | --- | --- |
+| 静态引导 | 数据库类型与连接、Redis、管理员凭据、媒体目录 | `.env`／环境变量，修改后重启 |
+| 静态机器人与资源 | 监听地址、OneBot 连接和 Token、会话密钥、命令匹配、MCP 挂载、目录、连接池、固定队列参数 | `.env`／环境变量，管理页面只读，修改后重启 |
+| 运行行为 | 模型别名、提示词、访问名单、业务开关、生成参数、历史与记忆策略、任务及自动发言行为 | 所选数据库，管理页面或离线命令保存后热刷新 |
+| 供应商／MCP 目录 | 每条记录独立的 URL、协议、密钥和工具权限 | 所选数据库，管理页面录入，新请求使用最新配置 |
 
-| 配置项 | 用途和存储位置 |
-| --- | --- |
-| `CHAT_DB_*` | MySQL 启动连接参数，保留在 `.env` 或进程环境 |
-| `CHAT_REDIS_*` | Redis 连接和键前缀，保留在 `.env` 或进程环境 |
-| `AGENT_BOT_ADMIN_TOKEN` | 管理员凭据，只从 `.env` 或进程环境读取 |
-| 模型供应商配置 | 每个供应商独立的 URL、Key 和协议，通过管理页面保存到 MySQL |
-| MCP 服务配置 | 每个服务独立的地址、访问令牌与工具白名单，通过管理页面保存到 MySQL |
-| `AGENT_BOT_MEDIA_DIRECTORY` | 媒体文件启动目录，默认 `data/media`，不参与热刷新 |
-| 机器人运行配置 | 首次从环境导入 MySQL，之后通过管理界面或离线命令修改 |
+静态参数中环境变量优先于 `.env`；动态环境变量不会覆盖数据库。供应商和 MCP 地址及凭据不从环境变量读取。三个启动凭据职责不同，必须使用不同的值。每个实例使用独立数据库、Redis 键前缀及媒体目录，不提交真实凭据或运行文件。
 
-启动参数中环境变量优先于本地 `.env`。供应商和 MCP 配置及凭据只读取 MySQL，不读取环境变量或 `.env`，不提交真实凭据到仓库。每个实例使用独立数据库、Redis 键前缀和媒体目录。
+### 3. 显式初始化数据库
 
-### 4. 导入运行配置
+配置后执行：
 
 ```powershell
-uv run agent-bot settings import-env
+uv run agent-bot database init
+```
+
+命令按所选后端创建全部 27 张业务表，覆盖配置、群成员、记忆、工作流、模型、Agent、Skill、MCP、媒体、Job 和记录。SQLite 会在明确初始化时创建文件及父目录，并启用外键和 WAL；普通启动只打开已有文件。MySQL 需先创建数据库，初始化账户需要建表权限。
+
+两种脚本分别为 [MySQL 初始化](sql/agent_bot_init.sql) 和 [SQLite 初始化](sql/agent_bot_init.sqlite.sql)。重复初始化保留数据，不插入配置或模型，也不修正已有不兼容结构。服务启动不会自动执行完整初始化或媒体 SQL。
+
+### 4. 初始化运行配置与迁移旧配置
+
+新安装写入默认运行配置，再查看有效配置：
+
+```powershell
+uv run agent-bot settings init
 uv run agent-bot settings list
 ```
 
-`import-env` 只允许导入空配置表。成功后，MySQL 是机器人运行配置的权威来源，修改 `.env` 中已入库的字段不会更新当前配置。
+默认访问策略不允许所有会话；启动后在“运行配置”设置允许的群和用户，再登记模型供应商及模型。初始化命令不读取动态环境值；若需要导入已有旧 `.env` 的业务参数，可用 `settings import-env` 代替 `settings init`。两者只允许首次初始化，重复执行拒绝覆盖。配置表只保存动态字段，静态字段始终保留在启动文件中。
 
-命令失败时会提示需要检查的配置字段或数据库错误类别，不回显凭据。出现“无法连接 MySQL”时，先确认 MySQL 正在运行且 `CHAT_DB_HOST`、`CHAT_DB_PORT` 正确；连接成功后再检查数据库、初始化表和账户权限。配置校验失败时按提示修改 `.env`，不要把示例中的 Token 占位符作为实际凭据。
+已有混合配置表升级前先停止服务，使用现有数据库连接配置导出历史静态行：
 
-导入后可移除 `.env` 中已入库的运行字段，但继续保留数据库和 Redis 引导参数、管理员凭据及媒体目录。运行配置包含敏感值，应限制数据库账户权限。
+```powershell
+uv run agent-bot settings export-static .env.static-export
+```
+
+导出包含 OneBot Token、会话密钥等敏感值；终端只报告路径，目标文件必须不存在。备份当前 `.env` 后，把导出的静态字段合并到启动文件，保留数据库、Redis、管理员凭据和媒体目录；确认 `CHAT_DB_BACKEND=mysql` 后启动。不要在合并前运行配置保存：新版本读取时忽略历史静态行，下一次动态保存会清理这些行。导出文件合并后按部署权限管理，勿提交。
+
+静态密钥缺失时启动明确失败，不会从数据库回填。运行配置缺失或数据库结构不匹配时按错误提示初始化或升级；SQLite 错误需检查文件路径、目录权限与结构，MySQL 错误需检查服务、账户与数据库。错误不回显配置值或驱动原文。
+
+切换 `CHAT_DB_BACKEND` 只选择另一份独立数据库，不迁移业务数据；本次不提供 MySQL／SQLite 数据互迁。旧 MySQL 库从 `dispatch_chat_*` 改名后若缺少当前索引，执行 `sql/2026-10-13-chat-index-names.sql` 原位升级，保留历史记录。
 
 ### 5. 启动服务并连接 QQ
 
@@ -112,13 +121,13 @@ uv run agent-bot
 
 也可使用 `uv run python -m agent_bot`。该入口同时启动机器人、管理 API 和浏览器界面。
 
-默认管理地址为 [http://127.0.0.1:8080/](http://127.0.0.1:8080/)，用管理员凭据登录。实际监听地址由数据库中的 `host`、`port` 决定。
+默认管理地址为 [http://127.0.0.1:8080/](http://127.0.0.1:8080/)，用管理员凭据登录。实际监听地址由静态启动配置 `HOST`、`PORT` 决定。
 
 NapCat 配置 OneBot V11 反向 WebSocket 地址 `ws://127.0.0.1:8080/onebot/v11/ws`，Access Token 与 `ONEBOT_V11_ACCESS_TOKEN` 一致。不要同时运行两个连接同一机器人和队列前缀的实例。
 
 ## 管理界面与运行配置
 
-工作台提供运行概览、机器人配置、对话测试、供应商管理、模型管理、会话记录、Agent 管理、Skill 管理和 MCP 服务。保存配置后可查看数据库版本、应用版本及需重启字段；热刷新只应用可在线修改的字段。关闭浏览器不会停止服务。
+工作台提供运行概览、机器人配置、对话测试、供应商管理、模型管理、会话记录、Agent 管理、Skill 管理和 MCP 服务。机器人配置分为“运行配置”和“静态配置”：运行字段保存后显示数据库与应用版本，静态字段只读；修改启动文件后需重启。关闭浏览器不会停止服务。
 
 模型统一在本地目录登记，QQ 功能按各自开关启用。无需设置普通文本、Agent 或媒体的后端选择字段。模型或工具调用失败会返回对应错误，未迁移能力会在路由预检时拒绝。
 
@@ -126,7 +135,7 @@ NapCat 配置 OneBot V11 反向 WebSocket 地址 `ws://127.0.0.1:8080/onebot/v11
 
 ## 配置 Python 普通对话
 
-1. 在“供应商管理”新增供应商，直接填写名称、协议、API 根地址和 API 密钥，保存到 MySQL。支持 `openai-responses`、`openai-chat` 和 `ollama`，无需鉴权的本地服务可留空密钥。可以新增多个供应商，每个供应商有自己的 URL 和 Key。
+1. 在“供应商管理”新增供应商，直接填写名称、协议、API 根地址和 API 密钥，保存到所选数据库。支持 `openai-responses`、`openai-chat` 和 `ollama`，无需鉴权的本地服务可留空密钥。可以新增多个供应商，每个供应商有自己的 URL 和 Key。
 2. API 根地址不包含 `/responses`、`/chat/completions` 或 `/api/chat`。保存后自动获取该供应商的上游模型列表，也可点击“获取模型 / 刷新模型”。兼容协议读取 `/models`，Ollama 读取 `/api/tags`；服务未实现列表接口时明确提示错误。
 3. 从上游列表搜索并勾选模型，设置唯一的本地别名后导入；新模型默认停用，需要在“模型管理”启用。也可在模型管理选择供应商后，从自动获取的列表选择准确上游 ID，或显式手动登记。不同供应商的同名模型使用不同别名，并分别绑定各自供应商。
 4. 将 `chat_model` 设置为已启用的模型别名。在“对话测试”验证同步或流式回复；临时模型选择只影响本次请求。
@@ -234,14 +243,15 @@ uv pip install "D:\packages\agent_bot-0.5.0-py3-none-any.whl"
 .venv\Scripts\agent-bot.exe --help
 ```
 
-将示例 wheel 路径替换为实际文件。部署目录需提供 `.env`，完成数据库初始化后，用安装后的入口导入配置并启动服务：
+将示例 wheel 路径替换为实际文件。部署目录需提供 `.env`，完成数据库初始化后，用安装后的入口初始化配置并启动服务：
 
 ```powershell
-.venv\Scripts\agent-bot.exe settings import-env
+.venv\Scripts\agent-bot.exe database init
+.venv\Scripts\agent-bot.exe settings init
 .venv\Scripts\agent-bot.exe settings list
 .venv\Scripts\agent-bot.exe
 ```
 
 已构建的界面随 wheel 提供。
 
-安装 wheel 后可通过 `importlib.resources.files('agent_bot').joinpath('resources/agent_bot_init.sql')` 读取完整初始化 SQL。源码开发时直接使用仓库中的 `sql/agent_bot_init.sql`。
+安装 wheel 后可通过 `importlib.resources.files('agent_bot').joinpath('resources/agent_bot_init.sql')` 或 `resources/agent_bot_init.sqlite.sql` 读取对应初始化 SQL；`database init` 会自动使用当前后端资源。源码开发时两份脚本位于 `sql/`。

@@ -1,4 +1,4 @@
-"""MySQL 中的配置键值表读写。"""
+"""所选数据库的运行配置读写，与固定的启动配置合并并维护版本锁。"""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from pydantic import SecretStr, ValidationError
 from pymysql.err import DatabaseError, InterfaceError, OperationalError
 
 from agent_bot.config import CONFIG_DESCRIPTIONS, RuntimeConfig
+from agent_bot.database import database_connector
+from agent_bot.static_config import DYNAMIC_SETTING_NAMES, STATIC_SETTING_NAMES, static_values
 
 _SINGLETON_ID = 1
 _LOCK_NAME = "chat_setting"
@@ -27,7 +29,7 @@ _MAX_ROWS = 256
 DEFAULT_TABLE = "chat_setting"
 DEFAULT_REVISION_TABLE = "chat_setting_revision"
 
-STORED_SETTING_NAMES = frozenset(RuntimeConfig.model_fields)
+STORED_SETTING_NAMES = DYNAMIC_SETTING_NAMES
 
 SECRET_SETTING_NAMES = frozenset(
     {
@@ -157,17 +159,24 @@ def _plain_value(value: Any) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class DatabaseParams:
-    """chat 配置库的 MySQL 连接参数。"""
+    """所选数据库的不可变启动参数，密码不参与对象展示。"""
 
-    host: str
-    port: int
-    user: str
-    password: str = field(repr=False)
-    database: str
+    host: str = "127.0.0.1"
+    port: int = 3306
+    user: str = ""
+    password: str = field(default="", repr=False)
+    database: str = "agent_bot"
+    backend: str = "mysql"
+    sqlite_path: str = "data/agent_bot.sqlite3"
+
+    def __post_init__(self) -> None:
+        """只允许显式支持的后端，不能自动切换数据库。"""
+        if self.backend not in {"mysql", "sqlite"}:
+            raise ValueError("database backend must be mysql or sqlite")
 
 
 class SettingsStore:
-    """保存单份完整配置快照到键值表，并以 revision 提供乐观锁。"""
+    """只持久化动态字段，合并静态快照供业务校验，以 revision 提供乐观锁。"""
 
     def __init__(
         self,
@@ -176,15 +185,23 @@ class SettingsStore:
         table: str = DEFAULT_TABLE,
         revision_table: str = DEFAULT_REVISION_TABLE,
         connect: Callable[..., Any] | None = None,
+        static_config: RuntimeConfig | Mapping[str, Any] | None = None,
     ) -> None:
+        """绑定数据库和静态快照，显式连接替身或共享池优先。"""
         self._params = params
         self._table = table
         self._revision_table = revision_table
-        self._connect = connect or pymysql.connect
+        self._connect = connect or database_connector(params)
+        self._static_values = static_values(static_config) if static_config is not None else None
 
     @property
     def table(self) -> str:
         return self._table
+
+    @property
+    def params(self) -> DatabaseParams:
+        """管理页面只读展示所选后端，凭据仍由响应层脱敏。"""
+        return self._params
 
     @_database_boundary
     def initialize(
@@ -193,7 +210,13 @@ class SettingsStore:
     ) -> VersionedSettings:
         """写入 revision 1；已有快照时拒绝覆盖。"""
 
-        validated = _validate_runtime_config(config)
+        # 显式初始化调用可传入完整初始快照，启动及 CLI 始终注入独立静态模型。
+        if self._static_values is None:
+            self._static_values = static_values(
+                runtime_config_to_plain_values(config) if isinstance(config, RuntimeConfig)
+                else dict(config)
+            )
+        validated = self._validate_config(config)
         rows = _config_to_rows(validated)
         with closing(self._open()) as connection:
             self._validate_schema(connection)
@@ -225,7 +248,7 @@ class SettingsStore:
 
     @_database_boundary
     def load_values(self) -> tuple[dict[str, Any], int]:
-        """读取待修改的原始快照；调用方必须通过 save 的完整校验和版本锁写回。"""
+        """将待修复动态值与静态快照合并，写回仍必须经过完整校验和版本锁。"""
 
         with closing(self._open()) as connection:
             self._validate_schema(connection)
@@ -234,7 +257,7 @@ class SettingsStore:
                 if revision is None:
                     raise SettingsNotInitializedError("settings database is not initialized")
                 values = self._read_values(cursor)
-        return values, revision
+        return values | self._startup_values(), revision
 
     @_database_boundary
     def load_revision(self) -> int:
@@ -256,7 +279,7 @@ class SettingsStore:
     ) -> VersionedSettings:
         """整体验证并原子替换快照。"""
 
-        validated = _validate_runtime_config(config)
+        validated = self._validate_config(config)
         rows = _config_to_rows(validated)
         if expected_revision < 1:
             raise SettingsRevisionConflictError("settings revision conflict")
@@ -290,6 +313,33 @@ class SettingsStore:
             cursorclass=pymysql.cursors.DictCursor,
             autocommit=False,
         )
+
+    def _startup_values(self) -> dict[str, Any]:
+        """静态配置固定到存储实例，不能随热刷新重新读取启动环境。"""
+        if self._static_values is None:
+            from agent_bot.bootstrap import load_static_config
+
+            self._static_values = static_values(load_static_config())
+        return self._static_values
+
+    def _validate_config(self, config: RuntimeConfig | Mapping[str, Any]) -> RuntimeConfig:
+        """只接受候选动态值，静态值以启动时快照为准再执行组合校验。"""
+        values = (
+            runtime_config_to_plain_values(config)
+            if isinstance(config, RuntimeConfig) else dict(config)
+        )
+        return _validate_runtime_config(values | self._startup_values())
+
+    @_database_boundary
+    def export_static_values(self) -> dict[str, Any]:
+        """仅供显式停服迁移读取历史静态行，普通加载永远忽略它们。"""
+        with closing(self._open()) as connection:
+            self._validate_schema(connection)
+            with connection.cursor() as cursor:
+                values = self._read_values(cursor, static_only=True)
+                return {
+                    name: value for name, value in values.items() if name in STATIC_SETTING_NAMES
+                }
 
     def _validate_schema(self, connection: Any) -> None:
         expected_pairs = (
@@ -330,7 +380,8 @@ class SettingsStore:
             raise SettingsSchemaError("settings revision row is invalid")
         return value
 
-    def _read_values(self, cursor: Any) -> dict[str, Any]:
+    def _read_values(self, cursor: Any, *, static_only: bool = False) -> dict[str, Any]:
+        """普通加载只解析动态行；显式迁移只解析静态行，不受动态损坏影响。"""
         cursor.execute(f"SELECT config_key, config_value FROM `{self._table}` ORDER BY config_key")
         values: dict[str, Any] = {}
         for row in cursor.fetchall():
@@ -338,6 +389,8 @@ class SettingsStore:
             raw = row["config_value"]
             if not isinstance(key, str) or len(key) > _MAX_KEY_LENGTH:
                 raise SettingsSchemaError("settings database row is invalid")
+            if (key in STATIC_SETTING_NAMES) != static_only:
+                continue
             if raw is None:
                 values[key] = None
                 continue
@@ -384,9 +437,12 @@ class SettingsStore:
 
 
 def _config_to_rows(config: RuntimeConfig) -> list[tuple[str, str, str]]:
+    """只编码动态配置，静态字段不会进入新快照或下次覆盖保存的行。"""
     values = runtime_config_to_plain_values(config)
     rows: list[tuple[str, str, str]] = []
     for key, value in values.items():
+        if key not in STORED_SETTING_NAMES:
+            continue
         if not isinstance(key, str) or len(key) > _MAX_KEY_LENGTH:
             raise SettingsValidationError("settings snapshot contains invalid field name")
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -428,6 +484,7 @@ def _release_lock(cursor: Any) -> None:
 def _validate_runtime_config(
     value: RuntimeConfig | Mapping[str, Any] | object,
 ) -> RuntimeConfig:
+    """对有效组合执行统一校验，并将失败限制为已知字段和规则名称。"""
     if isinstance(value, RuntimeConfig):
         raw: object = runtime_config_to_plain_values(value)
     else:
@@ -435,7 +492,7 @@ def _validate_runtime_config(
     if isinstance(raw, Mapping):
         # 容忍已被模型删除的字段：与 PluginConfig 的 extra="ignore" 一致。
         # 下一次 store.save() 会用 model_fields 重建快照，自然清理掉这些键。
-        raw = {k: v for k, v in raw.items() if k in STORED_SETTING_NAMES}
+        raw = {k: v for k, v in raw.items() if k in RuntimeConfig.model_fields}
     try:
         return RuntimeConfig.model_validate(raw)
     except ValidationError as exc:

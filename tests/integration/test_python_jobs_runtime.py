@@ -46,7 +46,7 @@ async def test_runtime_wires_python_services_and_settings_metadata():
     """启用开关后运行时有实际服务，管理界面获得中文字段和脱敏元数据。"""
     from agent_bot.admin.settings import SettingsService
     from agent_bot.plugin.runtime import build_runtime_state, close_runtime_state
-    from agent_bot.settings import VersionedSettings
+    from agent_bot.settings import SettingsStore, VersionedSettings
 
     settings = RuntimeConfig(
         onebot_v11_access_token="o" * 32,
@@ -75,7 +75,11 @@ async def test_runtime_wires_python_services_and_settings_metadata():
         assert state.auto_speak_service is not None
         assert state.auto_speak_service._decision_client.mcp_code == "decision"
         assert (await state.auto_speak_service.run_once()).bot_available is False
-        metadata = SettingsService(None, SimpleNamespace(config=settings, revision=1))
+        store = SettingsStore(
+            DatabaseParams("localhost", 3306, "offline", "offline", "offline"),
+            static_config=settings,
+        )
+        metadata = SettingsService(store, SimpleNamespace(config=settings, revision=1))
         result = metadata._snapshot(VersionedSettings(config=settings, revision=1))
         fields = {field.name: field for field in result.fields}
         assert fields["chat_auto_speak_mcp_code"].value == "decision"

@@ -6,7 +6,7 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from agent_bot.bootstrap import database_params, load_bootstrap_config
+from agent_bot.bootstrap import database_params, load_bootstrap_config, load_static_config
 from agent_bot.integrations.workflow_store import WorkflowStore
 from agent_bot.services.workflows import WorkflowCatalogImporter
 from agent_bot.settings import DatabaseParams, SettingsStore
@@ -30,7 +30,9 @@ def run(
         if arguments.command == "sync":
             raw_directory = arguments.directory
             if raw_directory is None:
-                config = SettingsStore(params).load().config
+                config = SettingsStore(
+                    params, static_config=load_static_config(env_file=env_file),
+                ).load().config
                 raw_directory = config.chat_local_workflow_directory
             if raw_directory is None:
                 raise ValueError("workflow directory is not configured")

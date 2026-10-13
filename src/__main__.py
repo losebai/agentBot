@@ -9,12 +9,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] in (["--help"], ["-h"]):
         print(
-            "usage: agent-bot [settings ... | workflows ... | --help]\n"
+            "usage: agent-bot [database init | settings ... | workflows ... | --help]\n"
             "Without a subcommand, start the bot and browser management service."
         )
         return 0
     if arguments[:1] == ["settings"]:
         from agent_bot.config_cli import run
+
+        return run(arguments[1:])
+    if arguments[:1] == ["database"]:
+        from agent_bot.database_cli import run
 
         return run(arguments[1:])
     if arguments[:1] == ["workflows"]:

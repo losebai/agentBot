@@ -13,6 +13,25 @@ const snapshot = {
 };
 
 describe('配置编辑', () => {
+  it('静态配置分组只读，不能修改启动端口或提交密钥', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...snapshot, fields: [
+      ...snapshot.fields,
+      { name: 'port', description: '监听端口', kind: 'number', value: 8080,
+        nullable: false, secret_is_set: false, restart_required: true,
+        scope: 'static', read_only: true },
+      { name: 'onebot_v11_access_token', description: 'OneBot 密钥', kind: 'secret', value: null,
+        nullable: false, secret_is_set: true, restart_required: true,
+        scope: 'static', read_only: true },
+    ] })));
+    render(<Settings token="offline-token" />);
+    await screen.findByLabelText('温度');
+    fireEvent.click(screen.getByRole('tab', { name: '静态配置' }));
+    expect(await screen.findByLabelText('监听端口')).toBeDisabled();
+    expect(screen.getByLabelText('OneBot 密钥')).toBeDisabled();
+    expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled();
+    expect(screen.queryByLabelText('温度')).not.toBeInTheDocument();
+  });
+
   it('只发送已编辑字段，保留未编辑密钥并显示保存与应用版本', async () => {
     let submitted: unknown;
     vi.stubGlobal('fetch', vi.fn(async (_url, init) => {

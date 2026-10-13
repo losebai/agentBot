@@ -8,6 +8,9 @@ export interface SettingField {
   nullable: boolean;
   secret_is_set: boolean;
   restart_required: boolean;
+  /** 静态字段由启动文件提供，前端只展示，服务端独立拒绝修改。 */
+  read_only?: boolean;
+  scope?: 'static' | 'runtime';
 }
 
 export interface SettingsSnapshot {

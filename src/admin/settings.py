@@ -1,4 +1,4 @@
-"""Management operations reuse the existing configuration authority and optimistic lock."""
+"""管理配置展示静态边界与动态版本，所有秘密仅公开是否已设置。"""
 
 from typing import Protocol, get_args
 
@@ -12,6 +12,7 @@ from agent_bot.settings import (
     VersionedSettings,
     runtime_config_to_plain_values,
 )
+from agent_bot.static_config import STATIC_SETTING_NAMES
 
 
 class RuntimeProvider(Protocol):
@@ -49,7 +50,7 @@ class SettingsService:
         return self._snapshot(saved)
 
     def _snapshot(self, stored: VersionedSettings) -> SettingsSnapshot:
-        """Generate UI metadata without exposing raw secrets or confusing saved with applied."""
+        """生成分组及只读元数据，秘密不回显，保存版本与生效版本分别展示。"""
         running = self.runtime.config
         pending = sorted(
             name
@@ -86,9 +87,33 @@ class SettingsService:
                     value=displayed,
                     nullable=nullable,
                     secret_is_set=is_set,
-                    restart_required=name in RESTART_REQUIRED_FIELDS,
+                    restart_required=name in STATIC_SETTING_NAMES,
+                    read_only=name in STATIC_SETTING_NAMES,
+                    scope="static" if name in STATIC_SETTING_NAMES else "runtime",
                 )
             )
+        params = self.store.params
+        bootstrap = {"chat_db_backend": ("数据库类型", params.backend)}
+        if params.backend == "sqlite":
+            bootstrap["chat_db_sqlite_path"] = ("SQLite 数据库文件", params.sqlite_path)
+        else:
+            bootstrap.update({
+                "chat_db_host": ("MySQL 地址", params.host),
+                "chat_db_port": ("MySQL 端口", params.port),
+                "chat_db_user": ("MySQL 用户", params.user),
+                "chat_db_name": ("MySQL 数据库", params.database),
+            })
+            fields.append(SettingField(
+                name="chat_db_password", description="MySQL 密码", kind="secret",
+                secret_is_set=bool(params.password), restart_required=True,
+                read_only=True, scope="static",
+            ))
+        for name, (description, value) in bootstrap.items():
+            fields.append(SettingField(
+                name=name, description=description,
+                kind="number" if isinstance(value, int) else "string", value=value,
+                restart_required=True, read_only=True, scope="static",
+            ))
         return SettingsSnapshot(
             database_revision=stored.revision,
             applied_revision=self.runtime.revision,

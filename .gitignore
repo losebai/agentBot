@@ -20,3 +20,12 @@ web/node_modules/
 src/static/assets/
 *.log
 .idea
+/docs/
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+.pytest-*-results.txt
+.ruff-*-results.txt

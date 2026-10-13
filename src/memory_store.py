@@ -1,4 +1,4 @@
-"""MySQL-backed persistent chat memory stores."""
+"""MySQL 或 SQLite 的持久聊天记忆，兼容已确认 MySQL 旧表的原位升级。"""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from typing import Any
 import pymysql
 from pymysql.err import DatabaseError, InterfaceError, OperationalError
 
+from agent_bot.database import database_connector
 from agent_bot.group_context import RecentGroupMessage
 from agent_bot.models import ChatMessage
 from agent_bot.settings import DatabaseParams
@@ -118,8 +119,7 @@ _EXPECTED_SCHEMA = {
             }
         ),
         "indexes": frozenset(
-            {"PRIMARY", "idx_chat_memory_turn_session_id",
-             "uk_chat_memory_turn_request"}
+            {"PRIMARY", "idx_chat_memory_turn_session_id", "uk_chat_memory_turn_request"}
         ),
     },
     _RECEIPT_TABLE: {
@@ -160,11 +160,7 @@ class ConversationMemoryPolicy:
     def __post_init__(self) -> None:
         if self.history_turns < 0:
             raise ValueError("history turns cannot be negative")
-        if (
-            self.max_history_chars <= 0
-            or self.ttl_seconds <= 0
-            or self.max_memory_chars <= 0
-        ):
+        if self.max_history_chars <= 0 or self.ttl_seconds <= 0 or self.max_memory_chars <= 0:
             raise ValueError("conversation memory limits must be positive")
 
 
@@ -190,14 +186,19 @@ class ChatMemorySchema:
         *,
         connect: Callable[..., Any] | None = None,
     ) -> None:
+        """绑定所选数据库，SQLite 只校验显式初始化后的结构。"""
         self._params = params
-        self._connect = connect or pymysql.connect
+        self._connect = connect or database_connector(params)
 
     def initialize(self) -> None:
         """先迁移旧索引名称再补充字段，避免幂等索引重复创建并保留历史。"""
 
         try:
             with closing(self._open()) as connection:
+                if self._params.backend == "sqlite":
+                    # SQLite 结构由显式初始化命令创建，启动仅验证，不执行 MySQL 迁移。
+                    self._validate_schema(connection)
+                    return
                 with connection.cursor() as cursor:
                     for statement in _SCHEMA_STATEMENTS:
                         cursor.execute(statement)
@@ -345,9 +346,7 @@ class ChatMemorySchema:
                     raise ChatMemorySchemaError("chat memory foreign key row is invalid")
                 quoted_table = self._quote_identifier(table_name)
                 quoted_constraint = self._quote_identifier(constraint_name)
-                cursor.execute(
-                    f"ALTER TABLE {quoted_table} DROP FOREIGN KEY {quoted_constraint}"
-                )
+                cursor.execute(f"ALTER TABLE {quoted_table} DROP FOREIGN KEY {quoted_constraint}")
 
     @staticmethod
     def _quote_identifier(value: str) -> str:
@@ -381,8 +380,9 @@ class MySqlConversationMemoryStore:
         connect: Callable[..., Any] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        """绑定所选数据库、记忆策略和时钟，连接替身或共享池优先。"""
         self._params = params
-        self._connect = connect or pymysql.connect
+        self._connect = connect or database_connector(params)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._policy_lock = threading.Lock()
         self._policy = policy
@@ -443,8 +443,9 @@ class MySqlConversationMemoryStore:
             messages.extend(
                 (
                     ChatMessage(role="user", content=turn.user, history_request_id=turn.request_id),
-                    ChatMessage(role="assistant", content=turn.assistant,
-                                history_request_id=turn.request_id),
+                    ChatMessage(
+                        role="assistant", content=turn.assistant, history_request_id=turn.request_id
+                    ),
                 )
             )
         memory = row["memory_summary"]
@@ -522,9 +523,7 @@ class MySqlConversationMemoryStore:
             raise ChatMemoryStoreError("failed to commit conversation memory") from exc
         return compression
 
-    def _claim_request(
-        self, cursor: Any, session_id: str, request_id: str, now: datetime
-    ) -> bool:
+    def _claim_request(self, cursor: Any, session_id: str, request_id: str, now: datetime) -> bool:
         """回执独立保留一天，覆盖队列任务最大重试寿命及历史清空。"""
         expires_at = now + timedelta(seconds=REQUEST_RECEIPT_TTL_SECONDS)
         cursor.execute(
@@ -642,17 +641,14 @@ class MySqlConversationMemoryStore:
                         for row in rows:
                             session_id = row["session_id"]
                             if not isinstance(session_id, str):
-                                raise ChatMemoryStoreError(
-                                    "conversation session row is invalid"
-                                )
+                                raise ChatMemoryStoreError("conversation session row is invalid")
                             session_ids.append(session_id)
                         if not session_ids:
                             deleted = 0
                         else:
                             placeholders = ",".join("%s" for _ in session_ids)
                             cursor.execute(
-                                f"DELETE FROM `{_TURN_TABLE}` "
-                                f"WHERE session_id IN ({placeholders})",
+                                f"DELETE FROM `{_TURN_TABLE}` WHERE session_id IN ({placeholders})",
                                 tuple(session_ids),
                             )
                             cursor.execute(
@@ -704,9 +700,13 @@ class MySqlConversationMemoryStore:
         target_turns = policy.history_turns
         target_chars = policy.max_history_chars
         if policy.memory_enabled:
-            target_turns = 0 if policy.history_turns == 0 else max(
-                1,
-                policy.history_turns // 2,
+            target_turns = (
+                0
+                if policy.history_turns == 0
+                else max(
+                    1,
+                    policy.history_turns // 2,
+                )
             )
             target_chars = max(1, policy.max_history_chars // 2)
         _, new_boundary = self._read_recent_turns(
@@ -942,11 +942,12 @@ class MySqlRecentGroupContextStore:
         connect: Callable[..., Any] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        """绑定所选数据库和匿名作用域密钥，群上下文策略可在线更新。"""
         if not secret:
             raise ValueError("group context secret cannot be empty")
         self._params = params
         self._secret = secret
-        self._connect = connect or pymysql.connect
+        self._connect = connect or database_connector(params)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._policy_lock = threading.Lock()
         self._policy = policy
@@ -1150,9 +1151,7 @@ def _conversation_turn_from_row(row: Mapping[str, object] | Any) -> tuple[int, C
     assistant = row["assistant_content"]
     if type(turn_id) is not int or not isinstance(user, str) or not isinstance(assistant, str):
         raise ChatMemoryStoreError("conversation turn row is invalid")
-    return turn_id, ConversationTurn(
-        user=user, assistant=assistant, request_id=row["request_id"]
-    )
+    return turn_id, ConversationTurn(user=user, assistant=assistant, request_id=row["request_id"])
 
 
 def _validate_session_id(value: str) -> str:
@@ -1224,8 +1223,7 @@ def _trim_group_messages(
     policy: GroupContextPolicy,
 ) -> list[RecentGroupMessage]:
     while messages and (
-        len(messages) > policy.message_limit
-        or _rendered_group_size(messages) > policy.max_chars
+        len(messages) > policy.message_limit or _rendered_group_size(messages) > policy.max_chars
     ):
         messages.pop(0)
     return messages
@@ -1242,10 +1240,7 @@ def _decode_group_messages(value: object) -> list[RecentGroupMessage]:
         raw = json.loads(value)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ChatMemoryStoreError("group context payload is invalid") from exc
-    if (
-        not isinstance(raw, list)
-        or len(raw) > _MAX_GROUP_MESSAGE_ITEMS
-    ):
+    if not isinstance(raw, list) or len(raw) > _MAX_GROUP_MESSAGE_ITEMS:
         raise ChatMemoryStoreError("group context payload is invalid")
     messages: list[RecentGroupMessage] = []
     try:
@@ -1301,8 +1296,6 @@ def _fallback_memory(compression: MemoryCompression, max_chars: int) -> str:
     sections: list[str] = []
     if compression.previous_memory:
         sections.append(f"已有记忆：\n{compression.previous_memory}")
-    sections.extend(
-        f"用户：{turn.user}\n助手：{turn.assistant}" for turn in compression.turns
-    )
+    sections.extend(f"用户：{turn.user}\n助手：{turn.assistant}" for turn in compression.turns)
     combined = "\n\n".join(sections).strip()
     return combined if len(combined) <= max_chars else combined[-max_chars:]

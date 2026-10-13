@@ -679,7 +679,7 @@ class PluginConfig(BaseModel):
 
 
 class RuntimeConfig(PluginConfig):
-    """完整的数据库运行时配置，包括 NoneBot 启动所需字段。"""
+    """合并启动静态配置与数据库动态配置后的有效快照，供业务统一校验和消费。"""
 
     driver: str = Field(default="~fastapi", min_length=1)
     host: IPvAnyAddress = IPv4Address("127.0.0.1")  # type: ignore[assignment]

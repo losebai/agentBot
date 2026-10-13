@@ -1,4 +1,4 @@
-"""有容量、等待与网络时限的同步 MySQL 连接池。"""
+"""有容量及等待时限的同步数据库连接池，MySQL 与 SQLite 共用租用生命周期。"""
 
 from __future__ import annotations
 
@@ -13,10 +13,18 @@ from typing import Any, TypeVar
 import pymysql
 from pymysql.err import InterfaceError, OperationalError
 
+from agent_bot.database import database_connector
 from agent_bot.database_errors import DatabaseFailure, DatabasePoolTimeoutError
 from agent_bot.settings import DatabaseParams
 
 WriteResult = TypeVar("WriteResult")
+
+
+def create_database_pool(params: DatabaseParams, **options: Any) -> MySqlConnectionPool:
+    """两个后端共享有界租用和取消释放规则，后端由启动参数唯一确定。"""
+    if params.backend == "sqlite":
+        options["connect"] = database_connector(params)
+    return MySqlConnectionPool(params, **options)
 
 
 async def finish_database_write(write: Callable[[], WriteResult]) -> WriteResult:

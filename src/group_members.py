@@ -13,6 +13,7 @@ from typing import Any
 import pymysql
 from pymysql.err import DatabaseError, InterfaceError, OperationalError
 
+from agent_bot.database import database_connector
 from agent_bot.settings import DatabaseParams
 
 _TABLE = "chat_group_member"
@@ -57,8 +58,9 @@ class GroupMemberStore:
         *,
         connect: Callable[..., Any] | None = None,
     ) -> None:
+        """保存所选数据库连接入口，群成员数据仍由业务边界校验。"""
         self._params = params
-        self._connect = connect or pymysql.connect
+        self._connect = connect or database_connector(params)
 
     async def replace_group(
         self,

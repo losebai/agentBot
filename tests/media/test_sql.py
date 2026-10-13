@@ -104,6 +104,22 @@ def test_dynamic_credential_migration_only_adds_columns_and_preserves_auth_requi
     assert "credential_ref IS NOT NULL" in statements
 
 
+def test_legacy_index_migration_matches_initialization_and_preserves_data():
+    """升级只改名称，目标索引均在当前初始化脚本中，重复执行由元数据判断跳过。"""
+    sql = (ROOT / "sql/2026-10-13-chat-index-names.sql").read_text("utf-8")
+    initial = (ROOT / "sql/agent_bot_init.sql").read_text("utf-8")
+    statements = re.sub(r"--[^\n]*", "", sql)
+    assert not re.search(r"\b(DROP|TRUNCATE|DELETE|UPDATE|INSERT)\b", statements, re.I)
+    renames = re.findall(r"ALTER TABLE `(\w+)` RENAME INDEX `(\w+)` TO `(\w+)`", sql)
+    assert len(renames) == 9
+    tables = definitions(initial)
+    for table, old, new in renames:
+        assert "dispatch_chat" in old
+        assert new in ",".join(tables[table])
+        assert f"INDEX_NAME = '{old}'" in sql and f"INDEX_NAME = '{new}'" in sql
+    assert sql.count("AND NOT EXISTS") == len(renames)
+
+
 def test_unified_initialization_includes_memory_idempotency_and_workflow_uniqueness():
     """新库直接具备请求去重、会话隔离和内容去重，不依赖历史数据修补。"""
     tables = definitions((ROOT / "sql/agent_bot_init.sql").read_text("utf-8"))

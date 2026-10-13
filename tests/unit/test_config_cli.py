@@ -525,7 +525,7 @@ def test_invalid_saved_configuration_reports_fields_instead_of_database_failure(
 
 def test_set_can_repair_invalid_saved_configuration(legacy_env, capsys, fake_mysql):
     """显式关闭自动发言可修复旧快照，保留其他值并正常递增版本。"""
-    from agent_bot.bootstrap import database_params, load_bootstrap_config
+    from agent_bot.bootstrap import database_params, load_bootstrap_config, load_static_config
     from agent_bot.settings import SettingsStore
 
     _initialize(capsys, legacy_env)
@@ -537,7 +537,10 @@ def test_set_can_repair_invalid_saved_configuration(legacy_env, capsys, fake_mys
 
     assert code == 0, output
     assert _revision(output) == 2
-    stored = SettingsStore(database_params(load_bootstrap_config(env_file=str(legacy_env)))).load()
+    stored = SettingsStore(
+        database_params(load_bootstrap_config(env_file=str(legacy_env))),
+        static_config=load_static_config(env_file=str(legacy_env)),
+    ).load()
     assert stored.config.chat_auto_speak_enabled is False
     assert stored.config.chat_auto_speak_mcp_code is None
     assert stored.config.chat_model == 'cli-test-model'

@@ -11,6 +11,7 @@ from typing import Any
 import pymysql
 from pymysql.err import DatabaseError, InterfaceError, OperationalError
 
+from agent_bot.database import database_connector
 from agent_bot.services.workflows import WorkflowDefinition
 from agent_bot.settings import DatabaseParams
 
@@ -103,7 +104,7 @@ class WorkflowStore:
             raise ValueError("workflow table name is invalid")
         self._params = params
         self._table = table
-        self._connect = connect or pymysql.connect
+        self._connect = connect or database_connector(params)
 
     def prepare_for_startup(self) -> None:
         """校验已部署基础表，仅增补兼容元数据列，不重写记录或收窄已有字段。"""
@@ -125,6 +126,11 @@ class WorkflowStore:
 
     def migrate(self) -> None:
         """补齐表结构，合并历史重复内容后建立内容哈希唯一索引。"""
+
+        if self._params.backend == "sqlite":
+            # SQLite 新库结构由 database init 提供，迁移命令不运行 MySQL 重写逻辑。
+            self.prepare_for_startup()
+            return
 
         try:
             with closing(self._open()) as connection:

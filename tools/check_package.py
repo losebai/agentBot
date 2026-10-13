@@ -15,6 +15,12 @@ def check(path: Path) -> None:
             "agent_bot/ai/service.py",
             "agent_bot/admin/streaming.py",
             "agent_bot/resources/agent_bot_init.sql",
+            "agent_bot/resources/agent_bot_init.sqlite.sql",
+            "agent_bot/static_config.py",
+            "agent_bot/database.py",
+            "agent_bot/sqlite_database.py",
+            "agent_bot/database_cli.py",
+            "agent_bot/resources/2026-10-13-chat-index-names.sql",
             "agent_bot/resources/2026-10-13-dynamic-provider-mcp-credentials.sql",
             "agent_bot/resources/agent_bot_ai_init.sql",
             "agent_bot/resources/agent_bot_agent_init.sql",
@@ -50,7 +56,8 @@ def check(path: Path) -> None:
         }
         if any(
             forbidden.intersection(Path(name).parts)
-            or Path(name).suffix.lower() in {".log", ".wav", ".pcm", ".sqlite", ".db"}
+            or Path(name).suffix.lower() in {".log", ".wav", ".pcm", ".sqlite", ".sqlite3", ".db"}
+            or Path(name).name.endswith(("-wal", "-shm", "-journal"))
             or Path(name).name.startswith(".env")
             for name in names
         ):

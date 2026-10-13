@@ -48,6 +48,8 @@ exclude = [
   "/.pytest_cache", "/.ruff_cache", "/.coverage*", "/dist",
   "/.env", "/.env.*",
   "/data", "/logs", "/tts", "*.log", "tts-*.wav",
+  "*.db", "*.sqlite", "*.sqlite3", "*-wal", "*-shm", "*-journal",
+  ".pytest-*-results.txt", ".ruff-*-results.txt",
   "/dist-ci", "/reports", "/.uv-cache", "/.npm", "/deploy/runtime.env", "/image.env",
 ]
 artifacts = ["src/static/**"]
@@ -68,6 +70,8 @@ path = "tools/build_hook.py"
 
 [tool.hatch.build.targets.wheel.force-include]
 "sql/agent_bot_init.sql" = "agent_bot/resources/agent_bot_init.sql"
+"sql/agent_bot_init.sqlite.sql" = "agent_bot/resources/agent_bot_init.sqlite.sql"
+"sql/2026-10-13-chat-index-names.sql" = "agent_bot/resources/2026-10-13-chat-index-names.sql"
 "sql/2026-10-13-dynamic-provider-mcp-credentials.sql" = "agent_bot/resources/2026-10-13-dynamic-provider-mcp-credentials.sql"
 # 旧分阶段资源仍可读取，供既有部署按版本显式升级；新安装使用统一脚本。
 "sql/legacy/agent_bot_ai_init.sql" = "agent_bot/resources/agent_bot_ai_init.sql"

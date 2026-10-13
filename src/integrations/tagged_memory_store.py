@@ -1,4 +1,4 @@
-"""标签记忆及其作用域、标签关联的 MySQL 事务边界。"""
+"""MySQL 或 SQLite 中标签记忆、授权作用域及关联的事务边界。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import pymysql
 
+from agent_bot.database import database_connector
 from agent_bot.services.tagged_memory import (
     MemoryArguments,
     MemoryIdentity,
@@ -64,7 +65,7 @@ class TaggedMemoryStore:
         """保存共享连接池入口及匿名作用域密钥。"""
         self._params = params
         self._secret = secret
-        self._connect = connect or pymysql.connect
+        self._connect = connect or database_connector(params)
 
     @contextmanager
     def _transaction(self) -> Iterator[Any]:
@@ -98,6 +99,13 @@ class TaggedMemoryStore:
     def initialize(self) -> None:
         """幂等创建独立表，使用应用事务维护关联，不添加外键。"""
         with self._transaction() as cursor:
+            if self._params.backend == "sqlite":
+                # 启动只检查手动初始化的 SQLite 表，避免隐式创建或覆盖业务结构。
+                cursor.execute("SELECT scope_id,scope FROM chat_memory_scope LIMIT 0")
+                cursor.execute("SELECT id,scope_id,memory_key,content,is_deleted,create_time,"
+                               "update_time FROM chat_tagged_memory LIMIT 0")
+                cursor.execute("SELECT memory_id,tag FROM chat_memory_tag LIMIT 0")
+                return
             for statement in SCHEMA_STATEMENTS:
                 cursor.execute(statement)
 

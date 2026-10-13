@@ -31,7 +31,7 @@ from agent_bot.bootstrap import (
     load_redis_bootstrap_config,
 )
 from agent_bot.config import PluginConfig, RuntimeConfig
-from agent_bot.database_pool import MySqlConnectionPool
+from agent_bot.database_pool import create_database_pool
 from agent_bot.group_members import (
     GroupMemberStore,
 )
@@ -136,7 +136,7 @@ def _log_auto_speak_error(error_type: str) -> None:
 _database_params = database_params(load_bootstrap_config())
 _redis_bootstrap = load_redis_bootstrap_config()
 plugin_config = get_plugin_config(RuntimeConfig)
-_database_pool = MySqlConnectionPool(
+_database_pool = create_database_pool(
     _database_params,
     max_size=plugin_config.chat_db_pool_size,
     acquire_timeout_seconds=plugin_config.chat_db_timeout_seconds,
@@ -144,7 +144,9 @@ _database_pool = MySqlConnectionPool(
     read_timeout_seconds=plugin_config.chat_db_timeout_seconds,
     write_timeout_seconds=plugin_config.chat_db_timeout_seconds,
 )
-_settings_store = SettingsStore(_database_params, connect=_database_pool.connect)
+_settings_store = SettingsStore(
+    _database_params, connect=_database_pool.connect, static_config=plugin_config,
+)
 # 媒体资源按进程持有；构造不联网、不创建目录，运行时热刷新复用同一个实例。
 _media_resources = MediaResources(MediaConfig.from_environment(), _database_params,
                                    connect=_database_pool.connect)

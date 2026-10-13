@@ -10,6 +10,7 @@ from agent_bot.config import RuntimeConfig
 from agent_bot.media.contracts import MediaReadiness
 from agent_bot.models import ChatMessage
 from agent_bot.settings import SECRET_SETTING_NAMES
+from agent_bot.static_config import DYNAMIC_SETTING_NAMES
 
 
 class ApiModel(BaseModel):
@@ -37,7 +38,8 @@ class PatchBase(ApiModel):
 RuntimeConfigPatch = create_model(
     "RuntimeConfigPatch",
     __base__=PatchBase,
-    **{name: (field.annotation | None, None) for name, field in RuntimeConfig.model_fields.items()},
+    **{name: (field.annotation | None, None) for name, field in RuntimeConfig.model_fields.items()
+       if name in DYNAMIC_SETTING_NAMES},
 )
 
 
@@ -58,6 +60,8 @@ class SettingField(ApiModel):
     nullable: bool = False
     secret_is_set: bool = False
     restart_required: bool = False
+    read_only: bool = False
+    scope: Literal["static", "runtime"] = "runtime"
 
 
 class SettingsSnapshot(ApiModel):

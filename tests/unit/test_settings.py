@@ -390,7 +390,7 @@ def test_message_trigger_snapshot_accepts_unused_sub_minute_interval(
                 "```json\n{\"enabled\": true}\n```"
             ),
         ),
-        ("chat_local_workflow_directory", "C:\\dispatch\\workflows"),
+        ("chat_tts_reference_audio_path", "C:\\dispatch\\workflows"),
     ],
 )
 def test_load_accepts_raw_text_for_string_setting(
@@ -484,7 +484,7 @@ def test_uninitialized_store_rejects_load_and_save(
     fake_mysql: FakeMySQL,
     runtime_config: RuntimeConfig,
 ) -> None:
-    store = _make_store(database_params)
+    store = SettingsStore(database_params, static_config=runtime_config)
 
     with pytest.raises(SettingsNotInitializedError):
         store.load()
@@ -662,7 +662,7 @@ def test_public_store_operations_wrap_database_errors_consistently(
     exc: Exception,
     operation: str,
 ) -> None:
-    store = _make_store(database_params)
+    store = SettingsStore(database_params, static_config=runtime_config)
     store._open = Mock(side_effect=exc)  # type: ignore[method-assign]
 
     with pytest.raises(SettingsError) as exc_info:

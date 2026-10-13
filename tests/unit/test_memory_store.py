@@ -12,6 +12,7 @@ from pymysql.err import OperationalError
 
 from agent_bot.memory_store import (
     ChatMemorySchema,
+    ChatMemorySchemaError,
     ConversationMemoryPolicy,
     GroupContextPolicy,
     MySqlConversationMemoryStore,
@@ -44,8 +45,7 @@ _EXPECTED_SCHEMA = {
             "assistant_content",
             "create_time",
         },
-        "indexes": {"PRIMARY", "idx_chat_memory_turn_session_id",
-                    "uk_chat_memory_turn_request"},
+        "indexes": {"PRIMARY", "idx_chat_memory_turn_session_id", "uk_chat_memory_turn_request"},
     },
     "chat_memory_receipt": {
         "columns": {"session_id", "request_id", "expires_at"},
@@ -71,8 +71,10 @@ class _SchemaCursor:
         self.upgrades: list[str] = []
         self.generation_nullable = False
         self.legacy_sessions: list[dict[str, object]] = []
-        self.schema = {name: {key: set(values) for key, values in definition.items()}
-                       for name, definition in _EXPECTED_SCHEMA.items()}
+        self.schema = {
+            name: {key: set(values) for key, values in definition.items()}
+            for name, definition in _EXPECTED_SCHEMA.items()
+        }
         self.foreign_keys = {
             (
                 "chat_memory_turn",
@@ -89,6 +91,7 @@ class _SchemaCursor:
         return None
 
     def execute(self, sql: str, parameters: tuple[object, ...] = ()) -> int:
+        """模拟记忆结构升级，索引改名只改变元数据并记录操作次数。"""
         normalized = " ".join(sql.split())
         if normalized.startswith("CREATE TABLE IF NOT EXISTS"):
             table_name = normalized.split("`")[1]
@@ -118,9 +121,7 @@ class _SchemaCursor:
             self.schema["chat_memory_turn"]["columns"].add("request_id")
         elif normalized.startswith("ALTER TABLE") and "ADD UNIQUE KEY" in normalized:
             self.upgrades.append(normalized)
-            self.schema["chat_memory_turn"]["indexes"].add(
-                "uk_chat_memory_turn_request"
-            )
+            self.schema["chat_memory_turn"]["indexes"].add("uk_chat_memory_turn_request")
         elif normalized.startswith("ALTER TABLE") and "ADD COLUMN `generation_id`" in normalized:
             self.upgrades.append(normalized)
             self.schema["chat_memory_session"]["columns"].add("generation_id")
@@ -136,16 +137,18 @@ class _SchemaCursor:
         elif "INFORMATION_SCHEMA.COLUMNS" in normalized:
             table_name = str(parameters[1])
             self._rows = [
-                {"COLUMN_NAME": name,
-                 "IS_NULLABLE": "YES" if name == "generation_id" and self.generation_nullable
-                 else "NO"}
+                {
+                    "COLUMN_NAME": name,
+                    "IS_NULLABLE": "YES"
+                    if name == "generation_id" and self.generation_nullable
+                    else "NO",
+                }
                 for name in sorted(self.schema[table_name]["columns"])
             ]
         elif "INFORMATION_SCHEMA.STATISTICS" in normalized:
             table_name = str(parameters[1])
             self._rows = [
-                {"INDEX_NAME": name}
-                for name in sorted(self.schema[table_name]["indexes"])
+                {"INDEX_NAME": name} for name in sorted(self.schema[table_name]["indexes"])
             ]
         else:
             raise AssertionError(f"unexpected schema SQL: {normalized}")
@@ -343,8 +346,7 @@ def test_memory_schema_renames_legacy_indexes_without_duplicating_constraints() 
     cursor = connection.cursor_instance
     for definition in cursor.schema.values():
         definition["indexes"] = {
-            name.replace("idx_chat_", "idx_dispatch_chat_")
-                .replace("uk_chat_", "uk_dispatch_chat_")
+            name.replace("idx_chat_", "idx_dispatch_chat_").replace("uk_chat_", "uk_dispatch_chat_")
             for name in definition["indexes"]
         }
     cursor.legacy_sessions = [{"session_id": "keep", "memory_summary": "保留历史"}]
@@ -373,15 +375,21 @@ def test_existing_current_index_does_not_conflict_with_legacy_duplicate() -> Non
     assert connection.cursor_instance.upgrades == []
 
 
-@pytest.mark.parametrize("kind,name", [
-    ("columns", "memory_summary"), ("indexes", "idx_chat_memory_session_expires"),
-])
+@pytest.mark.parametrize(
+    "kind,name",
+    [
+        ("columns", "memory_summary"),
+        ("indexes", "idx_chat_memory_session_expires"),
+    ],
+)
 def test_schema_error_identifies_missing_structure(kind: str, name: str) -> None:
     """无法迁移的结构问题只公开表、字段和索引名，便于定位启动失败。"""
     connection = _SchemaConnection()
     connection.cursor_instance.schema["chat_memory_session"][kind].remove(name)
     schema = ChatMemorySchema(
-        DatabaseParams(host="localhost", port=3306, user="test", password="hidden-db-key", database="test"),
+        DatabaseParams(
+            host="localhost", port=3306, user="test", password="hidden-db-key", database="test"
+        ),
         connect=lambda **kwargs: connection,
     )
     with pytest.raises(ChatMemorySchemaError) as caught:
@@ -396,9 +404,7 @@ def test_memory_schema_upgrades_old_turns_with_nullable_request_id() -> None:
     connection = _SchemaConnection()
     cursor = connection.cursor_instance
     cursor.schema["chat_memory_turn"]["columns"].remove("request_id")
-    cursor.schema["chat_memory_turn"]["indexes"].remove(
-        "uk_chat_memory_turn_request"
-    )
+    cursor.schema["chat_memory_turn"]["indexes"].remove("uk_chat_memory_turn_request")
     schema = ChatMemorySchema(
         DatabaseParams(host="localhost", port=3306, user="test", password="test", database="test"),
         connect=lambda **kwargs: connection,
@@ -566,7 +572,8 @@ def test_stale_compression_cannot_overwrite_newer_summary(memory_database) -> No
 
 @pytest.mark.parametrize("recreate", ["clear", "expire", "cleanup"])
 def test_old_compression_cannot_overwrite_recreated_database_session(
-    memory_database, recreate: str,
+    memory_database,
+    recreate: str,
 ) -> None:
     """旧会话摘要即使版本号与重建会话相同，也不能跨代际写回。"""
     now = [datetime(2026, 9, 15, tzinfo=UTC)]
@@ -596,7 +603,10 @@ def test_old_compression_cannot_overwrite_recreated_in_memory_session(recreate: 
     """重置、过期或 LRU 淘汰都开启新会话代际，拒绝旧压缩结果。"""
     now = [0.0]
     store = ConversationStore(
-        history_turns=1, max_sessions=1, ttl_seconds=60, memory_enabled=True,
+        history_turns=1,
+        max_sessions=1,
+        ttl_seconds=60,
+        memory_enabled=True,
         clock=lambda: now[0],
     )
     store.commit_exchange("s", "old-1", "a1")
@@ -767,9 +777,7 @@ def test_group_context_survives_reconstruction_and_hides_scope_ids(
     )
     second = _group_store(memory_database)
 
-    assert second.context(bot_id="90001", group_id="20001") == (
-        "小明(QQ 10001)：第一条"
-    )
+    assert second.context(bot_id="90001", group_id="20001") == ("小明(QQ 10001)：第一条")
 
     connection = memory_database()
     try:

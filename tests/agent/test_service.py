@@ -16,7 +16,7 @@ def service_for(db, params, *, tools=None, records=None):
     return AgentService(
         AgentCatalog(params, connect=db.connect),
         records or AgentRunStore(params, connect=db.connect),
-        CredentialResolver(environ={}),
+        CredentialResolver(),
         {"openai-chat": Provider()},
         tools or Tools(),
     )
@@ -96,9 +96,11 @@ async def test_busy_ninth_call_rejected(agent_database, agent_params, seeded_mod
     assert service.active == 0
 
 
-async def test_admin_legacy_preset_is_rejected_before_execution(
-    agent_database, agent_params, seeded_model
+@pytest.mark.parametrize("entry", ["admin", "qq"])
+async def test_unsupported_preset_is_rejected_before_execution(
+    agent_database, agent_params, seeded_model, entry
 ):
+    """两个入口均拒绝未实现的预设工具，避免过滤后静默调用模型。"""
     from agent_bot.agent.contracts import AgentCreate
 
     service = service_for(agent_database, agent_params)
@@ -114,6 +116,6 @@ async def test_admin_legacy_preset_is_rejected_before_execution(
     with pytest.raises(AgentError, match="AGENT_CAPABILITY_NOT_MIGRATED"):
         await service.complete(
             AgentRequest(agent_code="legacy", prompt="hello", session_id="s", request_id="r"),
-            ExecutionAuthority(entry="admin"),
+            ExecutionAuthority(entry=entry),
         )
     assert service.providers["openai-chat"].calls == []

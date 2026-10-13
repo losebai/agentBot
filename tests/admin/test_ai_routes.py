@@ -19,6 +19,93 @@ TOKEN = "offline-admin-token-longer-than-thirty-two-characters"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 
+async def test_provider_database_secret_is_write_only(python_api):
+    """创建、编辑及列表响应不能回显供应商密钥。"""
+    api, _, _ = python_api
+    created = await api.post(
+        "/api/v1/ai/providers",
+        headers=HEADERS,
+        json={
+            "name": "second",
+            "protocol": "openai-chat",
+            "base_url": "https://second.invalid/v1",
+            "credential": "independent-database-key",
+            "enabled": True,
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["credential_set"] is True
+    assert "credential" not in created.json()
+    assert "independent-database-key" not in created.text
+    listed = await api.get("/api/v1/ai/providers", headers=HEADERS)
+    assert "independent-database-key" not in listed.text
+
+
+async def test_upstream_models_use_provider_url_key_and_auth(python_api):
+    """模型发现通过各供应商自己的地址鉴权，不允许匿名管理调用。"""
+    api, _, runtime = python_api
+    transport = runtime.ai_service.providers["ollama"].transport
+    await transport.http.aclose()
+    seen = []
+
+    def handle(request):
+        """只模拟列表 GET，不产生模型调用。"""
+        seen.append((str(request.url), request.headers.get("Authorization")))
+        return httpx.Response(
+            200, json={"models": [{"name": "exact/model"}, {"name": "exact/model"}]}
+        )
+
+    transport.http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    saved = await api.patch(
+        "/api/v1/ai/providers/1",
+        headers=HEADERS,
+        json={
+            "expected_revision": 1,
+            "credential": "provider-one-key",
+        },
+    )
+    assert saved.status_code == 200
+    path = "/api/v1/ai/providers/1/upstream-models?expected_revision=2"
+    assert (await api.get(path)).status_code == 401
+    response = await api.get(path, headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json()["models"] == ["exact/model"]
+    assert seen == [("https://offline.invalid/api/tags", "Bearer provider-one-key")]
+    assert (await api.get(path.replace("=2", "=1"), headers=HEADERS)).status_code == 409
+
+
+async def test_model_import_conflict_is_atomic_and_duplicates_are_skipped(python_api):
+    """同名上游可跨供应商登记，别名冲突使整批回滚。"""
+    api, _, _ = python_api
+    response = await api.post(
+        "/api/v1/ai/providers/1/models/import",
+        headers=HEADERS,
+        json={
+            "expected_revision": 1,
+            "models": [
+                {"alias": "new-one", "upstream_model": "one"},
+                {"alias": "local", "upstream_model": "two"},
+            ],
+        },
+    )
+    assert response.status_code == 409
+    assert len((await api.get("/api/v1/ai/models", headers=HEADERS)).json()["items"]) == 1
+    response = await api.post(
+        "/api/v1/ai/providers/1/models/import",
+        headers=HEADERS,
+        json={
+            "expected_revision": 1,
+            "models": [
+                {"alias": "already", "upstream_model": "exact/model"},
+                {"alias": "new-one", "upstream_model": "one"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["skipped"] == ["exact/model"]
+    assert response.json()["imported"][0]["enabled"] is False
+
+
 @pytest.fixture
 async def python_api(admin_store, admin_runtime):
     database = FakeDatabase()
@@ -37,7 +124,7 @@ async def python_api(admin_store, admin_runtime):
     service = AiService(
         catalog,
         AiSessionStore(params, connect=database.connect),
-        CredentialResolver(environ={}),
+        CredentialResolver(),
         {
             "ollama": OllamaProvider(
                 ProviderTransport(
@@ -56,9 +143,7 @@ async def python_api(admin_store, admin_runtime):
         },
     )
     admin_runtime.ai_service = service
-    admin_runtime.config = admin_runtime.config.model_copy(
-        update={"dispatch_chat_plain_ai_backend": "python", "dispatch_chat_model": "local"}
-    )
+    admin_runtime.config = admin_runtime.config.model_copy(update={"chat_model": "local"})
     app = FastAPI()
     install_admin(app, admin_store, admin_runtime, AdminConfig(token=TOKEN))
     async with httpx.AsyncClient(
@@ -83,7 +168,7 @@ async def test_ai_crud_auth_cas_and_safe_errors(python_api):
 
 
 async def test_sync_stream_and_record_queries(python_api):
-    api, _, runtime = python_api
+    api, _, _runtime = python_api
     body = {"prompt": "hello", "session_id": "test", "messages": [], "model": "local"}
     response = await api.post("/api/v1/chat", headers=HEADERS, json=body)
     assert response.status_code == 200
@@ -94,5 +179,3 @@ async def test_sync_stream_and_record_queries(python_api):
     assert "event: error" not in response.text
     records = await api.get("/api/v1/ai/sessions", headers=HEADERS)
     assert len(records.json()["items"]) == 2 and "prompt" not in records.json()["items"][0]
-    runtime.config = runtime.config.model_copy(update={"dispatch_chat_plain_ai_backend": "java"})
-    assert (await api.post("/api/v1/chat/stream", headers=HEADERS, json=body)).status_code == 409

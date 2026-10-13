@@ -31,7 +31,7 @@ def server(url, transport="streamable", **patch):
 @pytest.mark.parametrize("transport", ["streamable", "sse"])
 async def test_real_local_initialize_list_and_call(transport):
     async with peer() as (url, state):
-        connector = McpConnector(McpCredentials(environ={}))
+        connector = McpConnector(McpCredentials())
         deadline = time.monotonic() + 5
         async with connector.open(
             (server(url, transport),), remaining=lambda: deadline - time.monotonic()
@@ -44,10 +44,10 @@ async def test_real_local_initialize_list_and_call(transport):
 
 async def test_sse_foreign_endpoint_never_receives_token():
     async with peer(foreign=True) as (url, state):
-        connector = McpConnector(McpCredentials(environ={"AGENT_BOT_MCP_TEST": "fake-secret"}))
+        connector = McpConnector(McpCredentials())
         with pytest.raises(AgentError):
             async with connector.open(
-                (server(url, "sse", credential_ref="AGENT_BOT_MCP_TEST"),), remaining=lambda: 3
+                (server(url, "sse", credential="fake-secret"),), remaining=lambda: 3
             ):
                 pass
         assert state["calls"] == []
@@ -56,7 +56,7 @@ async def test_sse_foreign_endpoint_never_receives_token():
 async def test_discovery_repeated_cursor_stops():
     async with peer(repeating=True) as (url, state):
         with pytest.raises(AgentError):
-            async with McpConnector(McpCredentials(environ={})).open(
+            async with McpConnector(McpCredentials()).open(
                 (server(url),), remaining=lambda: 5
             ):
                 pass
@@ -66,7 +66,7 @@ async def test_discovery_repeated_cursor_stops():
 async def test_authentication_failure_is_not_optional():
     async with peer(status=401) as (url, _state):
         with pytest.raises(AgentError) as failure:
-            async with McpConnector(McpCredentials(environ={})).open(
+            async with McpConnector(McpCredentials()).open(
                 (server(url),), remaining=lambda: 5
             ):
                 pass
@@ -74,7 +74,7 @@ async def test_authentication_failure_is_not_optional():
 
 
 async def test_optional_offline_warns_but_required_fails(unused_tcp_port):
-    connector = McpConnector(McpCredentials(environ={}))
+    connector = McpConnector(McpCredentials())
     url = f"http://127.0.0.1:{unused_tcp_port}"
     async with connector.open((server(url),), remaining=lambda: 3) as connection:
         assert connection.tools == () and len(connection.warnings) == 1
@@ -91,7 +91,7 @@ async def test_cancelled_remote_call_joins_worker(transport):
 
         async def execute():
             nonlocal worker
-            async with McpConnector(McpCredentials(environ={})).open(
+            async with McpConnector(McpCredentials()).open(
                 (server(url, transport),), remaining=lambda: 5
             ) as connection:
                 worker = connection.workers[0]

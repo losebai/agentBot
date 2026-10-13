@@ -19,9 +19,8 @@ async def test_runtime_owns_clients_but_shares_media_resources(
     )
     config = RuntimeConfig(
         onebot_v11_access_token="x" * 40,
-        dispatch_chat_session_secret="y" * 40,
-        dispatch_chat_media_backend="python",
-        dispatch_chat_auto_speak_enabled=False,
+        chat_session_secret="y" * 40,
+        chat_auto_speak_enabled=False,
     )
     kwargs = dict(
         database=agent_params,

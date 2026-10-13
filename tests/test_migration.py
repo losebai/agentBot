@@ -28,13 +28,13 @@ class MigrationTests(unittest.TestCase):
             root = Path(temporary)
             source, destination = root / "old", root / "new"
             for name in (
-                "src/dispatch_chat/example.py",
-                "src/dispatch_chat/resources/workflow.json",
+                "src/chat/example.py",
+                "src/chat/resources/workflow.json",
                 "tests/unit/test_example.py",
                 "tests/fixtures/example.json",
                 "sql/schema.sql",
                 ".env",
-                "src/dispatch_chat/__pycache__/cached.py",
+                "src/chat/__pycache__/cached.py",
                 "tests/unit/test_gitlab_ci.py",
                 "tests/unit/test_deployment_config.py",
             ):
@@ -43,10 +43,10 @@ class MigrationTests(unittest.TestCase):
                 path.write_text("example", encoding="utf-8")
             result = self.run_migration(source, destination)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertTrue((destination / "src/dispatch_chat/example.py").is_file())
+            self.assertTrue((destination / "src/chat/example.py").is_file())
             self.assertTrue((destination / "tests/fixtures/example.json").is_file())
             self.assertFalse((destination / ".env").exists())
-            self.assertFalse((destination / "src/dispatch_chat/__pycache__").exists())
+            self.assertFalse((destination / "src/chat/__pycache__").exists())
             manifest = json.loads(
                 (destination / "docs/migration/source-manifest.json").read_text(encoding="utf-8")
             )
@@ -59,13 +59,13 @@ class MigrationTests(unittest.TestCase):
             root = Path(temporary)
             source, destination = root / "old", root / "new"
             for directory, content in ((source, "original"), (destination, "local edit")):
-                path = directory / "src/dispatch_chat/example.py"
+                path = directory / "src/chat/example.py"
                 path.parent.mkdir(parents=True)
                 path.write_text(content, encoding="utf-8")
             result = self.run_migration(source, destination)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(
-                (destination / "src/dispatch_chat/example.py").read_text(), "local edit"
+                (destination / "src/chat/example.py").read_text(), "local edit"
             )
 
 

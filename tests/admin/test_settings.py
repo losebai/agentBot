@@ -21,36 +21,37 @@ def update(revision, **values):
 def test_read_never_discloses_secrets(admin_store, admin_runtime):
     snapshot = service(admin_store, admin_runtime).read()
     body = snapshot.model_dump_json()
-    assert "offline-ai-secret" not in body
+    assert "offline-role-secret" not in body
     assert "offline-onebot-token" not in body
-    field = next(item for item in snapshot.fields if item.name == "dispatch_chat_ai_token")
+    field = next(item for item in snapshot.fields if item.name == "chat_naraka_default_role_id")
     assert field.value is None and field.secret_is_set
     assert snapshot.database_revision == snapshot.applied_revision == 1
 
 
 def test_partial_update_preserves_omitted_secret(admin_store, admin_runtime):
     result = service(admin_store, admin_runtime).update(
-        update(1, dispatch_chat_llm_temperature=0.4)
+        update(1, chat_llm_temperature=0.4)
     )
     saved = admin_store.load()
-    assert saved.config.dispatch_chat_ai_token == admin_runtime.config.dispatch_chat_ai_token
-    assert saved.config.dispatch_chat_llm_temperature == 0.4
+    assert (saved.config.chat_naraka_default_role_id
+            == admin_runtime.config.chat_naraka_default_role_id)
+    assert saved.config.chat_llm_temperature == 0.4
     assert result.database_revision == 2 and result.applied_revision == 1
 
 
 def test_optional_secret_can_be_explicitly_cleared(admin_store, admin_runtime):
-    service(admin_store, admin_runtime).update(update(1, dispatch_chat_ai_token=None))
-    assert admin_store.load().config.dispatch_chat_ai_token is None
+    service(admin_store, admin_runtime).update(update(1, chat_naraka_default_role_id=None))
+    assert admin_store.load().config.chat_naraka_default_role_id is None
 
 
 def test_conflicting_revision_preserves_saved_configuration(admin_store, admin_runtime):
     from agent_bot.settings import SettingsRevisionConflictError
 
     manager = service(admin_store, admin_runtime)
-    manager.update(update(1, dispatch_chat_llm_temperature=0.4))
+    manager.update(update(1, chat_llm_temperature=0.4))
     with pytest.raises(SettingsRevisionConflictError):
-        manager.update(update(1, dispatch_chat_llm_temperature=0.7))
-    assert admin_store.load().config.dispatch_chat_llm_temperature == 0.4
+        manager.update(update(1, chat_llm_temperature=0.7))
+    assert admin_store.load().config.chat_llm_temperature == 0.4
 
 
 def test_restart_fields_compare_saved_and_running_configuration(admin_store, admin_runtime):
@@ -64,8 +65,13 @@ def test_restart_fields_compare_saved_and_running_configuration(admin_store, adm
     [
         {},
         {"made_up_setting": "secret-input"},
-        {"dispatch_chat_ai_token": "**********"},
-        {"dispatch_chat_llm_temperature": -1},
+        {"chat_ai_base_url": "https://removed.invalid"},
+        {"chat_ai_token": "removed-private-token"},
+        {"chat_plain_ai_backend": "java"},
+        {"chat_agent_backend": "java"},
+        {"chat_media_backend": "java"},
+        {"chat_naraka_default_role_id": "**********"},
+        {"chat_llm_temperature": -1},
         {"onebot_v11_access_token": None},
     ],
 )

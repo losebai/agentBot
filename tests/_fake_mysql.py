@@ -11,7 +11,7 @@ from typing import Any
 from pymysql.err import DatabaseError, InterfaceError
 
 _DEFAULT_TABLE_COLUMNS: dict[str, list[str]] = {
-    "dispatch_chat_setting": [
+    "chat_setting": [
         "id",
         "config_key",
         "config_value",
@@ -19,7 +19,7 @@ _DEFAULT_TABLE_COLUMNS: dict[str, list[str]] = {
         "create_time",
         "update_time",
     ],
-    "dispatch_chat_setting_revision": ["id", "revision", "update_time"],
+    "chat_setting_revision": ["id", "revision", "update_time"],
 }
 
 

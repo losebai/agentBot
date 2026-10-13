@@ -15,7 +15,7 @@ from pymysql.err import DatabaseError, InterfaceError, OperationalError
 
 from agent_bot.settings import DatabaseParams
 
-_TABLE = "dispatch_chat_group_member"
+_TABLE = "chat_group_member"
 _QQ_ID_PATTERN = re.compile(r"^[1-9][0-9]{4,19}$")
 _MAX_GROUP_MEMBERS = 2000
 _MAX_NAME_UTF16_UNITS = 128

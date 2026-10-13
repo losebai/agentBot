@@ -13,6 +13,7 @@ from agent_bot.bootstrap import (
     load_bootstrap_config,
     load_legacy_runtime_config,
 )
+from agent_bot.cli_errors import describe_config_error
 from agent_bot.config import CONFIG_DESCRIPTIONS, RuntimeConfig
 from agent_bot.settings import (
     SENSITIVE_COLLECTION_SETTING_NAMES,
@@ -57,13 +58,13 @@ def run(
     except (Exception, SystemExit) as exc:
         if isinstance(exc, SystemExit) and exc.code == 0:
             return 0
-        print(f"设置命令失败：{type(exc).__name__}")
+        print(f"设置命令失败：{describe_config_error(exc)}")
         return 1
     return 1
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dispatch-chat settings")
+    parser = argparse.ArgumentParser(prog="chat settings")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("import-env")
     commands.add_parser("list")
@@ -112,13 +113,13 @@ def _set_setting(
     env_name: str,
     raw_value: str,
 ) -> int:
+    """允许显式修复无效旧快照，但写回前仍验证完整配置。"""
     field_name = _field_name(env_name)
     if field_name in SENSITIVE_SETTING_NAMES:
         raise ValueError("sensitive settings require a protected command")
-    stored, store = _load_store(env_file)
-    values = runtime_config_to_plain_values(stored.config)
+    values, revision, store = _load_values_store(env_file)
     values[field_name] = _parse_value(raw_value)
-    saved = store.save(values, expected_revision=stored.revision)
+    saved = store.save(values, expected_revision=revision)
     _print_saved(saved.revision)
     return 0
 
@@ -127,11 +128,11 @@ def _set_secrets(
     env_file: str | tuple[str, ...] | None,
     env_names: Sequence[str],
 ) -> int:
+    """秘密仅经隐藏输入读取，修复旧快照时保留整体验证和版本冲突检查。"""
     field_names = [_field_name(name) for name in env_names]
     if any(name not in SENSITIVE_SETTING_NAMES for name in field_names):
         raise ValueError("setting is not sensitive")
-    stored, store = _load_store(env_file)
-    values = runtime_config_to_plain_values(stored.config)
+    values, revision, store = _load_values_store(env_file)
     for env_name, field_name in zip(env_names, field_names, strict=True):
         raw_value = getpass(f"请输入 {env_name} (不会回显)：")
         values[field_name] = (
@@ -139,7 +140,7 @@ def _set_secrets(
             if field_name in SENSITIVE_COLLECTION_SETTING_NAMES
             else raw_value
         )
-    saved = store.save(values, expected_revision=stored.revision)
+    saved = store.save(values, expected_revision=revision)
     _print_saved(saved.revision)
     return 0
 
@@ -148,14 +149,14 @@ def _clear_settings(
     env_file: str | tuple[str, ...] | None,
     env_names: Sequence[str],
 ) -> int:
+    """只清空可选字段，候选快照不满足跨字段约束时拒绝写入。"""
     field_names = [_field_name(name) for name in env_names]
     if any(name not in _OPTIONAL_SETTING_NAMES for name in field_names):
         raise ValueError("only optional settings can be cleared")
-    stored, store = _load_store(env_file)
-    values = runtime_config_to_plain_values(stored.config)
+    values, revision, store = _load_values_store(env_file)
     for field_name in field_names:
         values[field_name] = None
-    saved = store.save(values, expected_revision=stored.revision)
+    saved = store.save(values, expected_revision=revision)
     _print_saved(saved.revision)
     return 0
 
@@ -163,9 +164,20 @@ def _clear_settings(
 def _load_store(
     env_file: str | tuple[str, ...] | None,
 ) -> tuple[Any, SettingsStore]:
+    """查看配置时使用已验证快照，避免将无效配置展示为可运行状态。"""
     bootstrap = load_bootstrap_config(env_file=env_file)
     store = SettingsStore(database_params(bootstrap))
     return store.load(), store
+
+
+def _load_values_store(
+    env_file: str | tuple[str, ...] | None,
+) -> tuple[dict[str, Any], int, SettingsStore]:
+    """修改命令读取原始值用于修复，不绕过保存时的权限、校验或版本锁。"""
+    bootstrap = load_bootstrap_config(env_file=env_file)
+    store = SettingsStore(database_params(bootstrap))
+    values, revision = store.load_values()
+    return values, revision, store
 
 
 def _field_name(env_name: str) -> str:
@@ -200,5 +212,5 @@ def _print_saved(revision: int, *, imported: bool = False) -> None:
     action = "导入" if imported else "保存"
     print(
         f"配置已{action}，revision={revision}。运行中服务会自动刷新；"
-        "启动期字段需重启 dispatch-chat。"
+        "启动期字段需重启 chat。"
     )

@@ -42,8 +42,8 @@ async def test_tool_request_context_is_available_only_during_the_ai_call(
     monkeypatch.setattr(chat_plugin, "_tool_registry", build_chat_tool_registry())
     monkeypatch.setattr(chat_plugin, "naraka_service", AsyncMock())
     config_values = chat_plugin.plugin_config.model_dump()
-    config_values["dispatch_chat_mcp_enabled"] = True
-    config_values["dispatch_chat_mention_tool_enabled"] = True
+    config_values["chat_mcp_enabled"] = True
+    config_values["chat_mention_tool_enabled"] = True
     monkeypatch.setattr(chat_plugin, "plugin_config", RuntimeConfig.model_validate(config_values))
     bot = AsyncMock(spec=Bot)
     bot.self_id = "90001"

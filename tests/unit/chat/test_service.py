@@ -1,12 +1,10 @@
 import asyncio
-import json
 import threading
 from collections.abc import Sequence
 
-import httpx
 import pytest
 
-from agent_bot.integrations.dispatch_ai import DispatchAiClient, DispatchAiUnavailableError
+from agent_bot.ai.chat_errors import ChatAiUnavailableError
 from agent_bot.model_router import ContentModelRouter
 from agent_bot.models import (
     ChatContext,
@@ -252,7 +250,7 @@ async def test_service_generates_image_without_chat_messages_and_commits_placeho
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        async def ensure_enabled(self, model_id: str, *, capability: str = "java") -> None:
+        async def ensure_enabled(self, model_id: str, *, capability: str = "ordinary-text") -> None:
             self.calls.append(model_id)
 
     response = ChatMediaResponse(
@@ -400,7 +398,7 @@ async def test_service_does_not_commit_media_when_delivery_fails() -> None:
 async def test_service_does_not_commit_media_when_client_fails() -> None:
     class FailingMediaClient(FakeClient):
         async def generate_media(self, **kwargs: object) -> ChatMediaResponse:
-            raise DispatchAiUnavailableError("offline")
+            raise ChatAiUnavailableError("offline")
 
     client = FailingMediaClient([])
     store = ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60)
@@ -417,7 +415,7 @@ async def test_service_does_not_commit_media_when_client_fails() -> None:
     async def deliver(_response: ChatMediaResponse) -> str:
         return "[已生成图片]"
 
-    with pytest.raises(DispatchAiUnavailableError):
+    with pytest.raises(ChatAiUnavailableError):
         await service.respond_media(
             "group:1",
             "画一只猫",
@@ -714,7 +712,7 @@ async def test_service_selects_model_guard_by_current_message_materials() -> Non
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        async def ensure_enabled(self, model_id: str, *, capability: str = "java") -> None:
+        async def ensure_enabled(self, model_id: str, *, capability: str = "ordinary-text") -> None:
             self.calls.append(model_id)
 
     guard = FakeModelGuard()
@@ -728,6 +726,8 @@ async def test_service_selects_model_guard_by_current_message_materials() -> Non
         max_concurrent_requests=2,
         model_router=model_router(),
         model_guard=guard,  # type: ignore[arg-type]
+        agent_enabled=False,
+        web_search_enabled=False,
     )
 
     await service.ask("text-session", "文本问题")
@@ -737,7 +737,8 @@ async def test_service_selects_model_guard_by_current_message_materials() -> Non
         image_urls=("https://gchat.qpic.cn/image.jpg",),
     )
 
-    assert guard.calls == ["chat-model", "vision-model"]
+    assert guard.calls == ["chat-model"]
+    assert [call["model"] for call in client.calls] == ["chat-model", "vision-model"]
 
 
 @pytest.mark.asyncio
@@ -929,7 +930,7 @@ async def test_service_keeps_bounded_fallback_memory_when_compression_fails() ->
     class CompressionFailClient(FakeClient):
         async def complete(self, **kwargs: object) -> str:
             if str(kwargs["session_id"]).endswith(":memory"):
-                raise DispatchAiUnavailableError("offline")
+                raise ChatAiUnavailableError("offline")
             return await super().complete(**kwargs)
 
     client = CompressionFailClient(["a1", "a2", "a3", "a4"])
@@ -994,77 +995,6 @@ async def test_service_uses_chat_one_when_agent_is_disabled() -> None:
     assert client.calls[0]["use_web_search"] is False
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("prompt", "expected_tools"),
-    [
-        ("你好", ["web_search"]),
-        ("查询战绩", ["web_search"]),
-        ("搜索今天新闻", ["web_search"]),
-        ("看看 https://example.com/page", ["web_search", "read_url"]),
-    ],
-)
-async def test_search_agent_flow_parses_sse_delivers_and_commits_history(
-    prompt: str, expected_tools: list[str],
-) -> None:
-    """普通对话始终提供联网工具，模型不调用工具也能直接回复并保存历史。"""
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        """验证工具声明并模拟模型直接生成最终回复。"""
-
-        payload = json.loads(request.content)
-        assert request.url.path.endswith("/chat/agentChat")
-        assert payload["messages"] == [
-            {"role": "system", "content": "系统提示"},
-            {"role": "user", "content": prompt},
-        ]
-        assert payload["tools"] == expected_tools
-        assert not payload.get("toolChoice")
-        assert payload["maxSteps"] == 3
-        chunks = [
-            _agent_sse_chunk("result", "Agent 正常回复"),
-            _agent_sse_chunk("done", None),
-        ]
-        body = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
-        return httpx.Response(
-            200,
-            headers={"Content-Type": "text/event-stream"},
-            text=body,
-        )
-
-    client = DispatchAiClient(
-        base_url="http://ai.test/dispatch-ai",
-        timeout_seconds=3,
-        transport=httpx.MockTransport(handler),
-    )
-    store = ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60)
-    service = ChatService(
-        client=client,
-        store=store,
-        system_prompt="系统提示",
-        max_input_chars=100,
-        cooldown_seconds=0,
-        max_concurrent_requests=2,
-        model_router=model_router(),
-        web_search_enabled=True,
-    )
-
-    async def deliver(answer: str) -> str:
-        """交付模型正文。"""
-
-        assert answer == "Agent 正常回复"
-        return answer
-
-    try:
-        answer = await service.respond("qq-session", prompt, deliver)
-    finally:
-        await client.aclose()
-
-    assert answer == "Agent 正常回复"
-    assert without_execution_refs(store.messages("qq-session")) == [
-        ChatMessage(role="user", content=prompt),
-        ChatMessage(role="assistant", content="Agent 正常回复"),
-    ]
 
 
 def _agent_sse_chunk(event_type: str, content: str | None) -> dict[str, object]:
@@ -1100,7 +1030,7 @@ def _agent_sse_chunk(event_type: str, content: str | None) -> dict[str, object]:
 async def test_service_does_not_commit_failed_exchange() -> None:
     class FailingClient(FakeClient):
         async def complete(self, **kwargs: object) -> str:
-            raise DispatchAiUnavailableError("offline")
+            raise ChatAiUnavailableError("offline")
 
     client = FailingClient([])
     store = ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60)
@@ -1114,7 +1044,7 @@ async def test_service_does_not_commit_failed_exchange() -> None:
         model_router=model_router(),
     )
 
-    with pytest.raises(DispatchAiUnavailableError):
+    with pytest.raises(ChatAiUnavailableError):
         await service.ask("s", "question")
 
     assert without_execution_refs(store.messages("s")) == []

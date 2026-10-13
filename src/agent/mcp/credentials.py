@@ -1,34 +1,17 @@
-"""Dedicated MCP environment references, never database-stored secrets."""
+"""MCP 仅使用数据库服务快照中的访问令牌。"""
 
-import os
-from pathlib import Path
-
-from dotenv import dotenv_values
-from pydantic import SecretStr
-
-from agent_bot.agent.contracts import MCP_REFERENCE
 from agent_bot.agent.errors import AgentError
 
 
 class McpCredentials:
-    def __init__(self, env_file=None, environ=None):
-        self.path = Path(env_file) if env_file is not None else Path(".env")
-        self.environ = os.environ if environ is None else environ
+    """每个 MCP 服务独立提供凭据，不读取环境变量或文件。"""
 
-    def resolve(self, reference):
-        if reference is None:
-            return None
-        if not MCP_REFERENCE.fullmatch(reference):
-            raise AgentError("AGENT_CREDENTIAL_REFERENCE_INVALID", status_code=422)
-        values = dotenv_values(self.path, interpolate=False) if self.path.is_file() else {}
-        value = self.environ.get(reference, values.get(reference))
-        if not value or not value.strip() or any(c in value for c in "\r\n\0"):
+    def resolve(self, server):
+        """要求鉴权但尚未录入时明确失败。"""
+        if not server.credential_available:
             raise AgentError("AGENT_CREDENTIAL_MISSING", status_code=503)
-        return SecretStr(value)
+        return server.credential
 
-    def is_available(self, reference):
-        try:
-            self.resolve(reference)
-            return True
-        except AgentError:
-            return False
+    def is_available(self, server):
+        """只暴露已配置状态，不访问远端。"""
+        return server.credential_available

@@ -1,0 +1,7 @@
+# 构建上下文只包含锁文件和已经验证的 wheel，凭据无法进入镜像层。
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!dist-ci/
+!dist-ci/*.whl

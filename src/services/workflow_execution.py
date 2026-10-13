@@ -264,7 +264,7 @@ class WorkflowExecutionService:
             if input_image is not None else
             await self._client.upload_input_image(urls[0], request_scope=request_scope)
         )
-        if uploaded.subfolder != f"dispatch-chat-i2i/{request_scope}":
+        if uploaded.subfolder != f"chat-i2i/{request_scope}":
             raise WorkflowExecutionError("INVALID_IMAGE", "原图不属于本次请求")
         return WorkflowImageRequest(
             workflow_key=workflow_key, positive_prompt=positive_prompt,

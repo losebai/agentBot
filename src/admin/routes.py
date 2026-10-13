@@ -31,8 +31,8 @@ from agent_bot.admin.models import (
 )
 from agent_bot.admin.settings import SettingsService
 from agent_bot.admin.streaming import ManagedStreamingResponse
+from agent_bot.ai.chat_errors import ChatAiError, ChatAiUnavailableError
 from agent_bot.ai.errors import AiError
-from agent_bot.integrations.dispatch_ai import DispatchAiError, DispatchAiUnavailableError
 from agent_bot.model_guard import ModelGuardUnavailableError, ModelNotAvailableError
 from agent_bot.settings import (
     SettingsError,
@@ -58,6 +58,18 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         """Liveness does not disclose settings or require a connected QQ account."""
         return {"status": "alive"}
 
+    @app.get("/health/ready")
+    async def ready() -> JSONResponse:
+        """容器就绪探针只暴露队列状态，不调用模型或返回配置与凭据。"""
+        try:
+            available = await asyncio.wait_for(runtime.is_ready(), timeout=2)
+        except Exception:
+            available = False
+        return JSONResponse(
+            {"status": "ready" if available else "unavailable"},
+            status_code=200 if available else 503,
+        )
+
     @router.get("/settings", response_model=SettingsSnapshot)
     async def settings() -> SettingsSnapshot:
         """Load and redact persistent configuration off the event loop."""
@@ -75,17 +87,17 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
 
     @router.get("/status", response_model=ServiceStatus)
     async def status() -> ServiceStatus:
-        """分别展示后端选择和已缓存的媒体就绪状态，不重复初始化资源。"""
+        """展示本地能力、后台开关和已缓存媒体状态，不重复初始化资源。"""
         snapshot = await asyncio.to_thread(manager.read)
         async with runtime.lease():
             config = runtime.config
             service = getattr(runtime, "ai_service", None)
             python_ai = (
-                await service.readiness(config.dispatch_chat_model) if service is not None else None
+                await service.readiness(config.chat_model) if service is not None else None
             )
             agent_service = getattr(runtime, "agent_service", None)
             python_agent = (
-                await agent_service.readiness(config.dispatch_chat_python_agent_code)
+                await agent_service.readiness(config.chat_python_agent_code)
                 if agent_service
                 else None
             )
@@ -97,16 +109,12 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
             database_revision=snapshot.database_revision,
             applied_revision=snapshot.applied_revision,
             restart_required_fields=snapshot.restart_required_fields,
-            plain_ai_backend=config.dispatch_chat_plain_ai_backend,
-            ai_backend="python-ordinary"
-            if config.dispatch_chat_plain_ai_backend == "python"
-            else "java-compatibility",
-            configured_model=config.dispatch_chat_model,
+            configured_model=config.chat_model,
             python_ai=python_ai,
-            agent_backend=config.dispatch_chat_agent_backend,
-            configured_agent=config.dispatch_chat_python_agent_code,
+            configured_agent=config.chat_python_agent_code,
             python_agent=python_agent,
-            media_backend=config.dispatch_chat_media_backend,
+            job_enabled=config.chat_job_enabled,
+            auto_speak_enabled=config.chat_auto_speak_enabled,
             python_media=python_media,
         )
 
@@ -117,8 +125,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
 
     @router.post("/chat/stream")
     async def stream(body: ChatRequest, request: Request):
-        if runtime.config.dispatch_chat_plain_ai_backend != "python":
-            raise AiError("AI_STREAM_REQUIRES_PYTHON", status_code=409)
+        """输出本地文本事件，连接取消交给统一的流式响应生命周期。"""
 
         async def content():
             async with aclosing(chat.stream(body, request.state.request_id)) as events:
@@ -161,11 +168,11 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
             status_code, code, message = 422, "INVALID_REQUEST", "配置或输入不符合要求"
         elif isinstance(error, SettingsError):
             status_code, code, message = 503, "SETTINGS_UNAVAILABLE", "配置数据库暂时不可用"
-        elif isinstance(error, (DispatchAiUnavailableError, ModelGuardUnavailableError)):
+        elif isinstance(error, (ChatAiUnavailableError, ModelGuardUnavailableError)):
             status_code, code, message = 503, "AI_UNAVAILABLE", "AI 或模型目录暂时不可用"
         elif isinstance(error, ModelNotAvailableError):
             status_code, code, message = 400, "MODEL_DISABLED", "所选模型未登记或已停用"
-        elif isinstance(error, DispatchAiError):
+        elif isinstance(error, ChatAiError):
             status_code, code, message = 502, "AI_REJECTED", "AI 服务未返回有效结果"
         request_id = getattr(request.state, "request_id", uuid.uuid4().hex)
         body = ApiError(code=code, message=message, request_id=request_id)
@@ -177,7 +184,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         RequestValidationError,
         ValidationError,
         SettingsError,
-        DispatchAiError,
+        ChatAiError,
         ModelNotAvailableError,
         AiError,
     ):

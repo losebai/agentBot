@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-bot"
-version = "0.4.0"
+version = "0.5.0"
 description = "Independent Agent bot service with browser administration"
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -28,7 +28,7 @@ dependencies = [
 
 [project.scripts]
 agent-bot = "agent_bot.__main__:main"
-dispatch-chat = "agent_bot.bot_cli:main"
+chat = "agent_bot.bot_cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -38,6 +38,7 @@ dev = [
   "pytest-asyncio>=0.24,<1.0",
   "pytest-cov>=6.0,<8.0",
   "pytest-socket>=0.7,<1.0",
+  "pyyaml>=6.0,<7.0",
   "ruff>=0.12,<1.0",
 ]
 
@@ -47,6 +48,7 @@ exclude = [
   "/.pytest_cache", "/.ruff_cache", "/.coverage*", "/dist",
   "/.env", "/.env.*",
   "/data", "/logs", "/tts", "*.log", "tts-*.wav",
+  "/dist-ci", "/reports", "/.uv-cache", "/.npm", "/deploy/runtime.env", "/image.env",
 ]
 artifacts = ["src/static/**"]
 
@@ -66,11 +68,13 @@ path = "tools/build_hook.py"
 
 [tool.hatch.build.targets.wheel.force-include]
 "sql/agent_bot_init.sql" = "agent_bot/resources/agent_bot_init.sql"
+"sql/2026-10-13-dynamic-provider-mcp-credentials.sql" = "agent_bot/resources/2026-10-13-dynamic-provider-mcp-credentials.sql"
 # 旧分阶段资源仍可读取，供既有部署按版本显式升级；新安装使用统一脚本。
 "sql/legacy/agent_bot_ai_init.sql" = "agent_bot/resources/agent_bot_ai_init.sql"
 "sql/legacy/agent_bot_agent_init.sql" = "agent_bot/resources/agent_bot_agent_init.sql"
 "sql/legacy/agent_bot_media_init.sql" = "agent_bot/resources/agent_bot_media_init.sql"
 "sql/2026-10-12-agentbot-schema-comments.sql" = "agent_bot/resources/2026-10-12-agentbot-schema-comments.sql"
+"sql/2026-10-12-python-jobs-auto-speak.sql" = "agent_bot/resources/2026-10-12-python-jobs-auto-speak.sql"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

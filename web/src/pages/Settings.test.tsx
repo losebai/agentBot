@@ -5,9 +5,9 @@ import { Settings } from './Settings';
 const snapshot = {
   database_revision: 1, applied_revision: 1, restart_required_fields: [],
   fields: [
-    { name: 'dispatch_chat_llm_temperature', description: '温度', kind: 'number', value: 0.7,
+    { name: 'chat_llm_temperature', description: '温度', kind: 'number', value: 0.7,
       nullable: true, secret_is_set: false, restart_required: false },
-    { name: 'dispatch_chat_ai_token', description: 'AI 密钥', kind: 'secret', value: null,
+    { name: 'chat_naraka_default_role_id', description: '默认角色 ID', kind: 'secret', value: null,
       nullable: true, secret_is_set: true, restart_required: false },
   ],
 };
@@ -27,7 +27,7 @@ describe('配置编辑', () => {
     fireEvent.change(await screen.findByLabelText('温度'), { target: { value: '0.4' } });
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
     await waitFor(() => expect(submitted).toEqual({ expected_revision: 1,
-      values: { dispatch_chat_llm_temperature: 0.4 } }));
+      values: { chat_llm_temperature: 0.4 } }));
     expect(await screen.findByText(/数据库版本 2/)).toBeInTheDocument();
     expect(screen.getByText(/需要重启：port/)).toBeInTheDocument();
   });

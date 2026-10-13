@@ -31,13 +31,14 @@ def test_unknown_command_does_not_start_service():
         main(["unknown-command"])
 
 
-def test_missing_admin_credential_fails_before_database(monkeypatch):
+def test_missing_admin_credential_fails_before_database(monkeypatch, capsys):
+    """缺失管理员凭据时给出操作提示，并在数据库访问前返回失败。"""
     from agent_bot.__main__ import main
     from agent_bot.admin.config import AdminConfig
 
     monkeypatch.setattr(AdminConfig, "from_environment", Mock(side_effect=ValueError("missing")))
-    with pytest.raises(ValueError, match="missing"):
-        main([])
+    assert main([]) == 1
+    assert "AGENT_BOT_ADMIN_TOKEN" in capsys.readouterr().out
 
 
 def test_non_fastapi_driver_is_rejected(admin_runtime):

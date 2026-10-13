@@ -75,9 +75,9 @@ def database_params() -> DatabaseParams:
     return DatabaseParams(
         host="127.0.0.1",
         port=3306,
-        user="dispatch_chat",
+        user="chat",
         password="password",
-        database="dispatch_chat",
+        database="chat",
     )
 
 
@@ -105,9 +105,9 @@ async def test_replace_group_validates_then_atomically_writes_normalized_snapsho
     connection = database.connections[0]
     delete_sql, delete_parameters = connection.cursor_value.executions[0]
     insert_sql, rows = connection.cursor_value.batches[0]
-    assert "DELETE FROM `dispatch_chat_group_member`" in delete_sql
+    assert "DELETE FROM `chat_group_member`" in delete_sql
     assert delete_parameters == ("90001", "20001")
-    assert "INSERT INTO `dispatch_chat_group_member`" in insert_sql
+    assert "INSERT INTO `chat_group_member`" in insert_sql
     assert rows == [
         (
             "90001",
@@ -208,5 +208,5 @@ async def test_upsert_and_delete_member_use_scoped_parameterized_queries() -> No
     delete_sql, delete_parameters = database.connections[1].cursor_value.executions[0]
     assert "ON DUPLICATE KEY UPDATE" in upsert_sql
     assert upsert_parameters[:3] == ("90001", "20001", "10086")
-    assert "DELETE FROM `dispatch_chat_group_member`" in delete_sql
+    assert "DELETE FROM `chat_group_member`" in delete_sql
     assert delete_parameters == ("90001", "20001", "10086")

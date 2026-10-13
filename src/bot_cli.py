@@ -1,4 +1,4 @@
-"""保留 dispatch-chat 命令兼容性的独立机器人入口。"""
+"""chat 命令使用的独立机器人入口。"""
 
 import os
 import sys
@@ -46,7 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return run(arguments[1:])
     if arguments:
-        raise SystemExit("usage: dispatch-chat [settings ... | workflows ...]")
+        raise SystemExit("usage: chat [settings ... | workflows ...]")
     run_bot()
     return 0
 

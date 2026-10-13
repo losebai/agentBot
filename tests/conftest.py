@@ -11,14 +11,16 @@ from _fake_mysql import FakeMySQL
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    """离线测试只使用显式配置，避免开发者 .env 改变插件生命周期。"""
     config.stash[NONEBOT_INIT_KWARGS] = {
+        "_env_file": [".nonebug-no-dotenv"],
         "driver": "~fastapi",
         "command_start": {"/"},
         "onebot_v11_access_token": "test-onebot-access-token-that-is-at-least-32-characters",
-        "dispatch_chat_session_secret": "test-session-secret-that-is-at-least-32-characters",
-        "dispatch_chat_allow_all": True,
-        "dispatch_chat_cooldown_seconds": 0,
-        "dispatch_chat_auto_speak_enabled": False,
+        "chat_session_secret": "test-session-secret-that-is-at-least-32-characters",
+        "chat_allow_all": True,
+        "chat_cooldown_seconds": 0,
+        "chat_auto_speak_enabled": False,
     }
 
 
@@ -30,11 +32,11 @@ async def after_nonebot_init(after_nonebot_init: None) -> None:
     driver = nonebot.get_driver()
     driver.register_adapter(Adapter)
     bootstrap_environment = {
-        "DISPATCH_CHAT_DB_HOST": "127.0.0.1",
-        "DISPATCH_CHAT_DB_PORT": "3306",
-        "DISPATCH_CHAT_DB_USER": "dispatch_chat_test",
-        "DISPATCH_CHAT_DB_PASSWORD": "dispatch_chat_test_password",
-        "DISPATCH_CHAT_DB_NAME": "dispatch_chat_test",
+        "CHAT_DB_HOST": "127.0.0.1",
+        "CHAT_DB_PORT": "3306",
+        "CHAT_DB_USER": "chat_test",
+        "CHAT_DB_PASSWORD": "chat_test_password",
+        "CHAT_DB_NAME": "chat_test",
     }
     with patch.dict(os.environ, bootstrap_environment):
         plugin = nonebot.load_plugin("agent_bot.plugin")
@@ -48,14 +50,14 @@ async def after_nonebot_init(after_nonebot_init: None) -> None:
     chat_plugin_module._redis_client = fake_redis
     chat_plugin_module.conversation_queue.store = RedisConversationQueueStore(
         fake_redis,
-        key_prefix="dispatch:test:plugin",
+        key_prefix="test:plugin",
         group_name="workers",
         consumer_name="consumer-1",
         max_pending=1000,
         result_ttl_seconds=60,
     )
     chat_plugin_module.image_queue.store = RedisConversationQueueStore(
-        fake_redis, key_prefix="dispatch:test:images", group_name="image-workers",
+        fake_redis, key_prefix="test:images", group_name="image-workers",
         consumer_name="image-consumer", max_pending=1000, result_ttl_seconds=60,
     )
     yield

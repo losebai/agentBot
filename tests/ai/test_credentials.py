@@ -1,26 +1,27 @@
+"""数据库凭据校验拒绝无效输入且禁止环境引用。"""
+
 import pytest
+from pydantic import ValidationError
 
-from agent_bot.ai.credentials import CredentialResolver
-from agent_bot.ai.errors import AiError
-
-
-def test_credential_scope_and_precedence(tmp_path):
-    path = tmp_path / "offline.env"
-    path.write_text("AGENT_BOT_PROVIDER_TEST_KEY=file-value\n", encoding="utf-8")
-    resolver = CredentialResolver(path, {"AGENT_BOT_PROVIDER_TEST_KEY": "env-value"})
-    assert resolver.resolve("AGENT_BOT_PROVIDER_TEST_KEY").get_secret_value() == "env-value"
-    assert resolver.resolve(None) is None
-    assert "env-value" not in repr(resolver.resolve("AGENT_BOT_PROVIDER_TEST_KEY"))
+from agent_bot.ai.contracts import ProviderCreate
 
 
-def test_literal_dotenv_and_missing_credentials(tmp_path):
-    path = tmp_path / "offline.env"
-    path.write_text("AGENT_BOT_PROVIDER_TEST_KEY=${NOT_INTERPOLATED}\n", encoding="utf-8")
-    resolver = CredentialResolver(path, {})
-    assert (
-        resolver.resolve("AGENT_BOT_PROVIDER_TEST_KEY").get_secret_value() == "${NOT_INTERPOLATED}"
-    )
-    for reference in ("AGENT_BOT_ADMIN_TOKEN", "AGENT_BOT_PROVIDER_MISSING"):
-        with pytest.raises(AiError):
-            resolver.resolve(reference)
-        assert not resolver.is_available(reference)
+@pytest.mark.parametrize("credential", ["", " ", "line\nbreak", "x" * 4097, "**********"])
+def test_invalid_credentials_do_not_echo_input(credential):
+    """写入请求不得保存空值、控制字符或脱敏占位符。"""
+    with pytest.raises(ValidationError) as caught:
+        ProviderCreate(
+            name="test", protocol="ollama", base_url="http://localhost", credential=credential
+        )
+    assert "input_value" not in str(caught.value)
+
+
+def test_environment_reference_is_not_an_accepted_configuration():
+    """旧变量引用已经退出 API 契约。"""
+    with pytest.raises(ValidationError):
+        ProviderCreate(
+            name="test",
+            protocol="ollama",
+            base_url="http://localhost",
+            credential_ref="AGENT_BOT_PROVIDER_TEST_KEY",
+        )

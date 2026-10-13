@@ -24,14 +24,16 @@ export interface ServiceStatus {
   database_revision: number;
   applied_revision: number;
   restart_required_fields: string[];
-  ai_backend: 'java-compatibility' | 'python-ordinary';
-  plain_ai_backend?: 'java' | 'python';
+  ai_backend: 'python-ordinary';
+  plain_ai_backend?: 'python';
   configured_model?: string;
-  agent_backend?: 'java' | 'python';
+  agent_backend?: 'python';
   configured_agent?: string | null;
   python_agent?: { initialized: boolean; agent_available: boolean; model_available: boolean; code: string | null } | null;
   legacy_capabilities?: string[];
-  media_backend?: 'java' | 'python';
+  job_enabled?: boolean;
+  auto_speak_enabled?: boolean;
+  media_backend?: 'python';
   python_media?: { initialized:boolean; storage_available:boolean; code:string|null } | null;
   python_ai?: { initialized: boolean; model_available: boolean; provider_available: boolean; credential_available: boolean; code: string | null } | null;
 }

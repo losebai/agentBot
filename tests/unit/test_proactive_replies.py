@@ -37,7 +37,7 @@ def reply_gateway() -> OneBotReplyGateway:
 
     config = RuntimeConfig(
         onebot_v11_access_token="test-token-that-is-longer-than-32-characters",
-        dispatch_chat_session_secret="test-secret-that-is-longer-than-32-characters",
+        chat_session_secret="test-secret-that-is-longer-than-32-characters",
     )
     return OneBotReplyGateway(lambda: config)
 
@@ -233,8 +233,8 @@ async def test_tool_sessions_bind_shared_reply_collector_and_caller_context(queu
     bot.self_id = "90001"
     config = RuntimeConfig(
         onebot_v11_access_token="test-token-that-is-longer-than-32-characters",
-        dispatch_chat_session_secret="test-secret-that-is-longer-than-32-characters",
-        dispatch_chat_mcp_enabled=True, dispatch_chat_mention_tool_enabled=True,
+        chat_session_secret="test-secret-that-is-longer-than-32-characters",
+        chat_mcp_enabled=True, chat_mention_tool_enabled=True,
     )
     store = ToolSessionStore(ttl_seconds=30, max_sessions=2)
     manager = ChatToolSessionManager(

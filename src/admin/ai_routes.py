@@ -1,9 +1,11 @@
-"""Authenticated AI directory and record operations against the current runtime."""
+"""管理认证后的 AI 动态目录、模型发现和执行记录接口。"""
 
 from fastapi import APIRouter, Query
 
 from agent_bot.ai.contracts import (
     ModelCreate,
+    ModelImportRequest,
+    ModelImportResult,
     ModelUpdate,
     ModelView,
     Page,
@@ -12,13 +14,17 @@ from agent_bot.ai.contracts import (
     ProviderView,
     SessionDetail,
     SessionSummary,
+    UpstreamModels,
     VersionDelete,
 )
 from agent_bot.ai.errors import AiError
 
 
 def install_ai_routes(router: APIRouter, runtime) -> None:
+    """绑定当前运行时服务，目录响应不公开密钥。"""
+
     async def operate(action: str, *args, records: bool = False, **kwargs):
+        """读写操作持有运行时租约，返回仅序列化公开字段的快照。"""
         async with runtime.lease():
             service = getattr(runtime, "ai_service", None)
             if service is None:
@@ -27,21 +33,6 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
                 *args, **kwargs
             )
 
-            def visible(item):
-                return item.model_copy(
-                    update={
-                        "credential_available": service.credential_available(item.credential_ref)
-                    }
-                )
-
-            if isinstance(result, ProviderView):
-                return visible(result)
-            if (
-                isinstance(result, Page)
-                and result.items
-                and isinstance(result.items[0], ProviderView)
-            ):
-                return result.model_copy(update={"items": [visible(item) for item in result.items]})
             return result
 
     @router.get("/ai/providers", response_model=Page[ProviderView])
@@ -61,8 +52,27 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
         await operate("delete_provider", id, body.expected_revision)
 
     @router.get("/ai/models", response_model=Page[ModelView])
-    async def models(limit: int = Query(50, ge=1, le=100), cursor: str | None = None):
-        return await operate("list_models", limit, cursor)
+    async def models(
+        limit: int = Query(50, ge=1, le=100),
+        cursor: str | None = None,
+        provider_id: int | None = Query(None, ge=1),
+    ):
+        """按供应商显示本地登记状态，同名上游模型分别处理。"""
+        return await operate("list_models", limit, cursor, provider_id)
+
+    @router.get("/ai/providers/{id}/upstream-models", response_model=UpstreamModels)
+    async def upstream_models(id: int, expected_revision: int = Query(..., ge=1)):
+        """管理员只选择登记的供应商，密钥在服务器端读取。"""
+        async with runtime.lease():
+            service = getattr(runtime, "ai_service", None)
+            if service is None:
+                raise AiError("AI_NOT_INITIALIZED", status_code=503)
+            return await service.upstream_models(id, expected_revision)
+
+    @router.post("/ai/providers/{id}/models/import", response_model=ModelImportResult)
+    async def import_models(id: int, body: ModelImportRequest):
+        """导入只能绑定路径中的供应商，不能通过正文转移关联。"""
+        return await operate("import_models", id, body)
 
     @router.post("/ai/models", response_model=ModelView, status_code=201)
     async def create_model(body: ModelCreate):

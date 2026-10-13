@@ -14,7 +14,7 @@ from test_conversation_processor import onebot_mock, queued_job
 from test_workflow_inputs import i2i_definition, uploaded_image
 from workflow_fakes import TextWorkflowServiceStub
 
-from agent_bot.integrations.dispatch_ai import DispatchAiUnavailableError
+from agent_bot.ai.chat_errors import ChatAiUnavailableError
 from agent_bot.integrations.onebot.tooling import ChatToolSessionLease
 from agent_bot.integrations.redis_queue import RedisConversationQueueStore
 from agent_bot.integrations.tool_operations import RedisToolOperationStore
@@ -58,7 +58,7 @@ async def test_i2i_upload_then_failed_notice_or_enqueue_never_generates_or_reupl
     scope = workflow_input_scope(parent.job_id)
     client = SimpleNamespace(
         upload_input_image=AsyncMock(return_value=uploaded_image(
-            subfolder="dispatch-chat-i2i/" + scope,
+            subfolder="chat-i2i/" + scope,
         )), generate=AsyncMock(),
     )
     service = WorkflowExecutionService(
@@ -103,7 +103,7 @@ async def test_i2i_background_preserves_typed_reference_without_urls(
     """真实提交、序列化与生成边界保持原图归属，不能拿其他任务的图。"""
     parent = queued_job(jobId="i2i-parent", imageUrls=("https://gchat.qpic.cn/source",))
     uploaded = None if fixed else uploaded_image(
-        subfolder="dispatch-chat-i2i/" + workflow_input_scope(parent.job_id),
+        subfolder="chat-i2i/" + workflow_input_scope(parent.job_id),
     )
     request = WorkflowImageRequest(
         workflow_key="qwen-i2i", positive_prompt="改蓝色", input_image=uploaded,
@@ -113,7 +113,7 @@ async def test_i2i_background_preserves_typed_reference_without_urls(
     monkeypatch.setattr(chat_plugin, "image_queue", SimpleNamespace(enqueue=enqueue), raising=False)
     monkeypatch.setattr(chat_plugin, "_redis_client", image_stores[0]._redis)
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: onebot_mock())
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     workflow = SimpleNamespace(generate=AsyncMock(return_value=GeneratedWorkflowImage(
         media_type="image/png", data=b"\x89PNG\r\n\x1a\nimage",
     )))
@@ -232,7 +232,7 @@ async def test_legacy_completed_image_operation_restores_after_upgrade(
     monkeypatch.setattr(processor, "_operation_store_provider", lambda: store)
     client = SimpleNamespace(generate=AsyncMock(side_effect=AssertionError("must not regenerate")))
     monkeypatch.setattr(processor, "_workflow_service_provider", lambda: client)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     artifact = await processor._generate_workflow(job)
     assert artifact.workflow_images[0].data == saved.data
     client.generate.assert_not_called()
@@ -276,8 +276,8 @@ async def test_background_image_allows_same_session_chat_and_reset(
     monkeypatch.setattr(chat_plugin, "workflow_service", workflow)
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
     monkeypatch.setattr(chat_plugin, "_redis_client", image_stores[0]._redis)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_image_generation_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_image_generation_enabled", True)
     processor = chat_plugin._ConversationProcessor()
     policy = QueuePolicy(1, 2, .01, .01, 600, media_workers=1)
     queues = tuple(ConversationQueue(
@@ -336,7 +336,7 @@ async def test_background_image_restart_and_delivery_retry_reuse_result(
 
     store = image_stores[1]
     monkeypatch.setattr(chat_plugin, "_redis_client", store._redis)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     workflow = SimpleNamespace(generate=AsyncMock(return_value=GeneratedWorkflowImage(
         media_type="image/png", data=b"\x89PNG\r\n\x1a\nimage",
     )))
@@ -385,8 +385,8 @@ async def test_image_is_sent_before_llm_completion_and_requester_mention(
 
     store = image_stores[1]
     monkeypatch.setattr(chat_plugin, "_redis_client", store._redis)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_image_generation_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_image_generation_enabled", True)
     png = b"\x89PNG\r\n\x1a\nimage"
     workflow = SimpleNamespace(generate=AsyncMock(return_value=GeneratedWorkflowImage(
         media_type="image/png", data=png,
@@ -444,7 +444,7 @@ async def test_completion_delivery_restart_reuses_llm_text_without_resending_ima
 
     store = image_stores[1]
     monkeypatch.setattr(chat_plugin, "_redis_client", store._redis)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     workflow = SimpleNamespace(generate=AsyncMock(return_value=GeneratedWorkflowImage(
         media_type="image/png", data=b"\x89PNG\r\n\x1a\nimage",
     )))
@@ -486,7 +486,7 @@ async def test_completion_delivery_restart_reuses_llm_text_without_resending_ima
     workflow.generate.assert_awaited_once()
 
 
-@pytest.mark.parametrize("failure", [None, DispatchAiUnavailableError("private detail")])
+@pytest.mark.parametrize("failure", [None, ChatAiUnavailableError("private detail")])
 async def test_completion_llm_failure_keeps_delivered_image_without_fixed_text(
     monkeypatch, chat_plugin, image_stores, failure,
 ) -> None:
@@ -494,7 +494,7 @@ async def test_completion_llm_failure_keeps_delivered_image_without_fixed_text(
 
     store = image_stores[1]
     monkeypatch.setattr(chat_plugin, "_redis_client", store._redis)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     monkeypatch.setattr(chat_plugin, "workflow_service", SimpleNamespace(generate=AsyncMock(
         return_value=GeneratedWorkflowImage(media_type="image/png", data=b"\x89PNG\r\n\x1a\nimage"),
     )))
@@ -542,7 +542,7 @@ async def test_slow_completion_llm_does_not_block_same_session_chat(
     )
     monkeypatch.setattr(chat_plugin, "chat_service", service)
     monkeypatch.setattr(chat_plugin, "_redis_client", image_stores[0]._redis)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     monkeypatch.setattr(chat_plugin, "workflow_service", SimpleNamespace(generate=AsyncMock(
         return_value=GeneratedWorkflowImage(media_type="image/png", data=b"\x89PNG\r\n\x1a\nimage"),
     )))
@@ -633,7 +633,7 @@ async def test_disabled_workflow_fails_before_comfy_and_reports_unavailable(
     )
     monkeypatch.setattr(chat_plugin, "workflow_service", workflow)
     monkeypatch.setattr(chat_plugin, "_redis_client", image_stores[0]._redis)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     composer = SimpleNamespace(compose=AsyncMock(return_value=None))
     monkeypatch.setattr(chat_plugin, "_reply_composer", composer)
     processor = chat_plugin._ConversationProcessor()

@@ -1,4 +1,4 @@
-"""Typed registry and concrete tools owned by the dispatch-chat gateway."""
+"""Typed registry and concrete tools owned by the chat gateway."""
 
 from __future__ import annotations
 

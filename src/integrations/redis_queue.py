@@ -467,35 +467,35 @@ def build_conversation_queue(
     store = RedisConversationQueueStore(
         redis_client,
         key_prefix=bootstrap.key_prefix,
-        group_name="dispatch-chat-workers",
+        group_name="chat-workers",
         consumer_name=f"worker-{uuid.uuid4().hex}",
-        max_pending=config.dispatch_chat_queue_max_pending,
-        result_ttl_seconds=config.dispatch_chat_queue_result_ttl_seconds,
+        max_pending=config.chat_queue_max_pending,
+        result_ttl_seconds=config.chat_queue_result_ttl_seconds,
     )
     queue = ConversationQueue(
         store=store,
         processor=processor,
         policy=QueuePolicy(
-            workers=config.dispatch_chat_queue_workers,
-            media_workers=config.dispatch_chat_queue_media_workers,
-            max_attempts=config.dispatch_chat_queue_max_attempts,
-            retry_initial_seconds=config.dispatch_chat_queue_retry_initial_seconds,
-            retry_max_seconds=config.dispatch_chat_queue_retry_max_seconds,
-            job_ttl_seconds=config.dispatch_chat_queue_job_ttl_seconds,
+            workers=config.chat_queue_workers,
+            media_workers=config.chat_queue_media_workers,
+            max_attempts=config.chat_queue_max_attempts,
+            retry_initial_seconds=config.chat_queue_retry_initial_seconds,
+            retry_max_seconds=config.chat_queue_retry_max_seconds,
+            job_ttl_seconds=config.chat_queue_job_ttl_seconds,
         ),
     )
     image_tasks = RedisImageTaskStore(
         redis_client, key_prefix=f"{bootstrap.key_prefix}:images",
-        result_ttl_seconds=config.dispatch_chat_queue_result_ttl_seconds,
-        job_ttl_seconds=config.dispatch_chat_queue_job_ttl_seconds,
+        result_ttl_seconds=config.chat_queue_result_ttl_seconds,
+        job_ttl_seconds=config.chat_queue_job_ttl_seconds,
     )
     image_store = RedisConversationQueueStore(
         redis_client,
         key_prefix=f"{bootstrap.key_prefix}:images",
-        group_name="dispatch-chat-image-workers",
+        group_name="chat-image-workers",
         consumer_name=f"image-worker-{uuid.uuid4().hex}",
-        max_pending=config.dispatch_chat_queue_max_pending,
-        result_ttl_seconds=config.dispatch_chat_queue_result_ttl_seconds,
+        max_pending=config.chat_queue_max_pending,
+        result_ttl_seconds=config.chat_queue_result_ttl_seconds,
         image_task_store=image_tasks,
     )
     image_queue = ConversationQueue(

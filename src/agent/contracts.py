@@ -9,12 +9,12 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, create_model, field_validator, model_validator
 
 from agent_bot.ai.contracts import AiModel, ResolvedModel, TokenUsage
+from agent_bot.credential_values import CredentialSnapshot, CredentialValue
 from agent_bot.media.contracts import MediaAssetView, ModelImage
 from agent_bot.models import ChatMessage, LlmRequestOptions
 from agent_bot.multimodal import DEFAULT_IMAGE_PROMPT
 
 CODE_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
-MCP_REFERENCE = re.compile(r"AGENT_BOT_MCP_[A-Z0-9_]{1,80}\Z")
 
 
 class DirectoryItem(AiModel):
@@ -71,11 +71,12 @@ class SkillCreate(DirectoryItem):
     _unique = field_validator("tools")(AgentCreate.unique.__func__)
 
 
-class McpCreate(CodedItem):
+class McpFields(CodedItem):
+    """MCP 服务公开连接信息及服务端工具白名单。"""
+
     category: Literal["general", "search"] = "general"
     transport: Literal["streamable", "sse"] = "streamable"
     endpoint: str = Field(min_length=1, max_length=512)
-    credential_ref: str | None = None
     allowed_tools: tuple[str, ...] = Field(min_length=1, max_length=20)
     search_tool: str | None = Field(default=None, min_length=1, max_length=100)
     timeout_seconds: int = Field(default=10, ge=1, le=30)
@@ -101,13 +102,6 @@ class McpCreate(CodedItem):
             raise ValueError("invalid port")
         return value
 
-    @field_validator("credential_ref")
-    @classmethod
-    def valid_reference(cls, value):
-        if value is not None and not MCP_REFERENCE.fullmatch(value):
-            raise ValueError("invalid credential reference")
-        return value
-
     @model_validator(mode="after")
     def search_definition(self):
         if self.category == "search" and (
@@ -115,6 +109,12 @@ class McpCreate(CodedItem):
         ):
             raise ValueError("search tool must be allowed")
         return self
+
+
+class McpCreate(McpFields):
+    """直接写入 MCP 令牌，编辑省略时保留原值。"""
+
+    credential: CredentialValue | None = Field(default=None, repr=False)
 
 
 class VersionedItem(AiModel):
@@ -132,8 +132,8 @@ class SkillView(SkillCreate, VersionedItem):
     pass
 
 
-class McpView(McpCreate, VersionedItem):
-    credential_available: bool = False
+class McpView(McpFields, CredentialSnapshot, VersionedItem):
+    """目录公开状态与仅内部使用的密钥快照。"""
 
 
 class DirectoryPatch(AiModel):

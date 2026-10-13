@@ -1,0 +1,28 @@
+# MySQL、Redis 由现有基础设施提供；该文件只管理 agentBot 服务和文件卷。
+services:
+  agentbot:
+    image: ${AGENTBOT_IMAGE:?必须指定待部署的镜像或摘要}
+    env_file:
+      - ${AGENTBOT_RUNTIME_ENV_FILE:?必须指定服务器运行配置文件绝对路径}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 180s
+    # 默认仅向本机反向代理开放，外部 NapCat 通过代理连接 WebSocket。
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - agentbot-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  # 固定名称保证发布目录变化和回滚不会切换媒体/TTS 数据卷。
+  agentbot-data:
+    name: agentbot-data

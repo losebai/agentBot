@@ -9,7 +9,7 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, PrivateMessa
 from nonebot.adapters.onebot.v11.exception import NetworkError
 from nonebot.exception import FinishedException
 
-from agent_bot.integrations.dispatch_ai import DispatchAiUnavailableError
+from agent_bot.ai.chat_errors import ChatAiUnavailableError
 from agent_bot.model_guard import ModelNotAvailableError
 from agent_bot.services.chat import ChatBusyError, ChatRateLimitedError, PromptTooLongError
 from agent_bot.services.conversation_queue import ConversationQueueFullError
@@ -20,9 +20,9 @@ from agent_bot.services.workflow_execution import GeneratedWorkflowImage
 def drawing(monkeypatch: pytest.MonkeyPatch, chat_plugin) -> SimpleNamespace:
     """保留真实命令、Composer 和网关，仅隔离模型及外部工作流。"""
 
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     monkeypatch.setattr(
-        chat_plugin.plugin_config, "dispatch_chat_local_workflow_default_key", "portrait",
+        chat_plugin.plugin_config, "chat_local_workflow_default_key", "portrait",
     )
     workflow = AsyncMock(return_value=GeneratedWorkflowImage(media_type="image/png", data=b"image"))
     monkeypatch.setattr(chat_plugin, "workflow_service", SimpleNamespace(generate=workflow))
@@ -104,7 +104,7 @@ async def test_draw_replies_then_enqueues_without_waiting_for_image(drawing, gro
 
 
 @pytest.mark.parametrize("failure", [
-    DispatchAiUnavailableError("private detail"), ModelNotAvailableError("private detail"),
+    ChatAiUnavailableError("private detail"), ModelNotAvailableError("private detail"),
     ChatBusyError(), ChatRateLimitedError(1), ConversationQueueFullError(), None,
 ])
 async def test_draw_failed_or_blank_start_does_not_submit(drawing, failure) -> None:
@@ -130,7 +130,7 @@ async def test_draw_validation_uses_composer(drawing, monkeypatch, scenario, kin
 
     if scenario == "disabled":
         monkeypatch.setattr(
-            drawing.plugin.plugin_config, "dispatch_chat_local_workflow_enabled", False,
+            drawing.plugin.plugin_config, "chat_local_workflow_enabled", False,
         )
     elif scenario == "long":
         drawing.accept.side_effect = PromptTooLongError()
@@ -171,7 +171,7 @@ async def test_draw_message_limit_is_silent(drawing) -> None:
 async def test_draw_composer_failure_is_silent(drawing) -> None:
     """校验回复生成失败时不得发送固定兜底。"""
 
-    drawing.composer.side_effect = DispatchAiUnavailableError("private detail")
+    drawing.composer.side_effect = ChatAiUnavailableError("private detail")
     await run_draw(drawing, "")
     drawing.matcher.send.assert_not_awaited()
 

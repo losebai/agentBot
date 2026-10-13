@@ -8,8 +8,6 @@ from agent_bot.agent.catalog import AgentCatalog
 from agent_bot.agent.contracts import AgentRequest
 from agent_bot.ai.contracts import ModelCreate, ModelMediaCapabilities, ModelUpdate, ProviderUpdate
 from agent_bot.ai.errors import AiError
-from agent_bot.config import RuntimeConfig
-from agent_bot.settings import runtime_config_to_plain_values
 
 
 async def test_plain_catalog_works_without_media_tables(seeded_model):
@@ -76,18 +74,6 @@ async def test_snapshot_keeps_previous_media_capability(media_model, media_datab
     assert snapshot.resolved.model.media.vision_enabled
     assert not (await agent.snapshot(request)).resolved.model.media.vision_enabled
     assert (await catalog.list_models()).items[0].media_initialized
-
-
-def test_media_backend_roundtrip():
-    """媒体后端采用既有运行配置序列化，不影响默认 Java 路由。"""
-    credentials = dict(onebot_v11_access_token="x" * 40, dispatch_chat_session_secret="y" * 40)
-    assert RuntimeConfig(**credentials).dispatch_chat_media_backend == "java"
-    values = runtime_config_to_plain_values(
-        RuntimeConfig(**credentials, dispatch_chat_media_backend="python")
-    )
-    assert RuntimeConfig.model_validate(values).dispatch_chat_media_backend == "python"
-    with pytest.raises(ValidationError):
-        RuntimeConfig(**credentials, dispatch_chat_media_backend="automatic")
 
 
 def test_media_reader_does_not_hide_other_database_failures():

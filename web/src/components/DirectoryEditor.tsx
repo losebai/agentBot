@@ -34,8 +34,10 @@ export function DirectoryEditor<D extends DirectoryDraft,V extends D & Versioned
   const [error,setError]=useState('');const [busy,setBusy]=useState(false);
   async function load(){setBusy(true);try{setPage(await actions.list(cursor));setError('');}catch(e){setError(errorMessage(e));}finally{setBusy(false);}}
   useEffect(()=>{void load();},[actions,cursor]);
-  function edit(item:V|null){setEditing(item);const next={...empty};for(const key of Object.keys(empty) as (keyof D)[]) if(item)next[key]=item[key];setDraft(next);setError('');}
-  async function save(){setBusy(true);setError('');try{if(editing){const original={...empty};for(const key of Object.keys(empty) as (keyof D)[])original[key]=editing[key];const change=dirtyFields(original,draft);if(Object.keys(change).length)await actions.update(editing.id,editing.revision,change);}else await actions.create(draft);setEditing(undefined);await load();}catch(e){setError(errorMessage(e));}finally{setBusy(false);}}
+  // 仅复制公开存在的字段，写入专用密钥不会从响应回填。
+  function edit(item:V|null){setEditing(item);const next={...empty};for(const key of Object.keys(empty) as (keyof D)[]) if(item&&Object.hasOwn(item,key))next[key]=item[key];setDraft(next);setError('');}
+  // 密钥字段省略时保留；保存成功和取消时清空表单秘密。
+  async function save(){setBusy(true);setError('');try{if(editing){const original={...empty};for(const key of Object.keys(empty) as (keyof D)[])original[key]=editing[key];const change=dirtyFields(original,draft);if(Object.keys(change).length)await actions.update(editing.id,editing.revision,change);}else await actions.create(draft);setEditing(undefined);setDraft({...empty});await load();}catch(e){setError(errorMessage(e));}finally{setBusy(false);}}
   async function remove(item:V){setBusy(true);try{await actions.remove(item.id,item.revision);await load();}catch(e){setError(errorMessage(e));}finally{setBusy(false);}}
   return <div className="page-content"><div className="page-heading"><div><p className="eyebrow">AGENT WORKSPACE</p><h1>{title}</h1><p>{description}</p></div><Button disabled={busy} onClick={()=>edit(null)}>新增 {label}</Button></div>
     {error&&<Alert className="notice" type="error" showIcon message={error}/>}
@@ -43,6 +45,6 @@ export function DirectoryEditor<D extends DirectoryDraft,V extends D & Versioned
     <div className="catalog-pagination"><Button disabled={busy||!previous.length} onClick={()=>{setCursor(previous.at(-1));setPrevious(previous.slice(0,-1));}}>上一页</Button><Button disabled={busy||!page.next_cursor} onClick={()=>{setPrevious([...previous,cursor]);setCursor(page.next_cursor!);}}>下一页</Button><Button loading={busy} onClick={()=>void load()}>刷新</Button></div>
     {editing!==undefined&&<form key={editing?.id??'new'} className="panel catalog-form" onSubmit={e=>{e.preventDefault();if(valid(draft))void save();}}><h2>{editing?'编辑':'新增'} {label}</h2><label>名称<input required maxLength={200} value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})}/></label><label>说明<textarea maxLength={2000} value={draft.description} onChange={e=>setDraft({...draft,description:e.target.value})}/></label>
       {fields(draft,setDraft,editing)}<label className="checkbox-label"><input type="checkbox" checked={draft.enabled} onChange={e=>setDraft({...draft,enabled:e.target.checked})}/>启用 {label}</label>
-      <div className="heading-actions"><Button type="primary" htmlType="submit" disabled={!valid(draft)} loading={busy}>保存 {label}</Button><Button disabled={busy} onClick={()=>setEditing(undefined)}>取消</Button></div></form>}
+      <div className="heading-actions"><Button type="primary" htmlType="submit" disabled={!valid(draft)} loading={busy}>保存 {label}</Button><Button disabled={busy} onClick={()=>{setEditing(undefined);setDraft({...empty});}}>取消</Button></div></form>}
   </div>;
 }

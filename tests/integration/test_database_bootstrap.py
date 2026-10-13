@@ -54,27 +54,27 @@ def test_auto_speak_laya_prompt_migration_is_idempotent_and_revisioned() -> None
     for forbidden in ("api_key", "bearer ", "token=", "password="):
         assert forbidden not in normalized
 
-# 本集成测试需要真实可达的 MySQL 实例，且 dispatch_chat_setting 表已通过
+# 本集成测试需要真实可达的 MySQL 实例，且 chat_setting 表已通过
 # sql/agent_bot_init.sql 初始化。通过以下环境变量提供连接信息：
-#   DISPATCH_CHAT_INTEGRATION_DB_HOST (默认 127.0.0.1)
-#   DISPATCH_CHAT_INTEGRATION_DB_PORT (默认 3306)
-#   DISPATCH_CHAT_INTEGRATION_DB_USER
-#   DISPATCH_CHAT_INTEGRATION_DB_PASSWORD
-#   DISPATCH_CHAT_INTEGRATION_DB_NAME (默认 dispatch_chat_test)
+#   CHAT_INTEGRATION_DB_HOST (默认 127.0.0.1)
+#   CHAT_INTEGRATION_DB_PORT (默认 3306)
+#   CHAT_INTEGRATION_DB_USER
+#   CHAT_INTEGRATION_DB_PASSWORD
+#   CHAT_INTEGRATION_DB_NAME (默认 chat_test)
 # 若未配置用户名/密码，测试会被跳过。
 
 
 def _integration_params() -> DatabaseParams | None:
-    user = os.environ.get("DISPATCH_CHAT_INTEGRATION_DB_USER")
-    password = os.environ.get("DISPATCH_CHAT_INTEGRATION_DB_PASSWORD")
+    user = os.environ.get("CHAT_INTEGRATION_DB_USER")
+    password = os.environ.get("CHAT_INTEGRATION_DB_PASSWORD")
     if not user or not password:
         return None
     return DatabaseParams(
-        host=os.environ.get("DISPATCH_CHAT_INTEGRATION_DB_HOST", "127.0.0.1"),
-        port=int(os.environ.get("DISPATCH_CHAT_INTEGRATION_DB_PORT", "3306")),
+        host=os.environ.get("CHAT_INTEGRATION_DB_HOST", "127.0.0.1"),
+        port=int(os.environ.get("CHAT_INTEGRATION_DB_PORT", "3306")),
         user=user,
         password=password,
-        database=os.environ.get("DISPATCH_CHAT_INTEGRATION_DB_NAME", "dispatch_chat_test"),
+        database=os.environ.get("CHAT_INTEGRATION_DB_NAME", "chat_test"),
     )
 
 
@@ -82,7 +82,7 @@ def _integration_params() -> DatabaseParams | None:
 def test_database_onebot_token_reaches_adapter_without_log_disclosure() -> None:
     params = _integration_params()
     if params is None:
-        pytest.skip("set DISPATCH_CHAT_INTEGRATION_DB_USER/PASSWORD to run this integration test")
+        pytest.skip("set CHAT_INTEGRATION_DB_USER/PASSWORD to run this integration test")
 
     # 每次运行前清空旧配置，保证 initialize 不会因已存在快照而失败。
     import pymysql
@@ -96,8 +96,8 @@ def test_database_onebot_token_reaches_adapter_without_log_disclosure() -> None:
     )
     try:
         with connection.cursor() as cursor:
-            cursor.execute("DELETE FROM dispatch_chat_setting")
-            cursor.execute("DELETE FROM dispatch_chat_setting_revision")
+            cursor.execute("DELETE FROM chat_setting")
+            cursor.execute("DELETE FROM chat_setting_revision")
         connection.commit()
     finally:
         connection.close()
@@ -108,12 +108,12 @@ def test_database_onebot_token_reaches_adapter_without_log_disclosure() -> None:
     nickname = "database-private-nickname"
     ws_url = "wss://database-onebot.example.invalid/private-ws"
     api_url = "https://database-onebot.example.invalid/private-api"
-    ai_token = "database-private-ai-token"
+    tts_token = "database-private-tts-token"
     allowed_user = "940000000000008"
     SettingsStore(params).initialize(
         RuntimeConfig(
             onebot_v11_access_token=token,
-            dispatch_chat_session_secret=(
+            chat_session_secret=(
                 "database-adapter-session-secret-longer-than-thirty-two-characters"
             ),
             log_level="DEBUG",
@@ -122,23 +122,23 @@ def test_database_onebot_token_reaches_adapter_without_log_disclosure() -> None:
             onebot_v11_secret=onebot_secret,
             onebot_v11_ws_urls={ws_url},
             onebot_v11_api_roots={"database-bot": api_url},
-            dispatch_chat_ai_token=ai_token,
-            dispatch_chat_allowed_users={allowed_user},
+            chat_tts_token=tts_token,
+            chat_allowed_users={allowed_user},
         )
     )
     environment = os.environ.copy()
     for field_name in RuntimeConfig.model_fields:
         environment.pop(field_name.upper(), None)
-    environment["DISPATCH_CHAT_DB_HOST"] = params.host
-    environment["DISPATCH_CHAT_DB_PORT"] = str(params.port)
-    environment["DISPATCH_CHAT_DB_USER"] = params.user
-    environment["DISPATCH_CHAT_DB_PASSWORD"] = params.password
-    environment["DISPATCH_CHAT_DB_NAME"] = params.database
+    environment["CHAT_DB_HOST"] = params.host
+    environment["CHAT_DB_PORT"] = str(params.port)
+    environment["CHAT_DB_USER"] = params.user
+    environment["CHAT_DB_PASSWORD"] = params.password
+    environment["CHAT_DB_NAME"] = params.database
     environment["NICKNAME"] = '["environment-must-not-win"]'
     environment["ONEBOT_ACCESS_TOKEN"] = "environment-must-not-win"
     environment["ONEBOT_API_ROOTS__environment-bot"] = "https://environment.invalid/api"
-    environment["DISPATCH_CHAT_AI_TOKEN"] = "environment-must-not-win"
-    environment["DISPATCH_CHAT_ALLOWED_USERS"] = '["999999999"]'
+    environment["CHAT_TTS_TOKEN"] = "environment-must-not-win"
+    environment["CHAT_ALLOWED_USERS"] = '["999999999"]'
     script = """
 import os
 import nonebot
@@ -169,11 +169,11 @@ assert adapter.onebot_config.onebot_api_roots == stored.config.onebot_v11_api_ro
 plugin = nonebot.load_plugin("agent_bot.plugin")
 assert plugin is not None
 from agent_bot import plugin as plugin_module
-assert plugin_module.plugin_config.dispatch_chat_ai_token.get_secret_value() == (
-    stored.config.dispatch_chat_ai_token.get_secret_value()
+assert plugin_module.plugin_config.chat_tts_token.get_secret_value() == (
+    stored.config.chat_tts_token.get_secret_value()
 )
-assert plugin_module.plugin_config.dispatch_chat_allowed_users == (
-    stored.config.dispatch_chat_allowed_users
+assert plugin_module.plugin_config.chat_allowed_users == (
+    stored.config.chat_allowed_users
 )
 print("adapter-ready")
 """
@@ -197,7 +197,7 @@ print("adapter-ready")
         nickname,
         ws_url,
         api_url,
-        ai_token,
+        tts_token,
         allowed_user,
         "environment-must-not-win",
     ):

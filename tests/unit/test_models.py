@@ -8,7 +8,6 @@ from agent_bot.models import (
     AutoSpeakDecisionResponse,
     ChatContext,
     ChatMediaResponse,
-    DispatchAiRequest,
 )
 
 
@@ -100,28 +99,6 @@ def test_auto_speak_decision_response_rejects_invalid_fields(
     """非法、缺失、未知或发生隐式转换的字段必须失败关闭。"""
     with pytest.raises(ValidationError):
         AutoSpeakDecisionResponse.model_validate(payload)
-
-
-@pytest.mark.parametrize("services", [["laya", "laya"], ["http://test/mcp"]])
-def test_chat_request_rejects_invalid_mcp_services(services: list[str]) -> None:
-    """网关只能声明稳定且不重复的服务 code，不能传入任意地址。"""
-    with pytest.raises(ValidationError):
-        DispatchAiRequest.model_validate({
-            "prompt": "判断退款意图", "sessionId": "session", "model": "model",
-            "requestsId": "request", "messages": [], "tools": ["memory"],
-            "toolSessionToken": "a" * 40, "mcpServices": services,
-        })
-
-
-def test_chat_request_accepts_general_mcp_service_code() -> None:
-    """通用 MCP 服务 code 可与已有 Chat 工具授权组合。"""
-    request = DispatchAiRequest.model_validate({
-        "prompt": "查看窗口", "sessionId": "session", "model": "model",
-        "requestsId": "request", "messages": [], "tools": ["memory"],
-        "toolSessionToken": "a" * 40, "mcpServices": ["windows-mcp"],
-    })
-
-    assert request.mcp_services == ("windows-mcp",)
 
 
 def test_chat_context_normalizes_bounded_display_names() -> None:

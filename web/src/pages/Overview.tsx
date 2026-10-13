@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import type { BotInfo, ServiceStatus } from '../types';
 
-/** 展示各能力实际后端和进程媒体存储状态。 */
+/** 展示当前 Python 能力、后台开关和进程媒体存储状态。 */
 export function Overview({ token }: { token: string }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [status, setStatus] = useState<ServiceStatus>();
@@ -30,7 +30,7 @@ export function Overview({ token }: { token: string }) {
         <div className="metric"><span>应用版本</span><strong>{status.applied_revision}</strong><p>当前运行时</p></div>
       </div>
       {status.restart_required_fields.length > 0 && <Alert className="notice" showIcon type="warning" message={`以下设置需要重启：${status.restart_required_fields.join(', ')}`} />}
-      <section className="panel chat-scope" style={{padding:'18px 22px',marginBottom:24,flexWrap:'wrap'}}><strong>AI 能力</strong><Tag color="cyan">普通对话：{status.plain_ai_backend==='python'?'Python':'Java'}</Tag><Tag color="cyan">Agent：{status.agent_backend==='python'?'Python':'Java'}</Tag><Tag color="cyan">媒体：{status.media_backend==='python'?'Python':'Java'}</Tag>{status.python_media&&<span>媒体存储：{status.python_media.code||(status.python_media.storage_available?'已就绪':'未就绪')}</span>}{status.python_ai && <span>Python 配置：{status.python_ai.code || (status.python_ai.initialized?'已初始化':'未初始化')} · 模型 {status.configured_model}</span>}{status.python_agent && <span>Agent 目录：{status.python_agent.code || (status.python_agent.initialized?'已初始化':'未初始化')} · 预设 {status.configured_agent || '使用聊天配置'}</span>}<span>视频、Laya、通用任务和代码执行继续使用 Java。</span></section>
+      <section className="panel chat-scope" style={{padding:'18px 22px',marginBottom:24,flexWrap:'wrap'}}><strong>AI 能力</strong><Tag color="cyan">普通对话：Python</Tag><Tag color="cyan">Agent：Python</Tag><Tag color="cyan">媒体：Python</Tag>{status.python_media&&<span>媒体存储：{status.python_media.code||(status.python_media.storage_available?'已就绪':'未就绪')}</span>}{status.python_ai && <span>Python 配置：{status.python_ai.code || (status.python_ai.initialized?'已初始化':'未初始化')} · 模型 {status.configured_model}</span>}{status.python_agent && <span>Agent 目录：{status.python_agent.code || (status.python_agent.initialized?'已初始化':'未初始化')} · 预设 {status.configured_agent || '使用聊天配置'}</span>}<Tag color={status.job_enabled?'green':'default'}>Job：{status.job_enabled?'已启用':'关闭'}</Tag><Tag color={status.auto_speak_enabled?'green':'default'}>自动发言：{status.auto_speak_enabled?'已启用':'关闭'}</Tag><span>视频、通用 Laya 和 SolonCode 尚未迁移。</span></section>
       <div className="overview-grid"><section className="panel"><div className="panel-header"><h2>机器人连接</h2><Tag>{bots.length} 个在线</Tag></div>
         {!bots.length ? <div className="empty-connections"><div className="connection-symbol">○</div><h3>等待机器人连接</h3><p>在 NapCat 中配置反向 WebSocket，连接此服务的<br /><code>/onebot/v11/ws</code>。</p></div>
           : bots.map(bot => <div className="bot-row" key={bot.id}><div className="bot-avatar">AB</div><div><strong>{bot.id}</strong><p>{bot.adapter}</p></div><Tag color="green">在线</Tag></div>)}</section>

@@ -9,10 +9,7 @@ import pytest
 from pydantic import ValidationError
 from redis.exceptions import RedisError
 
-from agent_bot.integrations.dispatch_ai import (
-    DispatchAiRejectedError,
-    DispatchAiUnavailableError,
-)
+from agent_bot.ai.chat_errors import ChatAiRejectedError, ChatAiUnavailableError
 from agent_bot.integrations.redis_queue import RedisConversationQueueStore
 from agent_bot.models import ChatContext, ChatMediaItem, ChatMediaResponse
 from agent_bot.services.conversation_queue import (
@@ -67,7 +64,7 @@ def processor_mock() -> AsyncMock:
     """创建带稳定重试分类契约的队列处理器替身。"""
 
     processor = AsyncMock()
-    processor.retryable_errors = (DispatchAiUnavailableError, ConnectionError, TimeoutError)
+    processor.retryable_errors = (ChatAiUnavailableError, ConnectionError, TimeoutError)
     processor.start_delivery_count.return_value = 1
     return processor
 
@@ -87,7 +84,7 @@ async def queue_store():
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     store = RedisConversationQueueStore(
         redis,
-        key_prefix="dispatch:test:chat",
+        key_prefix="test:chat",
         group_name="workers",
         consumer_name="consumer-1",
         max_pending=2,
@@ -133,7 +130,7 @@ async def test_workflow_start_parts_resume_durably_after_hot_config_change(
 ) -> None:
     """After abc succeeds, retries/restarts send only the persisted def despite chunk=2."""
 
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_chunk_chars", 3)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_chunk_chars", 3)
     payload = text_job().model_dump(by_alias=True)
     payload.update(
         chatTools=("local_workflow_generate_image",),
@@ -155,7 +152,7 @@ async def test_workflow_start_parts_resume_durably_after_hot_config_change(
             state = await queue_store.load_state(entry.stream_id)
             assert state.image_start_delivery_index == 1
             assert state.image_start_delivered is False
-            monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_chunk_chars", 2)
+            monkeypatch.setattr(chat_plugin.plugin_config, "chat_chunk_chars", 2)
             if restart:
                 raise asyncio.CancelledError
             raise ConnectionError("onebot offline")
@@ -275,7 +272,7 @@ async def test_redis_store_moves_failed_entry_to_bounded_dead_letter(queue_store
     entry = (await queue_store.read_new(count=1, block_ms=1))[0]
     await queue_store.save_result(stream_id, text_result("回答"))
 
-    await queue_store.dead_letter(entry, reason="DispatchAiRejectedError", attempt=1)
+    await queue_store.dead_letter(entry, reason="ChatAiRejectedError", attempt=1)
 
     assert await queue_store.source_length() == 0
     assert await queue_store.dead_letter_length() == 1
@@ -290,7 +287,7 @@ async def test_new_consumer_reclaims_unacknowledged_entries_from_old_consumer(
     old_entry = (await queue_store.read_new(count=1, block_ms=1))[0]
     replacement = RedisConversationQueueStore(
         queue_store._redis,
-        key_prefix="dispatch:test:chat",
+        key_prefix="test:chat",
         group_name="workers",
         consumer_name="consumer-2",
         max_pending=2,
@@ -396,7 +393,7 @@ async def test_workflow_start_message_is_delivered_once_before_generation(
         attempts += 1
         order.append(f"generate-{attempts}")
         if attempts == 1:
-            raise DispatchAiUnavailableError("temporary")
+            raise ChatAiUnavailableError("temporary")
         return text_result("完成")
 
     processor.deliver_start_part.side_effect = deliver_start
@@ -432,7 +429,7 @@ async def test_transient_model_failure_retries_but_permanent_failure_goes_dead_l
     transient_entry = (await queue_store.read_new(count=1, block_ms=1))[0]
     transient_processor = processor_mock()
     transient_processor.generate.side_effect = [
-        DispatchAiUnavailableError("temporary"),
+        ChatAiUnavailableError("temporary"),
         text_result("恢复成功"),
     ]
     transient_processor.delivery_count.return_value = 1
@@ -458,7 +455,7 @@ async def test_transient_model_failure_retries_but_permanent_failure_goes_dead_l
     permanent_id = await queue_store.enqueue(text_job(job_id="job-permanent"))
     permanent_entry = (await queue_store.read_new(count=1, block_ms=1))[0]
     permanent_processor = processor_mock()
-    permanent_error = DispatchAiRejectedError("rejected")
+    permanent_error = ChatAiRejectedError("rejected")
     permanent_processor.generate.side_effect = permanent_error
     permanent_queue = ConversationQueue(
         store=queue_store,
@@ -631,7 +628,7 @@ async def test_exhausted_transient_failure_notifies_once_after_final_attempt(
 ) -> None:
     await queue_store.enqueue(text_job(job_id="job-exhausted"))
     entry = (await queue_store.read_new(count=1, block_ms=1))[0]
-    error = DispatchAiUnavailableError("temporary supplier detail")
+    error = ChatAiUnavailableError("temporary supplier detail")
     processor = processor_mock()
     processor.generate.side_effect = error
     queue = ConversationQueue(
@@ -835,7 +832,7 @@ async def test_same_session_entries_wait_for_previous_commit_and_ack(
 
     concurrent_store = RedisConversationQueueStore(
         queue_store._redis,
-        key_prefix="dispatch:test:same-session-concurrent",
+        key_prefix="test:same-session-concurrent",
         group_name="workers",
         consumer_name="consumer-1",
         max_pending=2,
@@ -898,7 +895,7 @@ async def test_retry_backoff_does_not_occupy_global_worker(queue_store) -> None:
 
     retry_store = RedisConversationQueueStore(
         queue_store._redis,
-        key_prefix="dispatch:test:retry-slot",
+        key_prefix="test:retry-slot",
         group_name="workers",
         consumer_name="consumer-1",
         max_pending=2,
@@ -921,7 +918,7 @@ async def test_retry_backoff_does_not_occupy_global_worker(queue_store) -> None:
         if job.prompt == "retry":
             retry_calls += 1
             if retry_calls == 1:
-                raise DispatchAiUnavailableError("temporary")
+                raise ChatAiUnavailableError("temporary")
         else:
             ready_generated.set()
         return text_result(f"answer-{job.prompt}")
@@ -1196,7 +1193,7 @@ async def test_reclaim_is_bounded_and_does_not_delete_unclaimed_pending(queue_st
     await queue_store.enqueue(text_job(job_id="second"))
     entries = await queue_store.read_new(count=2, block_ms=1)
     replacement = RedisConversationQueueStore(
-        queue_store._redis, key_prefix="dispatch:test:chat", group_name="workers",
+        queue_store._redis, key_prefix="test:chat", group_name="workers",
         consumer_name="replacement", max_pending=2, result_ttl_seconds=60,
     )
     await replacement.initialize()
@@ -1223,7 +1220,7 @@ async def test_reclaim_keeps_pending_younger_than_idle_threshold(queue_store) ->
     await queue_store.enqueue(text_job())
     await queue_store.read_new(count=1, block_ms=1)
     replacement = RedisConversationQueueStore(
-        queue_store._redis, key_prefix="dispatch:test:chat", group_name="workers",
+        queue_store._redis, key_prefix="test:chat", group_name="workers",
         consumer_name="replacement", max_pending=2, result_ttl_seconds=60,
     )
     assert await replacement.reclaim(count=1, min_idle_ms=60_000) == []
@@ -1463,90 +1460,6 @@ async def test_reset_guard_rejects_busy_session_without_waiting(queue_store) -> 
     assert queue._session_slots == {}
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("reply", ["截图完成", ""])
-async def test_tool_images_round_trip_and_resume_delivery(
-    queue_store, monkeypatch, chat_plugin, reply,
-) -> None:
-    """真实客户端接收图片，经 Redis 保存后按索引恢复，模型只调用一次。"""
-    import base64
-    from contextlib import asynccontextmanager
-
-    import httpx
-
-    from agent_bot.integrations.dispatch_ai import DispatchAiClient
-    from agent_bot.model_router import ContentModelRouter
-    from agent_bot.services.chat import ChatService
-    from agent_bot.state import ConversationStore
-
-    images = [dict(mimeType="image/png", data=base64.b64encode(
-        b"\x89PNG\r\n\x1a\n" + bytes([i]),
-    ).decode()) for i in range(2)]
-    calls = []
-
-    async def handler(request):
-        """离线返回两张截图，记录是否发生不应有的重新生成。"""
-        calls.append(request.url.path)
-        return httpx.Response(200, json={"code": 200, "data": {
-            "replayContext": reply, "images": images,
-        }})
-
-    client = DispatchAiClient(base_url="http://ai.test/dispatch-ai", timeout_seconds=3,
-                              transport=httpx.MockTransport(handler))
-    service = ChatService(client=client,
-        store=ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60),
-        system_prompt="测试提示", cooldown_seconds=0, max_input_chars=2000,
-        max_concurrent_requests=2, model_router=ContentModelRouter(
-            text_model="test", vision_model="test", image_model="test", audio_model="test",
-        ))
-    monkeypatch.setattr(chat_plugin, "chat_service", service)
-
-    @asynccontextmanager
-    async def tool_session(_job):
-        """保留真实 AI 客户端调用，隔离外部 MCP 服务。"""
-        yield ("mention_member",), "x" * 40
-
-    monkeypatch.setattr(chat_plugin, "_open_queued_tool_session", tool_session)
-    bot = AsyncMock()
-    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
-    attempts = []
-
-    async def send_group_msg(**kwargs):
-        """第二张图片第一次发送失败，第一张图片检查点必须已写入 Redis。"""
-        attempts.append(str(kwargs["message"]))
-        if len(attempts) == 2:
-            state = await queue_store.load_state(entry.stream_id)
-            assert state.delivery_index == 1
-            stored = await queue_store.load_result(entry.stream_id)
-            assert len(stored.tool_images) == 2
-            raise asyncio.CancelledError
-
-    bot.send_group_msg.side_effect = send_group_msg
-    processor = chat_plugin._ConversationProcessor()
-    committed = AsyncMock()
-    monkeypatch.setattr(service, "commit_queued", committed)
-    await queue_store.enqueue(text_job())
-    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
-    queue = ConversationQueue(store=queue_store, processor=processor,
-        policy=QueuePolicy(workers=1, max_attempts=2, retry_initial_seconds=0.01,
-                           retry_max_seconds=0.01, job_ttl_seconds=600),
-        clock=lambda: 1_800_000_000)
-    try:
-        with pytest.raises(asyncio.CancelledError):
-            await queue.process_entry(entry)
-        await queue.process_entry(entry)
-        assert calls == ["/dispatch-ai/chat/chatAgentOne"]
-        assert images[0]["data"] in attempts[0]
-        assert images[1]["data"] in attempts[1]
-        assert attempts[1] == attempts[2]
-        assert len(attempts) == (4 if reply else 3)
-        committed.assert_awaited_once()
-        assert "[已发送 2 张工具图片]" in committed.await_args.args[2]
-        assert images[0]["data"] not in committed.await_args.args[2]
-        assert await queue_store.source_length() == 0
-    finally:
-        await service.aclose()
-        await client.aclose()
 
 
 @pytest.mark.asyncio

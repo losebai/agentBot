@@ -107,7 +107,7 @@ async def settings_refresh_loop(
 
     while True:
         await asyncio.sleep(
-            config_provider().dispatch_chat_config_refresh_interval_seconds
+            config_provider().chat_config_refresh_interval_seconds
         )
         try:
             await reloader.refresh_once()

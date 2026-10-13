@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
-import httpx
 import pytest
 
 from agent_bot.config import RuntimeConfig
@@ -28,8 +27,8 @@ from agent_bot.state import AccessPolicy
 def runtime_config(*, model: str = "model-v1") -> RuntimeConfig:
     return RuntimeConfig(
         onebot_v11_access_token="runtime-reload-onebot-token-with-enough-entropy",
-        dispatch_chat_session_secret="runtime-reload-session-secret-with-enough-entropy",
-        dispatch_chat_model=model,
+        chat_session_secret="runtime-reload-session-secret-with-enough-entropy",
+        chat_model=model,
     )
 
 
@@ -160,7 +159,7 @@ async def test_refresh_loop_logs_safe_stage_type_and_validation_reason(
     store = Mock()
     store.load_revision.return_value = 8
     store.load.side_effect = SettingsValidationError(
-        "settings snapshot failed validation: dispatch_chat_ai_token[string_too_short]"
+        "settings snapshot failed validation: chat_tts_token[string_type]"
     )
     reloader = SettingsReloader(store, initial_revision=7, apply=AsyncMock())
     logger = Mock()
@@ -184,7 +183,7 @@ async def test_refresh_loop_logs_safe_stage_type_and_validation_reason(
         "配置自动刷新失败，继续使用上一版本：阶段={} 异常={} 原因={}",
         "snapshot_load",
         "SettingsValidationError",
-        "settings snapshot failed validation: dispatch_chat_ai_token[string_too_short]",
+        "settings snapshot failed validation: chat_tts_token[string_type]",
     )
 
 
@@ -195,71 +194,71 @@ def test_effective_runtime_config_hot_reloads_chat_but_keeps_startup_fields(
     values = runtime_config_to_plain_values(current)
     values.update(
         {
-            "dispatch_chat_model": "hot-model-v2",
-            "dispatch_chat_vision_model": "hot-vision-model-v2",
-            "dispatch_chat_image_model": "hot-image-model-v2",
-            "dispatch_chat_system_prompt": "数据库热更新后的唯一系统提示词",
-            "dispatch_chat_auto_speak_prompt": "热更新后的主动回复指令",
-            "dispatch_chat_auto_speak_laya_prompt": "热更新后的 Laya 判断指令",
-            "dispatch_chat_allowed_users": ["940000000000012"],
-            "dispatch_chat_llm_temperature": 0.4,
-            "dispatch_chat_llm_enable_thinking": True,
-            "dispatch_chat_llm_forward_user_name": True,
-            "dispatch_chat_agent_enabled": False,
-            "dispatch_chat_agent_max_steps": 2,
-            "dispatch_chat_mcp_services": ["windows-mcp"],
-            "dispatch_chat_web_search_enabled": True,
-            "dispatch_chat_web_search_max_steps": 4,
-            "dispatch_chat_image_recognition_enabled": False,
-            "dispatch_chat_max_images_per_message": 7,
-            "dispatch_chat_memory_enabled": False,
-            "dispatch_chat_memory_max_chars": 2048,
-            "dispatch_chat_memory_compression_max_tokens": 256,
-            "dispatch_chat_keyword_at_replies": {"热更新关键词": "热更新回复"},
-            "dispatch_chat_auto_mention_enabled": False,
-            "dispatch_chat_mention_tool_enabled": False,
-            "dispatch_chat_tts_enabled": True,
-            "dispatch_chat_tts_url": "https://tts.example.invalid/v1/audio/speech",
-            "dispatch_chat_tts_model": "hot-speech-model",
-            "dispatch_chat_tts_voice": "hot-speech-voice",
+            "chat_model": "hot-model-v2",
+            "chat_vision_model": "hot-vision-model-v2",
+            "chat_image_model": "hot-image-model-v2",
+            "chat_system_prompt": "数据库热更新后的唯一系统提示词",
+            "chat_auto_speak_prompt": "热更新后的主动回复指令",
+            "chat_auto_speak_laya_prompt": "热更新后的 Laya 判断指令",
+            "chat_allowed_users": ["940000000000012"],
+            "chat_llm_temperature": 0.4,
+            "chat_llm_enable_thinking": True,
+            "chat_llm_forward_user_name": True,
+            "chat_agent_enabled": False,
+            "chat_agent_max_steps": 2,
+            "chat_mcp_services": ["windows-mcp"],
+            "chat_web_search_enabled": True,
+            "chat_web_search_max_steps": 4,
+            "chat_image_recognition_enabled": False,
+            "chat_max_images_per_message": 7,
+            "chat_memory_enabled": False,
+            "chat_memory_max_chars": 2048,
+            "chat_memory_compression_max_tokens": 256,
+            "chat_keyword_at_replies": {"热更新关键词": "热更新回复"},
+            "chat_auto_mention_enabled": False,
+            "chat_mention_tool_enabled": False,
+            "chat_tts_enabled": True,
+            "chat_tts_url": "https://tts.example.invalid/v1/audio/speech",
+            "chat_tts_model": "hot-speech-model",
+            "chat_tts_voice": "hot-speech-voice",
             "onebot_v11_access_token": ("replacement-onebot-token-that-still-requires-a-restart"),
-            "dispatch_chat_priority": current.dispatch_chat_priority + 10,
+            "chat_priority": current.chat_priority + 10,
         }
     )
     candidate = RuntimeConfig.model_validate(values)
 
     effective, restart_fields = chat_plugin._effective_runtime_config(candidate, current)
 
-    assert effective.dispatch_chat_model == "hot-model-v2"
-    assert effective.dispatch_chat_vision_model == "hot-vision-model-v2"
-    assert effective.dispatch_chat_image_model == "hot-image-model-v2"
-    assert effective.dispatch_chat_system_prompt == "数据库热更新后的唯一系统提示词"
-    assert effective.dispatch_chat_auto_speak_prompt == "热更新后的主动回复指令"
-    assert effective.dispatch_chat_auto_speak_laya_prompt == "热更新后的 Laya 判断指令"
-    assert effective.dispatch_chat_allowed_users == {"940000000000012"}
-    assert effective.dispatch_chat_llm_temperature == 0.4
-    assert effective.dispatch_chat_llm_enable_thinking is True
-    assert effective.dispatch_chat_llm_forward_user_name is True
-    assert effective.dispatch_chat_agent_enabled is False
-    assert effective.dispatch_chat_agent_max_steps == 2
-    assert effective.dispatch_chat_mcp_services == ["windows-mcp"]
-    assert effective.dispatch_chat_web_search_enabled is True
-    assert effective.dispatch_chat_web_search_max_steps == 4
-    assert effective.dispatch_chat_image_recognition_enabled is False
-    assert effective.dispatch_chat_max_images_per_message == 7
-    assert effective.dispatch_chat_memory_enabled is False
-    assert effective.dispatch_chat_memory_max_chars == 2048
-    assert effective.dispatch_chat_memory_compression_max_tokens == 256
-    assert effective.dispatch_chat_keyword_at_replies == {"热更新关键词": "热更新回复"}
-    assert effective.dispatch_chat_auto_mention_enabled is False
-    assert effective.dispatch_chat_mention_tool_enabled is False
-    assert effective.dispatch_chat_tts_enabled is True
-    assert effective.dispatch_chat_tts_url == "https://tts.example.invalid/v1/audio/speech"
-    assert effective.dispatch_chat_tts_model == "hot-speech-model"
-    assert effective.dispatch_chat_tts_voice == "hot-speech-voice"
+    assert effective.chat_model == "hot-model-v2"
+    assert effective.chat_vision_model == "hot-vision-model-v2"
+    assert effective.chat_image_model == "hot-image-model-v2"
+    assert effective.chat_system_prompt == "数据库热更新后的唯一系统提示词"
+    assert effective.chat_auto_speak_prompt == "热更新后的主动回复指令"
+    assert effective.chat_auto_speak_laya_prompt == "热更新后的 Laya 判断指令"
+    assert effective.chat_allowed_users == {"940000000000012"}
+    assert effective.chat_llm_temperature == 0.4
+    assert effective.chat_llm_enable_thinking is True
+    assert effective.chat_llm_forward_user_name is True
+    assert effective.chat_agent_enabled is False
+    assert effective.chat_agent_max_steps == 2
+    assert effective.chat_mcp_services == ["windows-mcp"]
+    assert effective.chat_web_search_enabled is True
+    assert effective.chat_web_search_max_steps == 4
+    assert effective.chat_image_recognition_enabled is False
+    assert effective.chat_max_images_per_message == 7
+    assert effective.chat_memory_enabled is False
+    assert effective.chat_memory_max_chars == 2048
+    assert effective.chat_memory_compression_max_tokens == 256
+    assert effective.chat_keyword_at_replies == {"热更新关键词": "热更新回复"}
+    assert effective.chat_auto_mention_enabled is False
+    assert effective.chat_mention_tool_enabled is False
+    assert effective.chat_tts_enabled is True
+    assert effective.chat_tts_url == "https://tts.example.invalid/v1/audio/speech"
+    assert effective.chat_tts_model == "hot-speech-model"
+    assert effective.chat_tts_voice == "hot-speech-voice"
     assert effective.onebot_v11_access_token == current.onebot_v11_access_token
-    assert effective.dispatch_chat_priority == current.dispatch_chat_priority
-    assert restart_fields == {"onebot_v11_access_token", "dispatch_chat_priority"}
+    assert effective.chat_priority == current.chat_priority
+    assert restart_fields == {"onebot_v11_access_token", "chat_priority"}
 
 
 @pytest.mark.asyncio
@@ -273,36 +272,23 @@ async def test_chat_reasoning_settings_hot_reload_into_outgoing_request(
     current = chat_plugin._runtime_state
     values = runtime_config_to_plain_values(current.config)
     values.update({
-        "dispatch_chat_agent_max_steps": 2,
-        "dispatch_chat_web_search_max_steps": 4,
-        "dispatch_chat_llm_enable_thinking": not enable_thinking,
+        "chat_agent_max_steps": 2,
+        "chat_web_search_max_steps": 4,
+        "chat_llm_enable_thinking": not enable_thinking,
     })
     before = RuntimeConfig.model_validate(values)
     values.update({
-        "dispatch_chat_agent_max_steps": max_steps,
-        "dispatch_chat_llm_enable_thinking": enable_thinking,
+        "chat_agent_max_steps": max_steps,
+        "chat_llm_enable_thinking": enable_thinking,
     })
     candidate = RuntimeConfig.model_validate(values)
     effective, restart_fields = chat_plugin._effective_runtime_config(candidate, before)
     assert restart_fields == set()
     replacement = chat_plugin._build_runtime_state(effective, current)
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        """检查实际 HTTP 参数，且允许模型第一轮直接回答。"""
-        payload = json.loads(request.content)
-        assert request.url.path.endswith("/chat/chatAgentOne")
-        assert payload["maxSteps"] == (4 if max_steps is None else max_steps)
-        if enable_thinking is None:
-            assert "enableThinking" not in payload
-        else:
-            assert payload["enableThinking"] is enable_thinking
-        return httpx.Response(200, json={"code": 200, "data": {"replayContext": "你好"}})
-
-    original_http = replacement.ai_client.java_client._http
-    replacement.ai_client.java_client._http = httpx.AsyncClient(
-        base_url="http://ai.test/dispatch-ai/", transport=httpx.MockTransport(handler),
-    )
-    await original_http.aclose()
+    # 配置传播验证只替换模型调用，实际 Agent 请求仍由本地客户端构造。
+    complete = AsyncMock(return_value=SimpleNamespace(content="你好"))
+    replacement.ai_client.agent_service.complete = complete
     try:
         reply = await replacement.ai_client.complete(
             model="model", session_id="session", prompt="你好", request_id="reload-reasoning",
@@ -310,6 +296,9 @@ async def test_chat_reasoning_settings_hot_reload_into_outgoing_request(
             tool_session_token="a" * 40, use_web_search=False,
         )
         assert reply == "你好"
+        request = complete.await_args.args[0]
+        assert request.max_steps == max_steps
+        assert request.options.enable_thinking == enable_thinking
     finally:
         await chat_plugin._close_runtime_state(replacement)
 
@@ -320,8 +309,8 @@ async def test_runtime_state_uses_native_audio_without_legacy_tts_client(chat_pl
     values = runtime_config_to_plain_values(current.config)
     values.update(
         {
-            "dispatch_chat_tts_enabled": True,
-            "dispatch_chat_tts_url": None,
+            "chat_tts_enabled": True,
+            "chat_tts_url": None,
         }
     )
     candidate = RuntimeConfig.model_validate(values)
@@ -329,11 +318,11 @@ async def test_runtime_state_uses_native_audio_without_legacy_tts_client(chat_pl
     replacement = chat_plugin._build_runtime_state(candidate, current)
     ai_client = replacement.ai_client
     assert replacement.tts_client is None
-    assert ai_client.java_client._http.is_closed is False
+    assert ai_client.python_service.providers["openai-chat"].transport.http.is_closed is False
 
     await chat_plugin._close_runtime_state(replacement)
 
-    assert ai_client.java_client._http.is_closed is True
+    assert ai_client.python_service.providers["openai-chat"].transport.http.is_closed is True
 
 
 @pytest.mark.asyncio
@@ -347,17 +336,17 @@ async def test_runtime_state_builds_gpt_sovits_client_from_database_settings(
     values = runtime_config_to_plain_values(current.config)
     values.update(
         {
-            "dispatch_chat_tts_enabled": True,
-            "dispatch_chat_tts_url": "http://127.0.0.1:9880/tts",
-            "dispatch_chat_tts_reference_audio_path": "G:/models/hutao/reference.wav",
-            "dispatch_chat_tts_reference_text": "胡桃参考文本",
-            "dispatch_chat_tts_reference_language": "zh",
-            "dispatch_chat_tts_text_language": "zh",
-            "dispatch_chat_tts_output_directory": str(tmp_path),
-            "dispatch_chat_tts_speed": 1.1,
-            "dispatch_chat_tts_timeout_seconds": 45,
-            "dispatch_chat_tts_max_input_chars": 512,
-            "dispatch_chat_tts_max_audio_bytes": 2_000_000,
+            "chat_tts_enabled": True,
+            "chat_tts_url": "http://127.0.0.1:9880/tts",
+            "chat_tts_reference_audio_path": "G:/models/hutao/reference.wav",
+            "chat_tts_reference_text": "胡桃参考文本",
+            "chat_tts_reference_language": "zh",
+            "chat_tts_text_language": "zh",
+            "chat_tts_output_directory": str(tmp_path),
+            "chat_tts_speed": 1.1,
+            "chat_tts_timeout_seconds": 45,
+            "chat_tts_max_input_chars": 512,
+            "chat_tts_max_audio_bytes": 2_000_000,
         }
     )
     candidate = RuntimeConfig.model_validate(values)
@@ -379,10 +368,10 @@ async def test_runtime_state_routes_each_content_category_to_hot_reloaded_model(
     values = runtime_config_to_plain_values(current.config)
     values.update(
         {
-            "dispatch_chat_model": "hot-text-model",
-            "dispatch_chat_vision_model": "hot-vision-model",
-            "dispatch_chat_image_model": "hot-image-model",
-            "dispatch_chat_tts_model": "hot-audio-model",
+            "chat_model": "hot-text-model",
+            "chat_vision_model": "hot-vision-model",
+            "chat_image_model": "hot-image-model",
+            "chat_tts_model": "hot-audio-model",
         }
     )
     candidate = RuntimeConfig.model_validate(values)
@@ -405,8 +394,8 @@ async def test_runtime_state_uses_only_database_configured_system_prompt(
 ) -> None:
     current = chat_plugin._runtime_state
     values = runtime_config_to_plain_values(current.config)
-    values["dispatch_chat_system_prompt"] = "数据库中的唯一提示词"
-    values["dispatch_chat_agent_enabled"] = False
+    values["chat_system_prompt"] = "数据库中的唯一提示词"
+    values["chat_agent_enabled"] = False
     candidate = RuntimeConfig.model_validate(values)
     service_factory = Mock(wraps=chat_plugin.ChatService)
     monkeypatch.setattr(chat_plugin, "ChatService", service_factory)
@@ -427,7 +416,7 @@ async def test_runtime_state_hot_reloads_memory_limits_safely(
 ) -> None:
     current = chat_plugin._runtime_state
     token_values = runtime_config_to_plain_values(current.config)
-    token_values["dispatch_chat_memory_compression_max_tokens"] = 256
+    token_values["chat_memory_compression_max_tokens"] = 256
     token_candidate = RuntimeConfig.model_validate(token_values)
     service_factory = Mock(wraps=chat_plugin.ChatService)
     monkeypatch.setattr(chat_plugin, "ChatService", service_factory)
@@ -435,7 +424,7 @@ async def test_runtime_state_hot_reloads_memory_limits_safely(
     token_service_options = service_factory.call_args.kwargs
 
     limit_values = runtime_config_to_plain_values(current.config)
-    limit_values["dispatch_chat_memory_max_chars"] = 2048
+    limit_values["chat_memory_max_chars"] = 2048
     limit_candidate = RuntimeConfig.model_validate(limit_values)
     limit_replacement = chat_plugin._build_runtime_state(limit_candidate, current)
     try:
@@ -445,7 +434,7 @@ async def test_runtime_state_hot_reloads_memory_limits_safely(
         assert isinstance(limit_replacement.conversation_store, MySqlConversationMemoryStore)
         assert (
             limit_replacement.conversation_store.policy.max_memory_chars
-            == current.config.dispatch_chat_memory_max_chars
+            == current.config.chat_memory_max_chars
         )
         chat_plugin._publish_runtime_state(limit_replacement)
         assert limit_replacement.conversation_store.policy.max_memory_chars == 2048
@@ -461,12 +450,12 @@ async def test_runtime_state_rebuilds_recent_group_context_only_when_its_limits_
 ) -> None:
     current = chat_plugin._runtime_state
     same_values = runtime_config_to_plain_values(current.config)
-    same_values["dispatch_chat_llm_temperature"] = 0.3
+    same_values["chat_llm_temperature"] = 0.3
     same_candidate = RuntimeConfig.model_validate(same_values)
     same_replacement = chat_plugin._build_runtime_state(same_candidate, current)
 
     changed_values = runtime_config_to_plain_values(current.config)
-    changed_values["dispatch_chat_group_recent_context_messages"] = 5
+    changed_values["chat_group_recent_context_messages"] = 5
     changed_candidate = RuntimeConfig.model_validate(changed_values)
     changed_replacement = chat_plugin._build_runtime_state(changed_candidate, current)
     try:
@@ -481,7 +470,7 @@ async def test_runtime_state_rebuilds_recent_group_context_only_when_its_limits_
         )
         assert (
             changed_replacement.group_recent_context_store.policy.message_limit
-            == current.config.dispatch_chat_group_recent_context_messages
+            == current.config.chat_group_recent_context_messages
         )
         chat_plugin._publish_runtime_state(changed_replacement)
         assert changed_replacement.group_recent_context_store.policy.message_limit == 5
@@ -497,14 +486,13 @@ async def test_runtime_state_builds_group_only_laya_auto_speak(chat_plugin) -> N
     values = runtime_config_to_plain_values(current.config)
     values.update(
         {
-            "dispatch_chat_auto_speak_enabled": True,
-            "dispatch_chat_auto_speak_bot_id": "940000000000001",
-            "dispatch_chat_auto_speak_groups": ["940000000000002"],
-            "dispatch_chat_auto_speak_users": ["940000000000003"],
-            "dispatch_chat_auto_speak_trigger_mode": "message",
-            "dispatch_chat_mcp_enabled": True,
-            "dispatch_chat_laya_enabled": True,
-            "dispatch_chat_group_recent_context_enabled": True,
+            "chat_auto_speak_enabled": True,
+            "chat_auto_speak_bot_id": "940000000000001",
+            "chat_auto_speak_groups": ["940000000000002"],
+            "chat_auto_speak_trigger_mode": "message",
+            "chat_mcp_enabled": True,
+            "chat_auto_speak_mcp_code": "decision",
+            "chat_group_recent_context_enabled": True,
         }
     )
     candidate = RuntimeConfig.model_validate(values)
@@ -516,7 +504,7 @@ async def test_runtime_state_builds_group_only_laya_auto_speak(chat_plugin) -> N
         assert service.runs_on_interval is False
         assert service.accepts_message("940000000000001", "940000000000002") is True
         assert service.accepts_message("940000000000001", "940000000000003") is False
-        assert service._decision_client is replacement.ai_client
+        assert service._decision_client.catalog is replacement.ai_client.agent_service.catalog
         assert service._recent_context_store is replacement.group_recent_context_store
         assert not hasattr(service, "_targets")
     finally:
@@ -551,8 +539,8 @@ async def test_apply_runtime_settings_atomically_publishes_new_chat_state(
     values = runtime_config_to_plain_values(original_state.config)
     values.update(
         {
-            "dispatch_chat_model": "hot-model-v3",
-            "dispatch_chat_allowed_users": ["940000000000013"],
+            "chat_model": "hot-model-v3",
+            "chat_allowed_users": ["940000000000013"],
         }
     )
     candidate = RuntimeConfig.model_validate(values)
@@ -572,7 +560,7 @@ async def test_apply_runtime_settings_atomically_publishes_new_chat_state(
     try:
         await chat_plugin._apply_runtime_settings(VersionedSettings(config=candidate, revision=2))
 
-        assert chat_plugin.plugin_config.dispatch_chat_model == "hot-model-v3"
+        assert chat_plugin.plugin_config.chat_model == "hot-model-v3"
         assert chat_plugin.access_policy.allowed_users == frozenset({"940000000000013"})
         stop_auto.assert_awaited_once_with()
         start_auto.assert_awaited_once_with()
@@ -593,7 +581,7 @@ async def test_apply_skips_runtime_rebuild_when_only_startup_fields_changed(
 ) -> None:
     original_state = chat_plugin._runtime_state
     values = runtime_config_to_plain_values(original_state.config)
-    values["dispatch_chat_priority"] = original_state.config.dispatch_chat_priority + 1
+    values["chat_priority"] = original_state.config.chat_priority + 1
     candidate = RuntimeConfig.model_validate(values)
     build = Mock()
     stop_auto = AsyncMock()
@@ -620,7 +608,7 @@ async def test_apply_runtime_settings_waits_for_in_flight_message(
 ) -> None:
     original_state = chat_plugin._runtime_state
     values = runtime_config_to_plain_values(original_state.config)
-    values["dispatch_chat_model"] = "hot-model-after-in-flight-message"
+    values["chat_model"] = "hot-model-after-in-flight-message"
     candidate = RuntimeConfig.model_validate(values)
     replacement_state = replace(original_state, config=candidate)
     entered = asyncio.Event()
@@ -675,13 +663,13 @@ async def test_runtime_reload_switches_auto_speak_trigger_without_overlap(
     interval_values = runtime_config_to_plain_values(original_state.config)
     interval_values.update(
         {
-            "dispatch_chat_auto_speak_enabled": True,
-            "dispatch_chat_auto_speak_bot_id": "940000000000001",
-            "dispatch_chat_auto_speak_groups": ["940000000000002"],
-            "dispatch_chat_auto_speak_trigger_mode": "interval",
-            "dispatch_chat_mcp_enabled": True,
-            "dispatch_chat_laya_enabled": True,
-            "dispatch_chat_group_recent_context_enabled": True,
+            "chat_auto_speak_enabled": True,
+            "chat_auto_speak_bot_id": "940000000000001",
+            "chat_auto_speak_groups": ["940000000000002"],
+            "chat_auto_speak_trigger_mode": "interval",
+            "chat_mcp_enabled": True,
+            "chat_auto_speak_mcp_code": "decision",
+            "chat_group_recent_context_enabled": True,
         }
     )
     interval_config = RuntimeConfig.model_validate(interval_values)
@@ -691,7 +679,7 @@ async def test_runtime_reload_switches_auto_speak_trigger_without_overlap(
         auto_speak_service=ModeService(True),
     )
     message_values = dict(interval_values)
-    message_values["dispatch_chat_auto_speak_trigger_mode"] = "message"
+    message_values["chat_auto_speak_trigger_mode"] = "message"
     message_config = RuntimeConfig.model_validate(message_values)
     message_state = replace(
         interval_state,

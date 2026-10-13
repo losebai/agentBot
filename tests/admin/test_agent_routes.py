@@ -24,9 +24,6 @@ async def agent_api(admin_store, admin_runtime, agent_database, agent_params, se
         )
     )
     admin_runtime.agent_service = service
-    admin_runtime.config = admin_runtime.config.model_copy(
-        update={"dispatch_chat_agent_backend": "python"}
-    )
     app = FastAPI()
     install_admin(app, admin_store, admin_runtime, AdminConfig(token=TOKEN))
     async with httpx.AsyncClient(
@@ -66,7 +63,7 @@ async def test_agent_api_rejects_forged_qq_authority(agent_api, extra):
 
 
 async def test_sync_and_stream_share_engine(agent_api):
-    api, _, runtime = agent_api
+    api, _, _runtime = agent_api
     body = {"agent_code": "helper", "prompt": "hello", "session_id": "test"}
     response = await api.post("/api/v1/agent-runs", headers=HEADERS, json=body)
     assert response.status_code == 200 and response.json()["content"] == "最终回答"
@@ -77,7 +74,3 @@ async def test_sync_and_stream_share_engine(agent_api):
     assert len(records) == 2 and "prompt" not in records[0]
     id = records[0]["execution_id"]
     assert (await api.get(f"/api/v1/agent-runs/{id}/steps", headers=HEADERS)).json()["items"]
-    runtime.config = runtime.config.model_copy(update={"dispatch_chat_agent_backend": "java"})
-    assert (
-        await api.post("/api/v1/agent-runs/stream", headers=HEADERS, json=body)
-    ).status_code == 409

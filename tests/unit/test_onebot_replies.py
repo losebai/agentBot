@@ -22,9 +22,9 @@ def runtime_config(*, chunk_chars: int = 1200, max_reply_chars: int = 6000) -> R
 
     return RuntimeConfig(
         onebot_v11_access_token="onebot-token-that-is-at-least-32-characters",
-        dispatch_chat_session_secret="session-secret-that-is-at-least-32-characters",
-        dispatch_chat_chunk_chars=chunk_chars,
-        dispatch_chat_max_reply_chars=max_reply_chars,
+        chat_session_secret="session-secret-that-is-at-least-32-characters",
+        chat_chunk_chars=chunk_chars,
+        chat_max_reply_chars=max_reply_chars,
     )
 
 

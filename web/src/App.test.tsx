@@ -20,7 +20,7 @@ it('连接后显示真实状态与机器人数量，退出清空会话', async (
     ? Response.json([{ id: '123456', adapter: 'OneBot V11' }])
     : Response.json({ service: 'agentBot', ready: true, bot_count: 1,
       database_revision: 4, applied_revision: 3, restart_required_fields: ['port'],
-      ai_backend: 'java-compatibility' })));
+      ai_backend: 'python-ordinary' })));
   render(<App />);
   fireEvent.change(screen.getByLabelText('管理员凭据'), { target: { value: 'offline-token' } });
   fireEvent.click(screen.getByRole('button', { name: '连接服务' }));

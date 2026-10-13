@@ -14,6 +14,8 @@ from agent_bot.agent.service import AgentService
 from agent_bot.agent.tools.chat import ChatToolBridge
 from agent_bot.agent.tools.media import AdminMediaTools
 from agent_bot.agent.tools.runtime import ToolRuntime
+from agent_bot.ai.auto_speak import AutoSpeakDecisionService
+from agent_bot.ai.auto_speak_records import AutoSpeakRecords
 from agent_bot.ai.catalog import AiCatalog
 from agent_bot.ai.credentials import CredentialResolver
 from agent_bot.ai.providers.agent_chat import AgentChatProvider
@@ -29,11 +31,13 @@ from agent_bot.ai.sessions import AiSessionStore
 from agent_bot.config import RuntimeConfig
 from agent_bot.database_pool import MySqlConnectionPool
 from agent_bot.integrations.comfy import ComfyClient
-from agent_bot.integrations.dispatch_ai import DispatchAiClient
 from agent_bot.integrations.gpt_sovits import GptSoVitsClient
 from agent_bot.integrations.naraka import NarakaClient
 from agent_bot.integrations.onebot.auto_speak import AutoSpeakBot, AutoSpeakService
 from agent_bot.integrations.workflow_store import WorkflowStore
+from agent_bot.jobs.service import JobService
+from agent_bot.jobs.store import JobStore
+from agent_bot.jobs.tools import JobTools
 from agent_bot.media.download import QQImageDownloader
 from agent_bot.media.providers import MediaProvider
 from agent_bot.media.resources import MediaResources
@@ -44,7 +48,6 @@ from agent_bot.memory_store import (
     MySqlConversationMemoryStore,
     MySqlRecentGroupContextStore,
 )
-from agent_bot.model_guard import ModelGuard
 from agent_bot.model_router import ContentModelRouter
 from agent_bot.models import ChatToolName, LlmRequestOptions
 from agent_bot.runtime_fields import RESTART_REQUIRED_FIELDS
@@ -101,57 +104,29 @@ def build_runtime_state(
 ) -> RuntimeState:
     """从类型化配置构建运行时，并复用契约未变化的历史存储。"""
 
-    session_secret = config.dispatch_chat_session_secret.get_secret_value()
-    ai_token = (
-        config.dispatch_chat_ai_token.get_secret_value()
-        if config.dispatch_chat_ai_token is not None
-        else None
-    )
+    session_secret = config.chat_session_secret.get_secret_value()
     naraka_default_role_id = (
-        config.dispatch_chat_naraka_default_role_id.get_secret_value()
-        if config.dispatch_chat_naraka_default_role_id is not None
+        config.chat_naraka_default_role_id.get_secret_value()
+        if config.chat_naraka_default_role_id is not None
         else None
     )
     access_policy = AccessPolicy(
-        allowed_users=config.dispatch_chat_allowed_users,
-        allowed_groups=config.dispatch_chat_allowed_groups,
-        blocked_groups=config.dispatch_chat_blocked_groups,
-        blocked_users=config.dispatch_chat_blocked_users,
-        allow_all=config.dispatch_chat_allow_all,
+        allowed_users=config.chat_allowed_users,
+        allowed_groups=config.chat_allowed_groups,
+        blocked_groups=config.chat_blocked_groups,
+        blocked_users=config.chat_blocked_users,
+        allow_all=config.chat_allow_all,
     )
     model_router = ContentModelRouter(
-        text_model=config.dispatch_chat_model,
-        vision_model=config.dispatch_chat_vision_model,
-        image_model=config.dispatch_chat_image_model,
-        audio_model=config.dispatch_chat_tts_model,
-    )
-    ai_client = DispatchAiClient(
-        base_url=config.dispatch_chat_ai_base_url,
-        timeout_seconds=config.dispatch_chat_timeout_seconds,
-        token=ai_token,
-        request_options=LlmRequestOptions(
-            max_tokens=config.dispatch_chat_llm_max_tokens,
-            temperature=config.dispatch_chat_llm_temperature,
-            top_p=config.dispatch_chat_llm_top_p,
-            top_k=config.dispatch_chat_llm_top_k,
-            min_p=config.dispatch_chat_llm_min_p,
-            presence_penalty=config.dispatch_chat_llm_presence_penalty,
-            frequency_penalty=config.dispatch_chat_llm_frequency_penalty,
-            repetition_penalty=config.dispatch_chat_llm_repetition_penalty,
-            stop=config.dispatch_chat_llm_stop,
-            enable_thinking=config.dispatch_chat_llm_enable_thinking,
-        ),
-        agent_max_steps=config.dispatch_chat_agent_max_steps,
-        web_search_max_steps=config.dispatch_chat_web_search_max_steps,
-        mcp_services=config.dispatch_chat_mcp_services,
-        laya_enabled=config.dispatch_chat_laya_enabled,
-    )
-    model_guard = ModelGuard(
-        database,
-        connect=database_pool.connect,
-        cache_ttl_seconds=config.dispatch_chat_model_cache_ttl_seconds,
+        text_model=config.chat_model,
+        vision_model=config.chat_vision_model,
+        image_model=config.chat_image_model,
+        audio_model=config.chat_tts_model,
     )
     catalog = AiCatalog(database, connect=database_pool.connect)
+    agent_catalog = AgentCatalog(database, connect=database_pool.connect)
+    mcp_connector = McpConnector(McpCredentials())
+    job_store = JobStore(database, connect=database_pool.connect)
     python_service = AiService(
         catalog,
         AiSessionStore(database, connect=database_pool.connect),
@@ -164,11 +139,11 @@ def build_runtime_state(
     )
     comfy_client: ComfyClient | None = None
     workflow_service: WorkflowExecutionService | None = None
-    if config.dispatch_chat_local_workflow_enabled:
+    if config.chat_local_workflow_enabled:
         comfy_client = ComfyClient(
-            base_url=config.dispatch_chat_local_workflow_base_url,
-            timeout_seconds=config.dispatch_chat_local_workflow_timeout_seconds,
-            max_image_bytes=config.dispatch_chat_image_max_bytes,
+            base_url=config.chat_local_workflow_base_url,
+            timeout_seconds=config.chat_local_workflow_timeout_seconds,
+            max_image_bytes=config.chat_image_max_bytes,
         )
         workflow_service = WorkflowExecutionService(
             store=WorkflowStore(database, connect=database_pool.connect),
@@ -177,45 +152,43 @@ def build_runtime_state(
 
     tts_client: GptSoVitsClient | None = None
     if (
-        config.dispatch_chat_tts_enabled
-        and config.dispatch_chat_tts_url is not None
-        and config.dispatch_chat_tts_reference_audio_path is not None
-        and config.dispatch_chat_tts_reference_text is not None
+        config.chat_tts_enabled
+        and config.chat_tts_url is not None
+        and config.chat_tts_reference_audio_path is not None
+        and config.chat_tts_reference_text is not None
     ):
         tts_client = GptSoVitsClient(
-            url=config.dispatch_chat_tts_url,
-            reference_audio_path=config.dispatch_chat_tts_reference_audio_path,
-            reference_text=config.dispatch_chat_tts_reference_text,
-            reference_language=config.dispatch_chat_tts_reference_language,
-            text_language=config.dispatch_chat_tts_text_language,
-            output_directory=config.dispatch_chat_tts_output_directory,
-            speed_factor=config.dispatch_chat_tts_speed,
-            timeout_seconds=config.dispatch_chat_tts_timeout_seconds,
-            max_input_chars=config.dispatch_chat_tts_max_input_chars,
-            max_audio_bytes=config.dispatch_chat_tts_max_audio_bytes,
-            max_concurrent_requests=config.dispatch_chat_queue_media_workers,
+            url=config.chat_tts_url,
+            reference_audio_path=config.chat_tts_reference_audio_path,
+            reference_text=config.chat_tts_reference_text,
+            reference_language=config.chat_tts_reference_language,
+            text_language=config.chat_tts_text_language,
+            output_directory=config.chat_tts_output_directory,
+            speed_factor=config.chat_tts_speed,
+            timeout_seconds=config.chat_tts_timeout_seconds,
+            max_input_chars=config.chat_tts_max_input_chars,
+            max_audio_bytes=config.chat_tts_max_audio_bytes,
+            max_concurrent_requests=config.chat_queue_media_workers,
         )
 
     ai_client = RoutingAiClient(
-        ai_client,
         python_service,
-        plain_backend=config.dispatch_chat_plain_ai_backend,
-        timeout_seconds=config.dispatch_chat_timeout_seconds,
-        default_options=ai_client._request_options,
-        mcp_services=config.dispatch_chat_mcp_services,
-        laya_enabled=config.dispatch_chat_laya_enabled,
-        agent_backend=config.dispatch_chat_agent_backend,
-        media_backend=config.dispatch_chat_media_backend,
+        timeout_seconds=config.chat_timeout_seconds,
+        default_options=LlmRequestOptions(**{
+            name: getattr(config, f"chat_llm_{name}")
+            for name in LlmRequestOptions.model_fields
+        }),
+        mcp_services=config.chat_mcp_services,
         media_service=MediaGenerationService(
             catalog, CredentialResolver(), MediaProvider(), media_resources
         )
         if media_resources is not None
         else None,
-        agent_code=config.dispatch_chat_python_agent_code,
-        agent_max_steps=config.dispatch_chat_agent_max_steps,
-        web_search_max_steps=config.dispatch_chat_web_search_max_steps,
+        agent_code=config.chat_python_agent_code,
+        agent_max_steps=config.chat_agent_max_steps,
+        web_search_max_steps=config.chat_web_search_max_steps,
         agent_service=AgentService(
-            AgentCatalog(database, connect=database_pool.connect),
+            agent_catalog,
             AgentRunStore(
                 database,
                 connect=database_pool.connect,
@@ -228,8 +201,9 @@ def build_runtime_state(
                 "ollama": AgentOllamaProvider(ProviderTransport()),
             },
             ToolRuntime(
-                McpConnector(McpCredentials()),
+                mcp_connector,
                 chat_tool_bridge,
+                job_tools=JobTools(job_store) if config.chat_job_enabled else None,
                 admin_media_tools=AdminMediaTools(
                     config,
                     workflow_service,
@@ -241,24 +215,20 @@ def build_runtime_state(
                 if media_resources is not None
                 else None,
             ),
-            search_code=config.dispatch_chat_python_search_mcp_code,
+            search_code=config.chat_python_search_mcp_code,
             media_store=media_resources.store if media_resources else None,
             image_downloader=QQImageDownloader(remaining=lambda: remaining_timeout(15)),
-            maximum_images=config.dispatch_chat_max_images_per_message,
+            maximum_images=config.chat_max_images_per_message,
         ),
+        job_service=JobService(job_store, python_service),
     )
-    model_guard = RoutedModelGuard(
-        model_guard,
-        catalog,
-        plain_backend=config.dispatch_chat_plain_ai_backend,
-        media_backend=config.dispatch_chat_media_backend,
-    )
+    model_guard = RoutedModelGuard(catalog)
     conversation_policy = ConversationMemoryPolicy(
-        history_turns=config.dispatch_chat_history_turns,
-        max_history_chars=config.dispatch_chat_history_max_chars,
-        ttl_seconds=config.dispatch_chat_history_ttl_seconds,
-        memory_enabled=config.dispatch_chat_memory_enabled,
-        max_memory_chars=config.dispatch_chat_memory_max_chars,
+        history_turns=config.chat_history_turns,
+        max_history_chars=config.chat_history_max_chars,
+        ttl_seconds=config.chat_history_ttl_seconds,
+        memory_enabled=config.chat_memory_enabled,
+        max_memory_chars=config.chat_memory_max_chars,
     )
     conversation_store = (
         previous.conversation_store
@@ -270,9 +240,9 @@ def build_runtime_state(
         )
     )
     group_context_policy = GroupContextPolicy(
-        message_limit=config.dispatch_chat_group_recent_context_messages,
-        max_chars=config.dispatch_chat_group_recent_context_max_chars,
-        ttl_seconds=config.dispatch_chat_group_recent_context_ttl_seconds,
+        message_limit=config.chat_group_recent_context_messages,
+        max_chars=config.chat_group_recent_context_max_chars,
+        ttl_seconds=config.chat_group_recent_context_ttl_seconds,
     )
     group_recent_context_store = (
         previous.group_recent_context_store
@@ -287,72 +257,75 @@ def build_runtime_state(
     chat_service = chat_service_factory(
         client=ai_client,
         store=conversation_store,
-        system_prompt=config.dispatch_chat_system_prompt,
-        max_input_chars=config.dispatch_chat_max_input_chars,
-        cooldown_seconds=config.dispatch_chat_cooldown_seconds,
-        max_concurrent_requests=config.dispatch_chat_max_concurrent_requests,
-        max_concurrent_media_requests=config.dispatch_chat_queue_media_workers,
-        max_rate_limit_entries=config.dispatch_chat_max_sessions,
+        system_prompt=config.chat_system_prompt,
+        max_input_chars=config.chat_max_input_chars,
+        cooldown_seconds=config.chat_cooldown_seconds,
+        max_concurrent_requests=config.chat_max_concurrent_requests,
+        max_concurrent_media_requests=config.chat_queue_media_workers,
+        max_rate_limit_entries=config.chat_max_sessions,
         model_guard=model_guard,
         model_router=model_router,
-        agent_enabled=config.dispatch_chat_agent_enabled,
-        web_search_enabled=config.dispatch_chat_web_search_enabled,
-        mcp_services_enabled=bool(config.dispatch_chat_mcp_services),
-        memory_compression_max_tokens=config.dispatch_chat_memory_compression_max_tokens,
-        memory_compression_queue_capacity=config.dispatch_chat_memory_compression_queue_capacity,
+        agent_enabled=config.chat_agent_enabled,
+        web_search_enabled=config.chat_web_search_enabled,
+        mcp_services_enabled=bool(config.chat_mcp_services),
+        memory_compression_max_tokens=config.chat_memory_compression_max_tokens,
+        memory_compression_queue_capacity=config.chat_memory_compression_queue_capacity,
     )
     message_counter = MessageCounter(
-        limit=config.dispatch_chat_user_message_limit,
-        window_seconds=config.dispatch_chat_user_message_window_seconds,
+        limit=config.chat_user_message_limit,
+        window_seconds=config.chat_user_message_window_seconds,
     )
 
     auto_speak_service: AutoSpeakService | None = None
-    if config.dispatch_chat_auto_speak_enabled:
-        assert config.dispatch_chat_auto_speak_bot_id is not None
-        assert isinstance(config.dispatch_chat_auto_speak_groups, set)
+    if config.chat_auto_speak_enabled:
+        assert config.chat_auto_speak_bot_id is not None
+        assert config.chat_auto_speak_mcp_code is not None
         auto_speak_service = AutoSpeakService(
             job_submitter=auto_speak_job_submitter,
             available_tools_provider=auto_speak_tools_provider,
             conversation_context_provider=lambda session_id: asyncio.to_thread(
-                conversation_store.context,
-                session_id,
+                conversation_store.context, session_id
             ),
-            decision_client=ai_client,
+            decision_client=AutoSpeakDecisionService(
+                agent_catalog, mcp_connector,
+                AutoSpeakRecords(database, connect=database_pool.connect),
+                mcp_code=config.chat_auto_speak_mcp_code,
+            ),
             context_builder=AutoSpeakContextBuilder(),
             recent_context_store=group_recent_context_store,
             bot_provider=bot_provider,
-            bot_id=config.dispatch_chat_auto_speak_bot_id.get_secret_value(),
-            group_ids=config.dispatch_chat_auto_speak_groups,
-            trigger_mode=config.dispatch_chat_auto_speak_trigger_mode,
-            prompt=config.dispatch_chat_auto_speak_prompt,
-            system_prompt=config.dispatch_chat_system_prompt,
-            laya_prompt=config.dispatch_chat_auto_speak_laya_prompt,
+            bot_id=config.chat_auto_speak_bot_id.get_secret_value(),
+            group_ids=config.chat_auto_speak_groups,
+            trigger_mode=config.chat_auto_speak_trigger_mode,
+            prompt=config.chat_auto_speak_prompt,
+            system_prompt=config.chat_system_prompt,
+            laya_prompt=config.chat_auto_speak_laya_prompt,
             session_secret=session_secret,
-            initial_delay_seconds=config.dispatch_chat_auto_speak_initial_delay_seconds,
-            interval_seconds=config.dispatch_chat_auto_speak_interval_seconds,
-            max_reply_chars=config.dispatch_chat_auto_speak_max_reply_chars,
+            initial_delay_seconds=config.chat_auto_speak_initial_delay_seconds,
+            interval_seconds=config.chat_auto_speak_interval_seconds,
+            max_reply_chars=config.chat_auto_speak_max_reply_chars,
             on_error=auto_speak_error_handler,
         )
 
     naraka_client: NarakaClient | None = None
     naraka_service: NarakaQueryService | None = None
     if (
-        config.dispatch_chat_naraka_cookie is not None
-        and config.dispatch_chat_naraka_heybox_id is not None
+        config.chat_naraka_cookie is not None
+        and config.chat_naraka_heybox_id is not None
     ):
         naraka_client = NarakaClient(
-            heybox_id=config.dispatch_chat_naraka_heybox_id.get_secret_value(),
-            cookie=config.dispatch_chat_naraka_cookie.get_secret_value(),
-            server=config.dispatch_chat_naraka_server,
-            season=config.dispatch_chat_naraka_season,
-            battle_tid=config.dispatch_chat_naraka_battle_tid,
-            timeout_seconds=config.dispatch_chat_naraka_timeout_seconds,
+            heybox_id=config.chat_naraka_heybox_id.get_secret_value(),
+            cookie=config.chat_naraka_cookie.get_secret_value(),
+            server=config.chat_naraka_server,
+            season=config.chat_naraka_season,
+            battle_tid=config.chat_naraka_battle_tid,
+            timeout_seconds=config.chat_naraka_timeout_seconds,
         )
         naraka_service = NarakaQueryService(
             client=naraka_client,
-            cooldown_seconds=config.dispatch_chat_naraka_cooldown_seconds,
-            max_concurrent_requests=config.dispatch_chat_naraka_max_concurrent_requests,
-            max_rate_limit_entries=config.dispatch_chat_max_sessions,
+            cooldown_seconds=config.chat_naraka_cooldown_seconds,
+            max_concurrent_requests=config.chat_naraka_max_concurrent_requests,
+            max_rate_limit_entries=config.chat_max_sessions,
         )
 
     return RuntimeState(

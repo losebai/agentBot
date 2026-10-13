@@ -6,9 +6,9 @@ from agent_bot.ai.errors import AiError
 def classify_api_error(error: AiError) -> tuple[int, str, str]:
     """稳定中文错误文案不回显上游响应、文件路径或凭据。"""
     messages = {
+        "AI_CAPABILITY_UNSUPPORTED": "当前请求包含尚未实现的能力，请移除视频或相关工具",
         "MEDIA_NOT_INITIALIZED": "媒体数据表尚未初始化，请导入 agent_bot_init.sql 后重启服务",
         "MEDIA_STORAGE_UNAVAILABLE": "媒体目录不可用，请修复后重启服务",
-        "MEDIA_REQUIRES_PYTHON": "请在机器人配置中将媒体后端设置为 python",
         "MEDIA_NOT_READY": "媒体资源尚未就绪，请检查状态并重启服务",
         "MEDIA_EXPIRED": "附件已过期",
         "MEDIA_NOT_FOUND": "附件不存在或不可访问",
@@ -25,23 +25,34 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         "MEDIA_TIMEOUT": "媒体生成已超时",
         "MEDIA_UPLOAD_TIMEOUT": "上传超时，请重新选择文件",
         "MEDIA_INVALID_RESPONSE": "上游未返回有效的媒体结果",
-        "AI_NOT_INITIALIZED": "Python AI 数据表尚未初始化，请导入 agent_bot_init.sql",
+        "AI_NOT_INITIALIZED": (
+            "AI 数据表或字段缺失；既有库请执行对应增量 SQL，"
+            "新库使用 agent_bot_init.sql"
+        ),
         "AI_CONFIG_CONFLICT": "配置已被修改或仍在启用，请重新加载后操作",
         "AI_CONFIG_IN_USE": "供应商仍有关联模型，请先处理模型",
-        "AI_CREDENTIAL_MISSING": "供应商凭据引用不可用，请检查服务运行环境",
+        "AI_CREDENTIAL_MISSING": "供应商密钥尚未设置，请在供应商管理中重新录入",
+        "AGENT_CREDENTIAL_MISSING": "MCP 访问令牌尚未设置，请在 MCP 服务中重新录入",
+        "AI_MODEL_LIST_INVALID": "上游模型列表格式无效或超过数量限制",
+        "AI_UPSTREAM_AUTH_REJECTED": "上游拒绝鉴权，请检查此供应商的 Key",
+        "AI_UPSTREAM_REJECTED": "上游拒绝请求，请检查协议、地址和模型列表接口支持情况",
+        "AI_UPSTREAM_UNAVAILABLE": "上游服务暂时不可用，请检查地址及连接",
+        "AI_RATE_LIMITED": "上游限制请求频率，请稍后再试",
         "AI_OPTION_UNSUPPORTED": "当前协议不支持已配置的采样参数",
         "AI_TIMEOUT": "模型请求已超时",
-        "AGENT_NOT_INITIALIZED": "Agent 数据表尚未初始化，请导入 agent_bot_init.sql",
+        "AGENT_NOT_INITIALIZED": (
+            "Agent 数据表或字段缺失；既有库请执行对应增量 SQL，"
+            "新库使用 agent_bot_init.sql"
+        ),
         "AGENT_CONFIG_CONFLICT": "此配置已有更新，请保留草稿并重新加载后合并修改",
         "AGENT_CONFIG_IN_USE": "配置仍被 Agent 引用，请先解除关联",
         "AGENT_CONFIG_DISABLED": "Agent、Skill 或 MCP 配置已停用",
-        "AGENT_REQUIRES_PYTHON": "请在机器人配置中将 Agent 后端设置为 python",
         "AGENT_TOOL_UNAUTHORIZED": "当前入口或 Agent 未授权这些工具",
         "AGENT_TOOL_UNAVAILABLE": "预设工具不可用，请检查工具名称及 MCP 白名单",
         "AGENT_SEARCH_UNAVAILABLE": "请配置已启用的 search 分类 MCP 服务",
         "AGENT_SKILL_UNAVAILABLE": "关联 Skill 已停用或缺少已授权的工具依赖",
         "AGENT_BUSY": "Agent 并发已满，请稍后再试",
-        "AGENT_CAPABILITY_NOT_MIGRATED": "此 Agent 要求尚未迁移的能力，请移除高级工具或使用 Java",
+        "AGENT_CAPABILITY_NOT_MIGRATED": "此 Agent 要求尚未实现的能力，请移除相关工具",
     }
     return (
         error.status_code,

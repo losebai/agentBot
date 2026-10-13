@@ -21,12 +21,12 @@ from agent_bot.services.tagged_memory import (
 from agent_bot.settings import DatabaseParams
 
 SCHEMA_STATEMENTS = (
-    """CREATE TABLE IF NOT EXISTS dispatch_chat_memory_scope (
+    """CREATE TABLE IF NOT EXISTS chat_memory_scope (
         scope_id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '匿名作用域键',
         scope VARCHAR(16) NOT NULL COMMENT 'global/session/user/group',
         PRIMARY KEY (scope_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='标签记忆作用域与写锁'""",
-    """CREATE TABLE IF NOT EXISTS dispatch_chat_tagged_memory (
+    """CREATE TABLE IF NOT EXISTS chat_tagged_memory (
         id INT NOT NULL AUTO_INCREMENT COMMENT '记忆自增主键',
         scope_id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '关联作用域',
         memory_key VARCHAR(80) COLLATE utf8mb4_bin NOT NULL COMMENT '稳定事实键',
@@ -38,7 +38,7 @@ SCHEMA_STATEMENTS = (
         UNIQUE KEY uk_tagged_memory_scope_key (scope_id, memory_key),
         KEY idx_tagged_memory_scope_time (scope_id, is_deleted, update_time)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM 自主保存的标签记忆'""",
-    """CREATE TABLE IF NOT EXISTS dispatch_chat_memory_tag (
+    """CREATE TABLE IF NOT EXISTS chat_memory_tag (
         memory_id INT NOT NULL COMMENT '关联记忆',
         tag VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '规范化主题标签',
         PRIMARY KEY (memory_id, tag),
@@ -137,13 +137,13 @@ class TaggedMemoryStore:
     ) -> MemoryResult:
         """锁定作用域后更新一条事实及全部标签，重复请求不会产生新行。"""
         cursor.execute(
-            "INSERT INTO dispatch_chat_memory_scope (scope_id, scope) VALUES (%s, %s) "
+            "INSERT INTO chat_memory_scope (scope_id, scope) VALUES (%s, %s) "
             "ON DUPLICATE KEY UPDATE scope = VALUES(scope)",
             (owner, scope),
         )
         # upsert 持有作用域行的排他锁，避免并发 INSERT IGNORE 后共享锁升级相互等待。
         cursor.execute(
-            "SELECT id, is_deleted FROM dispatch_chat_tagged_memory "
+            "SELECT id, is_deleted FROM chat_tagged_memory "
             "WHERE scope_id = %s AND memory_key = %s",
             (owner, arguments.key),
         )
@@ -153,14 +153,14 @@ class TaggedMemoryStore:
             if not existing or existing["is_deleted"]:
                 return MemoryResult(status="not_found")
             cursor.execute(
-                "UPDATE dispatch_chat_tagged_memory "
+                "UPDATE chat_tagged_memory "
                 "SET is_deleted = 1, update_time = %s WHERE id = %s",
                 (now, existing["id"]),
             )
             return MemoryResult(status="forgotten")
         if not existing or existing["is_deleted"]:
             cursor.execute(
-                "SELECT COUNT(*) AS count FROM dispatch_chat_tagged_memory "
+                "SELECT COUNT(*) AS count FROM chat_tagged_memory "
                 "WHERE scope_id = %s AND is_deleted = 0",
                 (owner,),
             )
@@ -169,21 +169,21 @@ class TaggedMemoryStore:
         if existing:
             memory_id = existing["id"]
             cursor.execute(
-                "UPDATE dispatch_chat_tagged_memory "
+                "UPDATE chat_tagged_memory "
                 "SET content = %s, is_deleted = 0, update_time = %s WHERE id = %s",
                 (arguments.content, now, memory_id),
             )
         else:
             cursor.execute(
-                "INSERT INTO dispatch_chat_tagged_memory "
+                "INSERT INTO chat_tagged_memory "
                 "(scope_id, memory_key, content, create_time, update_time) "
                 "VALUES (%s, %s, %s, %s, %s)",
                 (owner, arguments.key, arguments.content, now, now),
             )
             memory_id = cursor.lastrowid
-        cursor.execute("DELETE FROM dispatch_chat_memory_tag WHERE memory_id = %s", (memory_id,))
+        cursor.execute("DELETE FROM chat_memory_tag WHERE memory_id = %s", (memory_id,))
         cursor.executemany(
-            "INSERT INTO dispatch_chat_memory_tag (memory_id, tag) VALUES (%s, %s)",
+            "INSERT INTO chat_memory_tag (memory_id, tag) VALUES (%s, %s)",
             [(memory_id, tag) for tag in arguments.tags],
         )
         return MemoryResult(status="saved")
@@ -192,9 +192,9 @@ class TaggedMemoryStore:
         """分页只提供可见标签，不在工具声明中提前泄露记忆正文。"""
         placeholders = ",".join("%s" for _ in owners)
         cursor.execute(
-            "SELECT s.scope, t.tag FROM dispatch_chat_memory_tag t "
-            "JOIN dispatch_chat_tagged_memory m ON m.id = t.memory_id "
-            "JOIN dispatch_chat_memory_scope s ON s.scope_id = m.scope_id "
+            "SELECT s.scope, t.tag FROM chat_memory_tag t "
+            "JOIN chat_tagged_memory m ON m.id = t.memory_id "
+            "JOIN chat_memory_scope s ON s.scope_id = m.scope_id "
             f"WHERE m.scope_id IN ({placeholders}) AND m.is_deleted = 0 "
             "GROUP BY s.scope, t.tag "
             "ORDER BY MAX(m.update_time) DESC, s.scope, t.tag LIMIT 65 OFFSET %s",
@@ -218,9 +218,9 @@ class TaggedMemoryStore:
         tag_parameters = ",".join("%s" for _ in tags)
         cursor.execute(
             "SELECT m.id, s.scope, m.memory_key, m.content "
-            "FROM dispatch_chat_tagged_memory m "
-            "JOIN dispatch_chat_memory_scope s ON s.scope_id = m.scope_id "
-            "JOIN dispatch_chat_memory_tag t ON t.memory_id = m.id "
+            "FROM chat_tagged_memory m "
+            "JOIN chat_memory_scope s ON s.scope_id = m.scope_id "
+            "JOIN chat_memory_tag t ON t.memory_id = m.id "
             f"WHERE m.scope_id IN ({owner_parameters}) AND m.is_deleted = 0 "
             f"AND t.tag IN ({tag_parameters}) "
             "GROUP BY m.id, s.scope, m.memory_key, m.content, m.update_time "
@@ -233,7 +233,7 @@ class TaggedMemoryStore:
         memory_ids = tuple(row["id"] for row in rows)
         memory_parameters = ",".join("%s" for _ in memory_ids)
         cursor.execute(
-            "SELECT memory_id, tag FROM dispatch_chat_memory_tag "
+            "SELECT memory_id, tag FROM chat_memory_tag "
             f"WHERE memory_id IN ({memory_parameters}) ORDER BY tag",
             memory_ids,
         )

@@ -93,7 +93,7 @@ async def test_rounds_1_3_5_then_final_only(agent_database, agent_params, seeded
     provider, tools = Provider(), Tools()
     records = AgentRunStore(agent_params, connect=agent_database.connect)
     service = AgentService(
-        catalog, records, CredentialResolver(environ={}), {"openai-chat": provider}, tools
+        catalog, records, CredentialResolver(), {"openai-chat": provider}, tools
     )
     result = await service.complete(
         AgentRequest(agent_code="helper", prompt="hello", session_id="s", request_id="r"),
@@ -131,7 +131,7 @@ async def test_authorization_failure_precedes_all_side_effects(
     service = AgentService(
         catalog,
         AgentRunStore(agent_params, connect=agent_database.connect),
-        CredentialResolver(environ={}),
+        CredentialResolver(),
         {"openai-chat": provider},
         tools,
     )

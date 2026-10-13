@@ -543,7 +543,7 @@ class ConversationQueue:
         self._running = True
         self._dispatcher_task = asyncio.create_task(
             self._dispatch_loop(),
-            name="dispatch-chat-conversation-queue",
+            name="chat-conversation-queue",
         )
 
     async def stop(self) -> None:
@@ -930,7 +930,7 @@ class ConversationQueue:
 
         task = asyncio.create_task(
             self.process_entry(entry),
-            name=f"dispatch-chat-entry-{entry.job.job_id}",
+            name=f"chat-entry-{entry.job.job_id}",
         )
         self._entry_tasks.add(task)
         task.add_done_callback(self._entry_finished)

@@ -6,24 +6,20 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import httpx
 import pytest
 from nonebot.adapters.onebot.v11 import Message, MessageSegment
 from workflow_fakes import TextWorkflowServiceStub
 
-from agent_bot.integrations.dispatch_ai import (
-    DispatchAiClient,
-    DispatchAiImageError,
-    DispatchAiProtocolError,
-    DispatchAiRejectedError,
-    DispatchAiUnavailableError,
+from agent_bot.ai.chat_errors import (
+    ChatAiImageError,
+    ChatAiProtocolError,
+    ChatAiRejectedError,
+    ChatAiUnavailableError,
 )
 from agent_bot.integrations.gpt_sovits import GeneratedSpeech
 from agent_bot.integrations.onebot.tooling import ChatToolSessionLease
 from agent_bot.model_guard import ModelGuardUnavailableError, ModelNotAvailableError
-from agent_bot.model_router import ContentModelRouter
 from agent_bot.models import ChatContext, ChatMediaItem, ChatMediaResponse
-from agent_bot.services.chat import ChatService
 from agent_bot.services.chat.errors import ChatBusyError, ChatRateLimitedError
 from agent_bot.services.chat_tools import (
     ChatToolContext,
@@ -42,7 +38,6 @@ from agent_bot.services.workflow_execution import (
     GeneratedWorkflowImage,
     WorkflowImageCollector,
 )
-from agent_bot.state import ConversationStore
 
 
 class RecordingComposer:
@@ -145,7 +140,7 @@ async def test_processor_keeps_first_of_two_collected_images(
     monkeypatch.setattr(chat_plugin, "_open_queued_tool_session", open_session)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
         return_value="模型完成回复",
-        side_effect=DispatchAiUnavailableError("offline") if agent_fails else None,
+        side_effect=ChatAiUnavailableError("offline") if agent_fails else None,
     ))
     job = queued_job(chatTools=("local_workflow_generate_image",))
 
@@ -253,8 +248,8 @@ async def test_image_start_is_delivered_before_generation_and_not_repeated(
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
     start = AsyncMock(side_effect=lambda *_, **__: order.append("start") or "我来画，稍等。")
     monkeypatch.setattr(chat_plugin.chat_service, "generate_image_start_queued", start)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_image_generation_enabled", True)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_local_workflow_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_image_generation_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     job = queued_job(
         jobId=f"image-start-{cloud}", requestId=f"request-image-start-{cloud}",
         prompt="给这段故事配个插图", mediaOutput="IMAGE" if cloud else None,
@@ -334,7 +329,7 @@ async def test_failed_image_start_never_submits_or_repeats_uncertain_send(
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
     start = AsyncMock(return_value="  " if failure == "blank" else "我来画。")
     monkeypatch.setattr(chat_plugin.chat_service, "generate_image_start_queued", start)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_image_generation_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_image_generation_enabled", True)
     job = queued_job(
         jobId=f"failed-start-{cloud}-{failure}", prompt="画一只猫",
         mediaOutput="IMAGE" if cloud else None,
@@ -373,7 +368,7 @@ async def test_failed_image_start_never_submits_or_repeats_uncertain_send(
     monkeypatch.setattr(chat_plugin.chat_service, "generate_media_queued", media)
     for _ in range(2):
         with pytest.raises((
-            ChatToolError, DispatchAiProtocolError, ConnectionError, ToolOperationConflict,
+            ChatToolError, ChatAiProtocolError, ConnectionError, ToolOperationConflict,
         )):
             await chat_plugin._ConversationProcessor().generate(job)
     workflow.generate.assert_not_awaited()
@@ -493,7 +488,7 @@ async def test_processor_persists_and_delivers_tts_tool_wav(
         AsyncMock(
             return_value="语音已经生成。",
             side_effect=(
-                DispatchAiUnavailableError("agent finalization failed")
+                ChatAiUnavailableError("agent finalization failed")
                 if agent_fails
                 else None
             ),
@@ -626,7 +621,7 @@ async def test_processor_delivers_collected_workflow_image_when_agent_finishing_
 ) -> None:
     """Verify processor delivers collected workflow image when agent finishing fails."""
 
-    generate = AsyncMock(side_effect=DispatchAiUnavailableError("agent finishing failed"))
+    generate = AsyncMock(side_effect=ChatAiUnavailableError("agent finishing failed"))
     explain = AsyncMock(return_value="不应再次调用模型")
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
     monkeypatch.setattr(
@@ -695,7 +690,7 @@ async def test_workflow_agent_rejection_is_silent_without_second_model(
         logging.WARNING,
         logger="agent_bot.integrations.onebot.queue_processor",
     )
-    generate = AsyncMock(side_effect=DispatchAiRejectedError("private upstream response"))
+    generate = AsyncMock(side_effect=ChatAiRejectedError("private upstream response"))
     composer = RecordingComposer()
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
     monkeypatch.setattr(chat_plugin, "_reply_composer", composer)
@@ -719,7 +714,7 @@ async def test_workflow_agent_rejection_is_silent_without_second_model(
     processor = chat_plugin._ConversationProcessor()
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
-    with pytest.raises(DispatchAiRejectedError) as caught:
+    with pytest.raises(ChatAiRejectedError) as caught:
         await processor.generate(job)
     await processor.deliver_failure(job, caught.value)
     assert composer.intents == []
@@ -733,7 +728,7 @@ async def test_workflow_agent_rejection_is_silent_without_second_model(
     assert "job_id=job-agent-1" in diagnostic
     assert "request_id=qq-job-agent-1" in diagnostic
     assert "collected_images=0" in diagnostic
-    assert "error=DispatchAiRejectedError" in diagnostic
+    assert "error=ChatAiRejectedError" in diagnostic
     assert "private upstream response" not in diagnostic
 
 
@@ -800,7 +795,7 @@ async def test_processor_uses_vision_media_generation_for_queued_image(
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: onebot_mock())
     monkeypatch.setattr(
         chat_plugin.plugin_config,
-        "dispatch_chat_image_generation_enabled",
+        "chat_image_generation_enabled",
         True,
     )
     job = queued_job(
@@ -888,7 +883,7 @@ async def test_processor_commits_media_placeholder_only_after_delivery(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error", [
-    DispatchAiImageError("sensitive"), ValueError("sensitive"),
+    ChatAiImageError("sensitive"), ValueError("sensitive"),
 ])
 async def test_processor_composes_sanitized_failure_once(monkeypatch, chat_plugin, error) -> None:
     """非模型自身的业务错误只提供脱敏事实，并投递一次模型生成的解释。"""
@@ -909,11 +904,11 @@ async def test_processor_composes_sanitized_failure_once(monkeypatch, chat_plugi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error", [
-    DispatchAiUnavailableError("sensitive"),
-    DispatchAiUnavailableError("sensitive", status_code=429),
-    DispatchAiUnavailableError("sensitive", status_code=503),
-    DispatchAiRejectedError("sensitive", status_code=403),
-    DispatchAiProtocolError("sensitive"),
+    ChatAiUnavailableError("sensitive"),
+    ChatAiUnavailableError("sensitive", status_code=429),
+    ChatAiUnavailableError("sensitive", status_code=503),
+    ChatAiRejectedError("sensitive", status_code=403),
+    ChatAiProtocolError("sensitive"),
     ModelNotAvailableError("sensitive"),
     ModelGuardUnavailableError("sensitive"),
 ])
@@ -933,76 +928,6 @@ async def test_processor_model_failure_does_not_compose_or_send(
     bot.call_api.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("failure,expected_error", [
-    ("timeout", DispatchAiUnavailableError),
-    ("connection", DispatchAiUnavailableError),
-    ("http_503", DispatchAiUnavailableError),
-    ("http_403", DispatchAiRejectedError),
-    ("rejected_result", DispatchAiRejectedError),
-    ("invalid_json", DispatchAiProtocolError),
-    ("empty", DispatchAiProtocolError),
-    ("whitespace", DispatchAiProtocolError),
-    ("empty_agent", DispatchAiProtocolError),
-])
-async def test_real_model_error_chain_remains_silent(
-    monkeypatch, chat_plugin, failure, expected_error,
-) -> None:
-    """真实 HTTP 客户端及 ChatService 的异常传播链不能进入失败解释模型。"""
-
-    requests: list[httpx.Request] = []
-
-    def handle_request(request: httpx.Request) -> httpx.Response:
-        """Return a deterministic upstream failure without using external network."""
-
-        requests.append(request)
-        if failure == "timeout":
-            raise httpx.ReadTimeout("private timeout", request=request)
-        if failure == "connection":
-            raise httpx.ConnectError("private network error", request=request)
-        if failure.startswith("http_"):
-            return httpx.Response(int(failure.removeprefix("http_")))
-        if failure == "invalid_json":
-            return httpx.Response(200, text="invalid response")
-        if failure == "empty_agent":
-            return httpx.Response(200, headers={"content-type": "text/event-stream"})
-        return httpx.Response(200, json={
-            "code": 400 if failure == "rejected_result" else 200,
-            "data": {"replayContext": " \n " if failure == "whitespace" else ""},
-        })
-
-    client = DispatchAiClient(
-        base_url="http://ai.test/dispatch-ai", timeout_seconds=1,
-        transport=httpx.MockTransport(handle_request),
-    )
-    service = ChatService(
-        client=client,
-        store=ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60),
-        system_prompt="测试系统提示词", max_input_chars=1000, cooldown_seconds=0,
-        max_concurrent_requests=2,
-        model_router=ContentModelRouter(
-            text_model="chat", vision_model="vision", image_model="image", audio_model="audio",
-        ),
-        agent_enabled=failure == "empty_agent", web_search_enabled=False,
-    )
-    composer = RecordingComposer()
-    bot = onebot_mock()
-    monkeypatch.setattr(chat_plugin, "chat_service", service)
-    monkeypatch.setattr(chat_plugin, "_reply_composer", composer)
-    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
-    processor = chat_plugin._ConversationProcessor()
-    job = queued_job(chatTools=())
-
-    try:
-        with pytest.raises(expected_error) as caught:
-            await processor.generate(job)
-        await processor.deliver_failure(job, caught.value)
-    finally:
-        await client.aclose()
-
-    assert len(requests) == 1
-    assert composer.intents == []
-    bot.call_api.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1035,8 +960,8 @@ async def test_processor_retry_reuses_provenance_without_resplitting(
     restored = ConversationResult.model_validate_json(result.model_dump_json(by_alias=True))
     assert restored.reply.request_id == job.request_id
     assert restored.reply.source == "LLM"
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_chunk_chars", 1)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_max_reply_chars", 1)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_chunk_chars", 1)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_max_reply_chars", 1)
     with pytest.raises(ConnectionError):
         await processor.deliver_part(job, restored, 0)
     await processor.deliver_part(job, restored, 0)
@@ -1052,7 +977,7 @@ async def test_processor_truncation_never_adds_static_text(monkeypatch, chat_plu
 
     generate = AsyncMock(return_value="abcdefghijklmnopqrstuvwxyz")
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_max_reply_chars", 5)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_max_reply_chars", 5)
     result = await chat_plugin._ConversationProcessor().generate(queued_job(chatTools=()))
     assert result.reply.text == "abcde"
     assert "".join(result.delivery_parts) == "abcde"
@@ -1074,13 +999,13 @@ async def test_processor_rejects_blank_model_reply_without_second_model(
     )
     processor = chat_plugin._ConversationProcessor()
     job = queued_job(chatTools=())
-    with pytest.raises((ValueError, DispatchAiProtocolError)) as caught:
+    with pytest.raises((ValueError, ChatAiProtocolError)) as caught:
         await processor.generate(job)
     await processor.deliver_failure(job, caught.value)
 
     assert composer.intents == []
     bot.call_api.assert_not_awaited()
-    assert isinstance(caught.value, DispatchAiProtocolError)
+    assert isinstance(caught.value, ChatAiProtocolError)
 
 
 @pytest.mark.asyncio
@@ -1092,8 +1017,8 @@ async def test_legacy_v2_start_notice_remains_one_exact_proven_part(
 
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_chunk_chars", chunk_chars)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_max_reply_chars", 5)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_chunk_chars", chunk_chars)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_max_reply_chars", 5)
     job = queued_job(
         chatTools=("local_workflow_generate_image",),
         imageStartReply=GeneratedReply(
@@ -1119,8 +1044,8 @@ async def test_failure_explanation_truncation_contains_only_model_text(
 
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_chunk_chars", chunk_chars)
-    monkeypatch.setattr(chat_plugin.plugin_config, "dispatch_chat_max_reply_chars", 5)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_chunk_chars", chunk_chars)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_max_reply_chars", 5)
     generate = AsyncMock(return_value="abcdefghijklmnopqrstuvwxyz")
     monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", generate)
 

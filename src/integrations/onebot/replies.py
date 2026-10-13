@@ -200,9 +200,9 @@ class OneBotReplyGateway:
 
         config = self._config_provider()
         return split_reply(
-            reply.text[:config.dispatch_chat_max_reply_chars],
-            chunk_chars=config.dispatch_chat_chunk_chars,
-            max_reply_chars=config.dispatch_chat_max_reply_chars,
+            reply.text[:config.chat_max_reply_chars],
+            chunk_chars=config.chat_chunk_chars,
+            max_reply_chars=config.chat_max_reply_chars,
         )
 
     def _require_generated(self, reply: GeneratedReply) -> None:

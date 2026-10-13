@@ -8,8 +8,8 @@ import time
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 
+from agent_bot.ai.routing import RoutingAiClient
 from agent_bot.config import PluginConfig
-from agent_bot.integrations.dispatch_ai import DispatchAiClient
 from agent_bot.services.conversation_queue import (
     ConversationJob,
     ConversationQueue,
@@ -27,7 +27,7 @@ class AiJobPoller:
         self,
         *,
         config_provider: Callable[[], PluginConfig],
-        client_provider: Callable[[], DispatchAiClient],
+        client_provider: Callable[[], RoutingAiClient],
         queue_provider: Callable[[], ConversationQueue],
         bot_ids_provider: Callable[[], Sequence[str]],
         runtime_lease: Callable[[], AbstractAsyncContextManager[None]],
@@ -43,7 +43,7 @@ class AiJobPoller:
     async def run(self) -> None:
         """周期完成后等待，不补发错过的轮询周期。"""
         while True:
-            await asyncio.sleep(self._config().dispatch_chat_job_poll_seconds)
+            await asyncio.sleep(self._config().chat_job_poll_seconds)
             try:
                 await self.run_once()
             except Exception as error:
@@ -53,14 +53,14 @@ class AiJobPoller:
         """只将当前允许目标的正文持久入队，由投递完成流程确认消费。"""
         async with self._lease():
             config = self._config()
-            if not config.dispatch_chat_job_enabled:
+            if not config.chat_job_enabled:
                 return
             policy = AccessPolicy(
-                allowed_users=config.dispatch_chat_allowed_users,
-                allowed_groups=config.dispatch_chat_allowed_groups,
-                blocked_users=config.dispatch_chat_blocked_users,
-                blocked_groups=config.dispatch_chat_blocked_groups,
-                allow_all=config.dispatch_chat_allow_all,
+                allowed_users=config.chat_allowed_users,
+                allowed_groups=config.chat_allowed_groups,
+                blocked_users=config.chat_blocked_users,
+                blocked_groups=config.chat_blocked_groups,
+                allow_all=config.chat_allow_all,
             )
             for bot_id in self._bots():
                 results = await self._client().pending_jobs(bot_id, self._cursors.get(bot_id))
@@ -88,3 +88,28 @@ class AiJobPoller:
                     )
                 # 遍历所有待消费页，避免已入队或被禁用的目标长期挡住后面的结果。
                 self._cursors[bot_id] = results[-1].id if results else None
+
+
+class AiJobRunner:
+    """独立执行本地到期任务，不阻塞结果投递轮询。"""
+
+    def __init__(self, *, config_provider, client_provider, runtime_lease):
+        """执行全过程持有当前运行时，热更新等待在途推理完成。"""
+        self._config = config_provider
+        self._client = client_provider
+        self._lease = runtime_lease
+
+    async def run(self) -> None:
+        """每轮至多领取一个任务，关闭时取消并由 Job 服务记录中断。"""
+        while True:
+            await asyncio.sleep(self._config().chat_job_poll_seconds)
+            try:
+                await self.run_once()
+            except Exception as error:
+                logger.warning("Python 任务执行失败：error=%s", type(error).__name__)
+
+    async def run_once(self) -> None:
+        """只在当前快照已启用 Job 时领取，防止旧配置越过热更新边界。"""
+        async with self._lease():
+            if self._config().chat_job_enabled:
+                await self._client().run_due_jobs()

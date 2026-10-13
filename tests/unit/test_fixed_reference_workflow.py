@@ -23,7 +23,7 @@ from agent_bot.services.workflows import (
     validate_workflow_bindings,
 )
 
-REFERENCE = "dispatch-chat-reference/" + "d" * 64 + ".png"
+REFERENCE = "chat-reference/" + "d" * 64 + ".png"
 
 
 def fixed_definition():
@@ -55,7 +55,7 @@ def test_fixed_prompt_keeps_reference_and_rejects_uploaded_override():
 
 @pytest.mark.parametrize("path", [
     "sample.png", "../outside.png", "C:/secret.png", "https://example.com/a.png",
-    "dispatch-chat-reference/../a.png", "dispatch-chat-reference/" + "d" * 64 + ".png [output]",
+    "chat-reference/../a.png", "chat-reference/" + "d" * 64 + ".png [output]",
 ])
 def test_fixed_reference_rejects_uncontrolled_paths(path):
     """固定底图只接受受控目录内按摘要命名的图片。"""

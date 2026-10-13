@@ -1,4 +1,4 @@
-"""按明确配置选择已迁移能力，任何执行失败都不触发后端回退。"""
+"""选择本地 AI 能力并保留请求授权和资源释放边界。"""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -7,23 +7,23 @@ from typing import Literal
 from pydantic import SecretStr
 
 from agent_bot.agent.contracts import AgentRequest, ExecutionAuthority
-from agent_bot.agent.tools.policy import LEGACY_TOOLS, MEDIA_TOOLS
+from agent_bot.agent.tools.policy import MEDIA_TOOLS
 from agent_bot.ai.catalog import AiCatalog
+from agent_bot.ai.chat_errors import (
+    ChatAiProtocolError,
+    ChatAiRejectedError,
+    ChatAiUnavailableError,
+)
 from agent_bot.ai.context import format_qq_context
 from agent_bot.ai.contracts import TextRequest
 from agent_bot.ai.errors import AiError
 from agent_bot.ai.service import AiService
-from agent_bot.integrations.dispatch_ai import (
-    DispatchAiClient,
-    DispatchAiProtocolError,
-    DispatchAiRejectedError,
-    DispatchAiUnavailableError,
-)
 from agent_bot.media.contracts import MediaOwner
-from agent_bot.model_guard import ModelGuard, ModelGuardUnavailableError, ModelNotAvailableError
+from agent_bot.model_guard import ModelGuardUnavailableError, ModelNotAvailableError
 from agent_bot.models import (
     ChatContext,
     ChatMediaRequest,
+    ChatMediaResponse,
     ChatMessage,
     ChatToolName,
     LlmRequestOptions,
@@ -48,22 +48,20 @@ class AiRouteRequest:
 class RouteDecision:
     """预检与实际调用共享同一能力决策。"""
 
-    backend: Literal["java", "python"]
-    capability: Literal["ordinary-text", "agent", "legacy", "media", "media-image", "media-audio"]
+    backend: Literal["python"]
+    capability: Literal["ordinary-text", "agent", "media", "media-image", "media-audio"]
     reason: str
 
 
-def select_route(
-    request: AiRouteRequest, *, plain_backend="java", agent_backend="java", media_backend="java"
-):
-    """未迁移能力整条走 Java；混合媒体 Agent 同时受两个开关控制。"""
+def select_route(request: AiRouteRequest) -> RouteDecision:
+    """仅选择本地已实现的能力，未迁移请求在调用模型前明确拒绝。"""
     if (
         request.videos
         or request.laya
-        or set(request.chat_tools) & LEGACY_TOOLS
+        or "soloncode" in request.chat_tools
         or "laya" in request.mcp_services
     ):
-        return RouteDecision("java", "legacy", "请求包含尚未迁移的能力")
+        raise AiError("AI_CAPABILITY_UNSUPPORTED", status_code=422)
     requires_agent = any(
         (
             request.agent,
@@ -75,138 +73,105 @@ def select_route(
         )
     )
     if request.images or set(request.chat_tools) & MEDIA_TOOLS:
-        if media_backend != "python" or (requires_agent and agent_backend != "python"):
-            return RouteDecision("java", "legacy", "媒体或混合 Agent 后端配置为 Java")
-        return RouteDecision(
-            "python", "agent" if requires_agent else "media", "使用 Python 媒体能力"
-        )
-    if requires_agent:
-        return RouteDecision(agent_backend, "agent", "使用配置的 Agent 后端")
-    return RouteDecision(plain_backend, "ordinary-text", "使用配置的普通文本后端")
-
-
-def select_backend(request: AiRouteRequest, plain_backend: Literal["java", "python"]):
-    return (
-        "java"
-        if any(
-            (
-                request.agent,
-                request.web,
-                request.tools,
-                request.mcp,
-                request.laya,
-                request.images,
-                request.videos,
-            )
-        )
-        else plain_backend
-    )
+        return RouteDecision("python", "agent" if requires_agent else "media", "使用媒体能力")
+    return RouteDecision("python", "agent" if requires_agent else "ordinary-text", "使用本地 AI")
 
 
 class RoutedModelGuard:
-    """按实际路由检查对应目录，避免拿 Python 别名访问 Java 模型表。"""
+    """统一使用本地模型目录，媒体调用同时检查媒体能力。"""
 
-    def __init__(
-        self,
-        java_guard: ModelGuard,
-        catalog: AiCatalog,
-        *,
-        plain_backend: str,
-        media_backend="java",
-    ):
-        """保留独立的纯文本和媒体选择。"""
-        self.java_guard, self.catalog, self.plain_backend = java_guard, catalog, plain_backend
-        self.media_backend = media_backend
+    def __init__(self, catalog: AiCatalog) -> None:
+        """持有随运行时快照构建的本地目录。"""
+        self.catalog = catalog
 
-    async def ensure_enabled(self, model_id: str, *, capability: str = "java") -> None:
+    async def ensure_enabled(self, model_id: str, *, capability: str = "ordinary-text") -> None:
         """直接媒体生成检查显式能力，Agent 和识图由其一致快照预检。"""
-        if (capability == "ordinary-text" and self.plain_backend == "python") or (
-            capability in {"media-image", "media-audio"} and self.media_backend == "python"
-        ):
-            try:
-                resolved = await self.catalog.resolve(model_id)
-                if capability.startswith("media-"):
-                    media = resolved.model.media
-                    if not resolved.model.media_initialized:
-                        raise AiError("MEDIA_NOT_INITIALIZED", status_code=503)
-                    if (
-                        resolved.provider.protocol == "ollama"
-                        or (capability == "media-image" and media.image_api_profile == "none")
-                        or (capability == "media-audio" and not media.audio_chat_enabled)
-                    ):
-                        raise AiError("MEDIA_CAPABILITY_UNSUPPORTED", status_code=422)
-            except AiError as error:
-                exception = (
-                    ModelGuardUnavailableError
-                    if error.status_code == 503
-                    else ModelNotAvailableError
-                )
-                raise exception(error.code) from error
-        else:
-            await self.java_guard.ensure_enabled(model_id)
+        try:
+            resolved = await self.catalog.resolve(model_id)
+            if capability.startswith("media-"):
+                media = resolved.model.media
+                if not resolved.model.media_initialized:
+                    raise AiError("MEDIA_NOT_INITIALIZED", status_code=503)
+                if (
+                    resolved.provider.protocol == "ollama"
+                    or (capability == "media-image" and media.image_api_profile == "none")
+                    or (capability == "media-audio" and not media.audio_chat_enabled)
+                ):
+                    raise AiError("MEDIA_CAPABILITY_UNSUPPORTED", status_code=422)
+        except AiError as error:
+            exception = (
+                ModelGuardUnavailableError
+                if error.status_code == 503
+                else ModelNotAvailableError
+            )
+            raise exception(error.code) from error
 
 
 class RoutingAiClient:
-    """按能力开关选择服务，选中 Python 后失败不自动回退 Java。"""
+    """统一调用本地文本、Agent 和媒体服务。"""
+
     def __init__(
         self,
-        java_client: DispatchAiClient,
         python_service: AiService,
         *,
-        plain_backend: Literal["java", "python"],
         timeout_seconds: float,
         default_options: LlmRequestOptions,
         mcp_services: Sequence[str],
-        laya_enabled: bool,
         agent_service=None,
-        agent_backend: Literal["java", "python"] = "java",
         agent_code: str | None = None,
         agent_max_steps: int | None = None,
         web_search_max_steps: int | None = None,
-        media_backend: Literal["java", "python"] = "java",
         media_service=None,
-    ):
-        """媒体服务和开关随运行时快照更新，存储资源由进程持有。"""
-        self.java_client, self.python_service = java_client, python_service
-        self.plain_backend, self.timeout_seconds = plain_backend, min(timeout_seconds, 300)
-        self.default_options, self.mcp_services, self.laya_enabled = (
-            default_options,
-            mcp_services,
-            laya_enabled,
-        )
-        self.agent_service, self.agent_backend, self.agent_code = (
-            agent_service,
-            agent_backend,
-            agent_code,
-        )
+        job_service=None,
+    ) -> None:
+        """服务随运行时快照更新，媒体存储由进程负责释放。"""
+        self.python_service = python_service
+        self.timeout_seconds = min(timeout_seconds, 300)
+        self.default_options, self.mcp_services = default_options, mcp_services
+        self.agent_service, self.agent_code = agent_service, agent_code
         self.agent_max_steps, self.web_search_max_steps = agent_max_steps, web_search_max_steps
-        self.media_backend, self.media_service = media_backend, media_service
+        self.media_service = media_service
+        self.job_service = job_service
+
+    async def run_due_jobs(self):
+        """执行一次本地到期任务，调度器负责功能开关与运行时租约。"""
+        if self.job_service is not None:
+            await self.job_service.run_due()
+
+    async def pending_jobs(self, bot_id, after=None):
+        """结果读取不确认消费，已生成正文由持久 QQ 队列投递。"""
+        if self.job_service is None:
+            raise AiError("JOB_NOT_INITIALIZED", status_code=503)
+        return await self.job_service.pending_jobs(bot_id, after)
+
+    async def acknowledge_job(self, bot_id, job_id):
+        """关闭开关后仍允许确认已完成的在途投递。"""
+        if self.job_service is None:
+            raise AiError("JOB_NOT_INITIALIZED", status_code=503)
+        try:
+            await self.job_service.acknowledge_job(bot_id, job_id)
+        except AiError as error:
+            # 数据库确认故障沿用队列的可重试类别，已发送的分段不再重发。
+            exception = ChatAiUnavailableError if error.status_code >= 500 else ChatAiRejectedError
+            raise exception(error.code, status_code=error.status_code,
+                            error_code=error.code) from error
 
     def route(self, request: AiRouteRequest) -> RouteDecision:
-        """加入配置的高级能力后统一判定，预检和执行都使用此入口。"""
-        if self.laya_enabled and (request.tools or request.chat_tools):
-            from dataclasses import replace
-
-            request = replace(request, laya=True)
+        """加入已授权的 MCP 服务，预检和执行共享能力判断。"""
         if request.agent and self.mcp_services:
             from dataclasses import replace
 
             request = replace(request, mcp_services=tuple(self.mcp_services))
-        return select_route(
-            request,
-            plain_backend=self.plain_backend,
-            agent_backend=self.agent_backend,
-            media_backend=self.media_backend,
-        )
+        return select_route(request)
 
-    def media_route(self, output_type):
-        """直接生成不依赖 Agent 开关，模型预检使用同一媒体后端。"""
+    def media_route(self, output_type: MediaOutputType) -> RouteDecision:
+        """直接生成独立于 Agent，预检检查实际媒体类型。"""
         if output_type not in {"IMAGE", "AUDIO"}:
             raise ValueError("invalid media output")
         return RouteDecision(
-            self.media_backend,
+            "python",
             "media-image" if output_type == "IMAGE" else "media-audio",
-            "使用配置的媒体后端",
+            "使用本地媒体能力",
         )
 
     async def complete(
@@ -240,24 +205,6 @@ class RoutingAiClient:
             chat_tools=tuple(chat_tools),
         )
         decision = self.route(route)
-        if decision.backend == "java":
-            return await self.java_client.complete(
-                model=model,
-                session_id=session_id,
-                prompt=prompt,
-                messages=messages,
-                request_id=request_id,
-                user=user,
-                chat_context=chat_context,
-                image_urls=image_urls,
-                video_urls=video_urls,
-                use_agent=use_agent,
-                use_web_search=use_web_search,
-                request_options=request_options,
-                chat_tools=chat_tools,
-                tool_session_token=tool_session_token,
-                laya_decision=laya_decision,
-            )
         if tool_session_token and decision.capability == "ordinary-text":
             raise ValueError("ordinary text cannot carry tool credentials")
         try:
@@ -309,11 +256,11 @@ class RoutingAiClient:
             return (await self.python_service.complete(request)).content
         except AiError as error:
             if error.status_code in {503, 504, 429}:
-                exception = DispatchAiUnavailableError
+                exception = ChatAiUnavailableError
             elif error.code.startswith("AI_RESPONSE"):
-                exception = DispatchAiProtocolError
+                exception = ChatAiProtocolError
             else:
-                exception = DispatchAiRejectedError
+                exception = ChatAiRejectedError
             raise exception(
                 error.code, status_code=error.status_code, error_code=error.code
             ) from error
@@ -333,76 +280,47 @@ class RoutingAiClient:
         voice: str | None,
         audio_format: str | None,
         user: str,
-    ):
-        """媒体默认保留 Java；显式选择 Python 后只调用一次对应生成用例。"""
-        if self.media_backend == "python":
-            try:
-                if self.media_service is None:
-                    raise AiError("MEDIA_NOT_INITIALIZED", status_code=503)
-                request = ChatMediaRequest(
-                    model=model,
-                    session_id=session_id,
-                    prompt=prompt,
-                    messages=tuple(messages),
-                    request_id=request_id,
-                    output_type=output_type,
-                    timeout_seconds=max(1, int(min(timeout_seconds, 120))),
-                    max_bytes=max_bytes,
-                    image_format=image_format,
-                    voice=voice,
-                    audio_format=audio_format,
-                    user=user,
-                )
-                result = await self.media_service.generate(
-                    request, MediaOwner(entry="qq", session_id=session_id)
-                )
-                return result.response
-            except AiError as error:
-                exception = (
-                    DispatchAiUnavailableError
-                    if error.status_code in {503, 504, 429}
-                    else DispatchAiRejectedError
-                )
-                raise exception(
-                    error.code, status_code=error.status_code, error_code=error.code
-                ) from error
-        return await self.java_client.generate_media(
-            model=model,
-            session_id=session_id,
-            prompt=prompt,
-            messages=messages,
-            request_id=request_id,
-            output_type=output_type,
-            timeout_seconds=timeout_seconds,
-            max_bytes=max_bytes,
-            image_format=image_format,
-            voice=voice,
-            audio_format=audio_format,
-            user=user,
-        )
+    ) -> ChatMediaResponse:
+        """通过本地媒体服务生成一次结果，失败直接返回清晰错误。"""
+        try:
+            if self.media_service is None:
+                raise AiError("MEDIA_NOT_INITIALIZED", status_code=503)
+            request = ChatMediaRequest(
+                model=model,
+                session_id=session_id,
+                prompt=prompt,
+                messages=tuple(messages),
+                request_id=request_id,
+                output_type=output_type,
+                timeout_seconds=max(1, int(min(timeout_seconds, 120))),
+                max_bytes=max_bytes,
+                image_format=image_format,
+                voice=voice,
+                audio_format=audio_format,
+                user=user,
+            )
+            result = await self.media_service.generate(
+                request, MediaOwner(entry="qq", session_id=session_id)
+            )
+            return result.response
+        except AiError as error:
+            exception = (
+                ChatAiUnavailableError
+                if error.status_code in {503, 504, 429}
+                else ChatAiRejectedError
+            )
+            raise exception(
+                error.code, status_code=error.status_code, error_code=error.code
+            ) from error
 
-    async def decide_auto_speak(self, *, state: str, session_id: str, request_id: str):
-        return await self.java_client.decide_auto_speak(
-            state=state, session_id=session_id, request_id=request_id
-        )
-
-    async def pending_jobs(self, bot_id: str, after_id: str | None = None):
-        return await self.java_client.pending_jobs(bot_id, after_id)
-
-    async def acknowledge_job(self, bot_id: str, job_id: str) -> None:
-        await self.java_client.acknowledge_job(bot_id, job_id)
-
-    async def aclose(self):
-        """关闭当前快照拥有的模型连接，进程媒体存储由外层最后释放。"""
+    async def aclose(self) -> None:
+        """释放当前快照的客户端，进程媒体存储由外层最后释放。"""
         try:
             try:
-                try:
-                    if self.agent_service is not None:
-                        await self.agent_service.aclose()
-                finally:
-                    if self.media_service is not None:
-                        await self.media_service.aclose()
+                if self.agent_service is not None:
+                    await self.agent_service.aclose()
             finally:
-                await self.python_service.aclose()
+                if self.media_service is not None:
+                    await self.media_service.aclose()
         finally:
-            await self.java_client.aclose()
+            await self.python_service.aclose()

@@ -3,10 +3,10 @@
 import base64
 import binascii
 
-from agent_bot.integrations.dispatch_ai import _matches_audio_signature
 from agent_bot.media.config import MAX_IMAGE_BYTES
 from agent_bot.media.errors import MediaError
 from agent_bot.media.inputs import ImagePreparer
+from agent_bot.media.signatures import matches_audio_signature
 from agent_bot.models import ChatMediaResponse
 
 IMAGE_MIME = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}
@@ -41,6 +41,6 @@ def validate_generated_media(
         raise MediaError("MEDIA_TOO_LARGE")
     if output_type == "IMAGE":
         ImagePreparer().prepare(raw, expected)
-    elif not _matches_audio_signature(raw, format):
+    elif not matches_audio_signature(raw, format):
         raise MediaError("MEDIA_INVALID_RESPONSE")
     return raw

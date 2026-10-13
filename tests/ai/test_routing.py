@@ -1,93 +1,53 @@
+"""本地聊天入口复用模型目录、请求预算及错误分类。"""
+
 import json
 
 import httpx
 import pytest
 
-from agent_bot.ai.errors import AiError
-from agent_bot.ai.routing import RoutingAiClient
-from agent_bot.integrations.dispatch_ai import DispatchAiClient, DispatchAiRejectedError
+from agent_bot.ai.chat_errors import ChatAiRejectedError
+from agent_bot.ai.routing import RoutedModelGuard, RoutingAiClient
+from agent_bot.model_guard import ModelNotAvailableError
 from agent_bot.models import ChatMessage, LlmRequestOptions
 
 from .test_service import make_service
 
 
-async def test_plain_python_and_explicit_java(catalog, ai_params, ai_database):
+async def test_default_text_resolves_local_model(catalog, ai_params, ai_database):
+    """没有后端配置仍可按本地别名完成对话，缺失模型在发请求前拒绝。"""
     calls = []
 
-    def python(req):
-        calls.append("python")
-        assert json.loads(req.content)["model"] == "exact/model"
-        return httpx.Response(200, json={"message": {"content": "python answer"}, "done": True})
+    def upstream(req):
+        """隔离供应商网络，同时记录实际上游模型名。"""
+        calls.append(json.loads(req.content))
+        return httpx.Response(200, json={"message": {"content": "本地回复"}, "done": True})
 
-    def java(req):
-        calls.append("java")
-        return httpx.Response(
-            200,
-            headers={"content-type": "text/event-stream"},
-            text='data: {"choices":[{"index":0,"delta":{"type":"result",'
-            '"content":"java answer"}}]}\n\n'
-            'data: {"choices":[{"index":0,"delta":{"type":"done"}}]}\n\n',
-        )
-
-    service = await make_service(catalog, ai_params, ai_database, python)
-    legacy = DispatchAiClient(
-        base_url="https://java.invalid", timeout_seconds=2, transport=httpx.MockTransport(java)
-    )
+    service = await make_service(catalog, ai_params, ai_database, upstream)
     router = RoutingAiClient(
-        legacy,
-        service,
-        plain_backend="python",
-        timeout_seconds=2,
-        default_options=LlmRequestOptions(),
-        mcp_services=(),
-        laya_enabled=False,
+        service, timeout_seconds=2, default_options=LlmRequestOptions(), mcp_services=()
     )
     try:
-        base = dict(
-            model="local",
-            session_id="s",
-            prompt="hello",
-            request_id="r",
+        args = dict(
+            model="local", session_id="s", prompt="hello", request_id="r",
             messages=[ChatMessage(role="user", content="hello")],
-            use_web_search=False,
+            use_agent=False, use_web_search=False,
         )
-        assert await router.complete(**base, use_agent=False) == "python answer"
-        assert await router.complete(**base, use_agent=True) == "java answer"
-        assert calls == ["python", "java"]
-        with pytest.raises(DispatchAiRejectedError):
-            await router.complete(**{**base, "model": "missing"}, use_agent=False)
-        assert calls == ["python", "java"]
+        assert await router.complete(**args) == "本地回复"
+        assert calls[0]["model"] == "exact/model"
+        with pytest.raises(ChatAiRejectedError, match="AI_MODEL_NOT_FOUND"):
+            await router.complete(**{**args, "model": "missing"})
+        assert len(calls) == 1
     finally:
         await router.aclose()
 
 
-async def test_unsupported_option_never_falls_back(catalog, ai_params, ai_database):
-    async def forbidden(req):
-        raise AssertionError("no request should occur")
-
-    service = await make_service(catalog, ai_params, ai_database, forbidden)
-    legacy = DispatchAiClient(
-        base_url="https://java.invalid", timeout_seconds=2, transport=httpx.MockTransport(forbidden)
-    )
-    router = RoutingAiClient(
-        legacy,
-        service,
-        plain_backend="python",
-        timeout_seconds=2,
-        default_options=LlmRequestOptions(),
-        mcp_services=(),
-        laya_enabled=False,
-    )
+async def test_model_guard_uses_local_catalog(catalog, ai_params, ai_database):
+    """预检采用同一本地目录，不再读取旧服务的模型表。"""
+    service = await make_service(catalog, ai_params, ai_database, lambda req: httpx.Response(200))
     try:
-        with pytest.raises(AiError, match="AI_OPTION_UNSUPPORTED"):
-            await service.complete(
-                __import__("agent_bot.ai.contracts", fromlist=["TextRequest"]).TextRequest(
-                    model="local",
-                    session_id="s",
-                    request_id="r",
-                    prompt="hi",
-                    options=LlmRequestOptions(presence_penalty=1),
-                )
-            )
+        guard = RoutedModelGuard(catalog)
+        await guard.ensure_enabled("local")
+        with pytest.raises(ModelNotAvailableError, match="AI_MODEL_NOT_FOUND"):
+            await guard.ensure_enabled("missing")
     finally:
-        await router.aclose()
+        await service.aclose()

@@ -62,7 +62,7 @@ def mention_gateway() -> OneBotReplyGateway:
 
     config = RuntimeConfig(
         onebot_v11_access_token="test-token-that-is-longer-than-32-characters",
-        dispatch_chat_session_secret="test-secret-that-is-longer-than-32-characters",
+        chat_session_secret="test-secret-that-is-longer-than-32-characters",
     )
     return OneBotReplyGateway(lambda: config)
 

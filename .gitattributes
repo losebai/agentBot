@@ -1,0 +1,5 @@
+# Linux 发布脚本始终使用 LF，避免 Windows 工作区提交 CRLF 导致部署失败。
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf

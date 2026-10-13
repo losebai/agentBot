@@ -12,15 +12,25 @@ from agent_bot.services.tool_sessions import ToolSessionExpiredError
 class ChatToolBridge:
     """以有效 QQ 会话令牌桥接工具调用，保留原有权限和副作用边界。"""
     def __init__(self, server):
+        """保存可热更新的聊天 MCP 服务提供器。"""
         self._server = server
 
     def _access(self, authority):
+        """只接受 QQ 入口签发的请求令牌。"""
         if authority.entry != "qq" or authority.chat_token is None:
             raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
         server = self._server() if callable(self._server) else self._server
         if server is None:
             raise AgentError("AGENT_CHAT_TOOLS_UNAVAILABLE", status_code=503)
         return server, authority.chat_token.get_secret_value()
+
+    async def context(self, authority):
+        """向本地 Job 提供认证上下文，不允许模型指定身份。"""
+        server, token = self._access(authority)
+        try:
+            return await server.resolve_context(token)
+        except ToolSessionExpiredError as error:
+            raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403) from error
 
     async def list_tools(self, authority):
         """令牌每次重新验证，本地 schema 投影不改变服务端原始约束。"""

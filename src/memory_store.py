@@ -26,10 +26,10 @@ from agent_bot.state import (
     validate_request_id,
 )
 
-_SESSION_TABLE = "dispatch_chat_memory_session"
-_TURN_TABLE = "dispatch_chat_memory_turn"
-_RECEIPT_TABLE = "dispatch_chat_memory_receipt"
-_GROUP_CONTEXT_TABLE = "dispatch_chat_group_context"
+_SESSION_TABLE = "chat_memory_session"
+_TURN_TABLE = "chat_memory_turn"
+_RECEIPT_TABLE = "chat_memory_receipt"
+_GROUP_CONTEXT_TABLE = "chat_group_context"
 _READ_BATCH_SIZE = 128
 _MAX_TEXT_BYTES = 1_048_576
 _MAX_COMPRESSION_SOURCE_CHARS = 24_000
@@ -51,8 +51,8 @@ _SCHEMA_STATEMENTS = (
         `update_time` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
             ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
         PRIMARY KEY (`session_id`),
-        KEY `idx_dispatch_chat_memory_session_expires` (`expires_at`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 持久会话记忆'
+        KEY `idx_chat_memory_session_expires` (`expires_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 持久会话记忆'
     """,
     f"""
     CREATE TABLE IF NOT EXISTS `{_TURN_TABLE}` (
@@ -63,9 +63,9 @@ _SCHEMA_STATEMENTS = (
         `assistant_content` MEDIUMTEXT NOT NULL COMMENT '已投递助手内容',
         `create_time` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
         PRIMARY KEY (`id`),
-        KEY `idx_dispatch_chat_memory_turn_session_id` (`session_id`, `id`),
-        UNIQUE KEY `uk_dispatch_chat_memory_turn_request` (`session_id`, `request_id`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 最近会话轮次'
+        KEY `idx_chat_memory_turn_session_id` (`session_id`, `id`),
+        UNIQUE KEY `uk_chat_memory_turn_request` (`session_id`, `request_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 最近会话轮次'
     """,
     f"""
     CREATE TABLE IF NOT EXISTS `{_RECEIPT_TABLE}` (
@@ -73,8 +73,8 @@ _SCHEMA_STATEMENTS = (
         `request_id` VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '幂等请求标识',
         `expires_at` DATETIME(6) NOT NULL COMMENT '独立重试去重截止时间',
         PRIMARY KEY (`session_id`, `request_id`),
-        KEY `idx_dispatch_chat_memory_receipt_expires` (`expires_at`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 已提交请求回执'
+        KEY `idx_chat_memory_receipt_expires` (`expires_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 已提交请求回执'
     """,
     f"""
     CREATE TABLE IF NOT EXISTS `{_GROUP_CONTEXT_TABLE}` (
@@ -85,8 +85,8 @@ _SCHEMA_STATEMENTS = (
         `update_time` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
             ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
         PRIMARY KEY (`scope_id`),
-        KEY `idx_dispatch_chat_group_context_expires` (`expires_at`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 群聊最近文本'
+        KEY `idx_chat_group_context_expires` (`expires_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 群聊最近文本'
     """,
 )
 
@@ -104,7 +104,7 @@ _EXPECTED_SCHEMA = {
                 "update_time",
             }
         ),
-        "indexes": frozenset({"PRIMARY", "idx_dispatch_chat_memory_session_expires"}),
+        "indexes": frozenset({"PRIMARY", "idx_chat_memory_session_expires"}),
     },
     _TURN_TABLE: {
         "columns": frozenset(
@@ -118,19 +118,19 @@ _EXPECTED_SCHEMA = {
             }
         ),
         "indexes": frozenset(
-            {"PRIMARY", "idx_dispatch_chat_memory_turn_session_id",
-             "uk_dispatch_chat_memory_turn_request"}
+            {"PRIMARY", "idx_chat_memory_turn_session_id",
+             "uk_chat_memory_turn_request"}
         ),
     },
     _RECEIPT_TABLE: {
         "columns": frozenset({"session_id", "request_id", "expires_at"}),
-        "indexes": frozenset({"PRIMARY", "idx_dispatch_chat_memory_receipt_expires"}),
+        "indexes": frozenset({"PRIMARY", "idx_chat_memory_receipt_expires"}),
     },
     _GROUP_CONTEXT_TABLE: {
         "columns": frozenset(
             {"scope_id", "messages_json", "expires_at", "create_time", "update_time"}
         ),
-        "indexes": frozenset({"PRIMARY", "idx_dispatch_chat_group_context_expires"}),
+        "indexes": frozenset({"PRIMARY", "idx_chat_group_context_expires"}),
     },
 }
 
@@ -182,7 +182,7 @@ class GroupContextPolicy:
 
 
 class ChatMemorySchema:
-    """Create and strictly validate the persistent memory tables."""
+    """创建并严格校验持久记忆表，原位兼容已确认的旧索引名称。"""
 
     def __init__(
         self,
@@ -194,13 +194,14 @@ class ChatMemorySchema:
         self._connect = connect or pymysql.connect
 
     def initialize(self) -> None:
-        """Create missing tables and reject incompatible existing schemas."""
+        """先迁移旧索引名称再补充字段，避免幂等索引重复创建并保留历史。"""
 
         try:
             with closing(self._open()) as connection:
                 with connection.cursor() as cursor:
                     for statement in _SCHEMA_STATEMENTS:
                         cursor.execute(statement)
+                self._upgrade_index_names(connection)
                 self._upgrade_request_ids(connection)
                 self._upgrade_generations(connection)
                 self._drop_foreign_keys(connection)
@@ -208,6 +209,26 @@ class ChatMemorySchema:
                 self._validate_schema(connection)
         except (InterfaceError, OperationalError, DatabaseError) as exc:
             raise ChatMemorySchemaError("chat memory schema initialization failed") from exc
+
+    def _upgrade_index_names(self, connection: Any) -> None:
+        """旧表改名不会同步改索引名，只重命名已确认的 dispatch 历史索引。"""
+        for table, expected in _EXPECTED_SCHEMA.items():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS "
+                    "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
+                    (self._params.database, table),
+                )
+                indexes = {str(row["INDEX_NAME"]) for row in cursor.fetchall()}
+                for current in sorted(expected["indexes"] - {"PRIMARY"}):
+                    legacy = current.replace("idx_chat_", "idx_dispatch_chat_", 1).replace(
+                        "uk_chat_", "uk_dispatch_chat_", 1
+                    )
+                    if current not in indexes and legacy in indexes:
+                        # 标识符只来自固定表结构；不重建索引、不改变唯一性或字段顺序。
+                        cursor.execute(
+                            f"ALTER TABLE `{table}` RENAME INDEX `{legacy}` TO `{current}`"
+                        )
 
     def _upgrade_request_ids(self, connection: Any) -> None:
         """原位添加可空请求编号与唯一键，保留旧历史数据。"""
@@ -229,13 +250,14 @@ class ChatMemorySchema:
                 (self._params.database, _TURN_TABLE),
             )
             indexes = {str(row["INDEX_NAME"]) for row in cursor.fetchall()}
-            if "uk_dispatch_chat_memory_turn_request" not in indexes:
+            if "uk_chat_memory_turn_request" not in indexes:
                 cursor.execute(
                     f"ALTER TABLE `{_TURN_TABLE}` ADD UNIQUE KEY "
-                    "`uk_dispatch_chat_memory_turn_request` (`session_id`, `request_id`)"
+                    "`uk_chat_memory_turn_request` (`session_id`, `request_id`)"
                 )
 
     def _validate_schema(self, connection: Any) -> None:
+        """拒绝缺少必要结构的表，错误只包含安全的结构名称。"""
         for table_name, expected in _EXPECTED_SCHEMA.items():
             with connection.cursor() as cursor:
                 cursor.execute(
@@ -256,10 +278,14 @@ class ChatMemorySchema:
                     (self._params.database, table_name),
                 )
                 indexes = {str(row["INDEX_NAME"]) for row in cursor.fetchall()}
-            if not expected["columns"].issubset(columns) or not expected["indexes"].issubset(
-                indexes
-            ):
-                raise ChatMemorySchemaError("chat memory schema is invalid")
+            missing_columns = sorted(expected["columns"] - columns)
+            missing_indexes = sorted(expected["indexes"] - indexes)
+            if missing_columns or missing_indexes:
+                raise ChatMemorySchemaError(
+                    f"chat memory schema is invalid: table={table_name}; "
+                    f"missing_columns={','.join(missing_columns) or 'none'}; "
+                    f"missing_indexes={','.join(missing_indexes) or 'none'}"
+                )
 
     def _upgrade_generations(self, connection: Any) -> None:
         """为旧会话逐条补充稳定代际，保留历史并支持中断后继续升级。"""

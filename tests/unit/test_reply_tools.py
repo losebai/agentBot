@@ -114,7 +114,7 @@ async def test_agent_always_delivers_final_text_once(
     chat = SimpleNamespace(generate_queued=generate, commit_queued=AsyncMock())
     config = RuntimeConfig(
         onebot_v11_access_token="test-token-that-is-longer-than-32-characters",
-        dispatch_chat_session_secret="test-secret-that-is-longer-than-32-characters",
+        chat_session_secret="test-secret-that-is-longer-than-32-characters",
     )
     processor = ConversationQueueProcessor(
         config_provider=lambda: config, chat_service_provider=lambda: chat,
@@ -186,9 +186,9 @@ async def test_auto_speak_queue_uses_its_stricter_reply_limit() -> None:
     )
     config = RuntimeConfig(
         onebot_v11_access_token="test-token-that-is-longer-than-32-characters",
-        dispatch_chat_session_secret="test-secret-that-is-longer-than-32-characters",
-        dispatch_chat_chunk_chars=3,
-        dispatch_chat_max_reply_chars=7,
+        chat_session_secret="test-secret-that-is-longer-than-32-characters",
+        chat_chunk_chars=3,
+        chat_max_reply_chars=7,
     )
     processor = ConversationQueueProcessor(
         config_provider=lambda: config,
@@ -232,7 +232,7 @@ async def test_auto_speak_queue_failure_stays_silent() -> None:
     processor = ConversationQueueProcessor(
         config_provider=lambda: RuntimeConfig(
             onebot_v11_access_token="test-token-that-is-longer-than-32-characters",
-            dispatch_chat_session_secret="test-secret-that-is-longer-than-32-characters",
+            chat_session_secret="test-secret-that-is-longer-than-32-characters",
         ),
         chat_service_provider=lambda: SimpleNamespace(),
         runtime_lease=AsyncMock(),

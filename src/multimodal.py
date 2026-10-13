@@ -290,7 +290,7 @@ async def fetch_image_attachment(
 
 
 def validate_image_reference(value: str) -> str:
-    """校验发往 dispatch-ai 的远程 URL 或 Base64 图片引用。"""
+    """校验传给模型服务 的远程 URL 或 Base64 图片引用。"""
 
     if isinstance(value, str) and value.startswith("data:"):
         return _validate_image_data_url(value)
@@ -344,7 +344,7 @@ async def _download_image(
             async with client.stream(
                 "GET",
                 current_url,
-                headers={"User-Agent": "dispatch-chat/image-fetch"},
+                headers={"User-Agent": "chat/image-fetch"},
                 timeout=httpx.Timeout(IMAGE_DOWNLOAD_TIMEOUT_SECONDS),
             ) as response:
                 if response.status_code in _REDIRECT_STATUSES:

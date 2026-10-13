@@ -35,7 +35,7 @@ from agent_bot.services.tool_images import has_tool_images
 from agent_bot.state import ConversationStoreProtocol
 
 if TYPE_CHECKING:
-    from agent_bot.model_guard import ModelGuard
+    from agent_bot.ai.routing import RoutedModelGuard
 
 
 class ChatService:
@@ -53,7 +53,7 @@ class ChatService:
         max_concurrent_media_requests: int = 1,
         max_rate_limit_entries: int = 1000,
         clock: Callable[[], float] = time.monotonic,
-        model_guard: ModelGuard | None = None,
+        model_guard: RoutedModelGuard | None = None,
         model_router: ContentModelRouter,
         agent_enabled: bool = True,
         web_search_enabled: bool = True,
@@ -575,7 +575,7 @@ class ChatService:
             )
             model_id = self._model_router.model_for(category)
             if self._model_guard is not None:
-                from agent_bot.ai.routing import AiRouteRequest, select_backend
+                from agent_bot.ai.routing import AiRouteRequest, select_route
 
                 route_request = AiRouteRequest(
                     agent=effective_agent,
@@ -587,18 +587,12 @@ class ChatService:
                     videos=bool(video_urls),
                 )
                 route_method = getattr(self.client, "route", None)
-                decision = route_method(route_request) if route_method else None
-                if decision is None or not (
-                    decision.backend == "python" and decision.capability in {"agent", "media"}
-                ):
-                    capability = (
-                        decision.capability
-                        if decision
-                        else "ordinary-text"
-                        if select_backend(route_request, "python") == "python"
-                        else "java"
-                    )
-                    await self._model_guard.ensure_enabled(model_id, capability=capability)
+                decision = (
+                    route_method(route_request) if route_method else select_route(route_request)
+                )
+                # Agent 自身解析模型一致性快照，普通文本才单独预检模型目录。
+                if decision.capability not in {"agent", "media"}:
+                    await self._model_guard.ensure_enabled(model_id, capability=decision.capability)
             context_options = {} if chat_context is None else {"chat_context": chat_context}
             if laya_decision:
                 context_options["laya_decision"] = True

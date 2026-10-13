@@ -12,7 +12,7 @@ from agent_bot.config import RuntimeConfig
 def runtime_config() -> RuntimeConfig:
     return RuntimeConfig(
         onebot_v11_access_token="database-onebot-token-that-is-at-least-32-characters",
-        dispatch_chat_session_secret="database-session-secret-that-is-at-least-32-characters",
+        chat_session_secret="database-session-secret-that-is-at-least-32-characters",
     )
 
 

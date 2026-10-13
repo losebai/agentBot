@@ -10,7 +10,7 @@ resolution-markers = [
 
 [[package]]
 name = "agent-bot"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -38,6 +38,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-socket" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 
@@ -63,6 +64,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0,<8.0" },
     { name = "pytest-socket", marker = "extra == 'dev'", specifier = ">=0.7,<1.0" },
     { name = "python-dotenv", specifier = ">=1.0,<2.0" },
+    { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0,<7.0" },
     { name = "redis", specifier = ">=5.2,<7.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1.0" },
 ]

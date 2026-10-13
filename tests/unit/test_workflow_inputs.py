@@ -34,7 +34,7 @@ def uploaded_image(**overrides):
     from agent_bot.services.workflow_inputs import WorkflowInputImage
 
     return WorkflowInputImage(**{
-        "filename": "b" * 64 + ".png", "subfolder": "dispatch-chat-i2i/" + "a" * 32,
+        "filename": "b" * 64 + ".png", "subfolder": "chat-i2i/" + "a" * 32,
         "media_type": "image/png", "size_bytes": 100, "sha256": "b" * 64,
         **overrides,
     })
@@ -69,7 +69,7 @@ def test_i2i_replaces_only_bound_fields_and_keeps_template():
     definition = i2i_definition()
     original = json.loads(definition.api_json)
     expected = json.loads(definition.api_json)
-    expected["1"]["inputs"]["image"] = "dispatch-chat-i2i/" + "a" * 32 + "/" + "b" * 64 + ".png"
+    expected["1"]["inputs"]["image"] = "chat-i2i/" + "a" * 32 + "/" + "b" * 64 + ".png"
     expected["2"]["inputs"]["value"] = "改蓝色"
     expected["12"]["inputs"]["negative_prompt"] = "模糊"
     expected["14"]["inputs"]["seed"] = 42
@@ -115,7 +115,7 @@ def test_i2i_rejects_ambiguous_image_graph(mutation):
 
 @pytest.mark.parametrize("changes", [
     {"filename": "../other.png"}, {"subfolder": "../../private"},
-    {"subfolder": "C:/private"}, {"subfolder": "dispatch-chat-i2i/../x"},
+    {"subfolder": "C:/private"}, {"subfolder": "chat-i2i/../x"},
     {"filename": "b" * 64 + ".jpg"}, {"sha256": "c" * 64},
     {"size_bytes": 0}, {"size_bytes": 10_485_761}, {"media_type": "image/gif"},
 ])

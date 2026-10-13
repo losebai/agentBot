@@ -24,11 +24,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments:
         raise SystemExit("usage: agent-bot [settings ... | workflows ... | --help]")
     from agent_bot.admin.config import AdminConfig
-
-    admin = AdminConfig.from_environment()
     from agent_bot.bootstrap import load_startup_settings
+    from agent_bot.cli_errors import describe_config_error
+    from agent_bot.settings import SettingsError
 
-    stored = load_startup_settings()
+    try:
+        admin = AdminConfig.from_environment()
+    except ValueError as exc:
+        print(f"启动失败：请检查 AGENT_BOT_ADMIN_TOKEN。{describe_config_error(exc)}")
+        return 1
+
+    try:
+        stored = load_startup_settings()
+    except (ValueError, SettingsError) as exc:
+        print(f"启动失败：{describe_config_error(exc)}")
+        return 1
     from agent_bot.application import create_application
 
     create_application(stored, admin)

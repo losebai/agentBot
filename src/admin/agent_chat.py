@@ -43,13 +43,9 @@ class AgentChatProbe:
         self.runtime = runtime
 
     def request(self, body, request_id):
-        """生成可信会话前缀，图片输入同时要求媒体后端启用 Python。"""
+        """生成可信会话前缀，附件归属由本地 Agent 服务验证。"""
         config = self.runtime.config
-        if config.dispatch_chat_agent_backend != "python":
-            raise AgentError("AGENT_REQUIRES_PYTHON", status_code=409)
-        if body.attachment_ids and config.dispatch_chat_media_backend != "python":
-            raise AgentError("MEDIA_REQUIRES_PYTHON", status_code=409)
-        timeout = min(config.dispatch_chat_timeout_seconds, 300)
+        timeout = min(config.chat_timeout_seconds, 300)
         if body.timeout_seconds is not None:
             if body.timeout_seconds > timeout:
                 raise AgentError("AGENT_TIMEOUT_INVALID", status_code=422)
@@ -78,10 +74,9 @@ class AgentChatProbe:
     def authority(self):
         """运行时真实可用的管理媒体工具才可加入授权。"""
         names = ("web_search", "read_url")
-        if self.runtime.config.dispatch_chat_media_backend == "python":
-            adapter = getattr(self.service().tool_runtime, "admin_media_tools", None)
-            if adapter is not None:
-                names += tuple(sorted(adapter.allowed_tools))
+        adapter = getattr(self.service().tool_runtime, "admin_media_tools", None)
+        if adapter is not None:
+            names += tuple(sorted(adapter.allowed_tools))
         return ExecutionAuthority(entry="admin", allowed_tools=names)
 
     async def complete(self, body, request_id):

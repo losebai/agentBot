@@ -56,17 +56,17 @@ class AgentService:
         return await self.catalog.readiness(agent_code)
 
     async def _prepare(self, request, authority, execution_id, inputs):
-        """先固定能力和凭据，再准备媒体，失败不降级为无图文本。"""
+        """先固定并检查能力，再准备凭据和媒体，禁止静默移除未实现的预设工具。"""
         snapshot = await self.catalog.snapshot(
             request,
             search_code=(self.search_code if "web_search" in authority.allowed_tools else None),
         )
+        if (snapshot.agent and set(snapshot.agent.tools) & LEGACY_TOOLS) or any(
+            s.code == "laya" for s in snapshot.mcps
+        ):
+            raise AgentError("AGENT_CAPABILITY_NOT_MIGRATED", status_code=422)
         if authority.entry == "admin":
-            if (snapshot.agent and set(snapshot.agent.tools) & LEGACY_TOOLS) or any(
-                s.code == "laya" for s in snapshot.mcps
-            ):
-                raise AgentError("AGENT_CAPABILITY_NOT_MIGRATED", status_code=422)
-            # Only the trusted snapshot grants remote capabilities to admin probes.
+            # 管理入口只接受可信快照授予的远端能力，QQ 继续使用原消息授权交集。
             authority = authority.model_copy(
                 update={"allowed_mcp_services": tuple(s.code for s in snapshot.mcps)}
             )
@@ -90,7 +90,7 @@ class AgentService:
         ):
             raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
         provider = self.providers[model.provider.protocol]
-        credential = self.credentials.resolve(model.provider.credential_ref)
+        credential = self.credentials.resolve(model.provider)
         options = LlmRequestOptions(
             **{
                 **(snapshot.agent.options.model_dump(exclude_none=True) if snapshot.agent else {}),

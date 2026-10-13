@@ -37,11 +37,11 @@ class BootstrapConfig(BaseModel):
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    host: str = Field(default="127.0.0.1", alias="dispatch_chat_db_host")
-    port: int = Field(default=3306, ge=1, le=65535, alias="dispatch_chat_db_port")
-    user: str = Field(alias="dispatch_chat_db_user")
-    password: SecretStr = Field(alias="dispatch_chat_db_password")
-    database: str = Field(default="dispatch_chat", alias="dispatch_chat_db_name")
+    host: str = Field(default="127.0.0.1", alias="chat_db_host")
+    port: int = Field(default=3306, ge=1, le=65535, alias="chat_db_port")
+    user: str = Field(alias="chat_db_user")
+    password: SecretStr = Field(alias="chat_db_password")
+    database: str = Field(default="chat", alias="chat_db_name")
 
 
 class RedisBootstrapConfig(BaseModel):
@@ -53,21 +53,21 @@ class RedisBootstrapConfig(BaseModel):
         default="127.0.0.1",
         min_length=1,
         max_length=253,
-        alias="dispatch_chat_redis_host",
+        alias="chat_redis_host",
     )
-    port: int = Field(default=6379, ge=1, le=65535, alias="dispatch_chat_redis_port")
-    database: int = Field(default=0, ge=0, le=15, alias="dispatch_chat_redis_db")
+    port: int = Field(default=6379, ge=1, le=65535, alias="chat_redis_port")
+    database: int = Field(default=0, ge=0, le=15, alias="chat_redis_db")
     password: SecretStr | None = Field(
         default=None,
-        alias="dispatch_chat_redis_password",
+        alias="chat_redis_password",
         repr=False,
     )
-    ssl: bool = Field(default=False, alias="dispatch_chat_redis_ssl")
+    ssl: bool = Field(default=False, alias="chat_redis_ssl")
     key_prefix: str = Field(
-        default="dispatch:chat",
+        default="chat",
         min_length=1,
         max_length=64,
-        alias="dispatch_chat_redis_key_prefix",
+        alias="chat_redis_key_prefix",
     )
 
     @field_validator("password", mode="before")
@@ -206,4 +206,4 @@ def inject_runtime_config(
     if revision is not None:
         if type(revision) is not int or revision < 1:
             raise ValueError("settings revision must be positive")
-        global_config.dispatch_chat_settings_revision = revision
+        global_config.chat_settings_revision = revision

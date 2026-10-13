@@ -199,10 +199,10 @@ def test_memory_ids_are_incrementing_integers_and_tag_links_use_them(
         )
     with sqlite3.connect(tmp_path / "memory.db") as connection:
         ids = [row[0] for row in connection.execute(
-            "SELECT id FROM dispatch_chat_tagged_memory ORDER BY id"
+            "SELECT id FROM chat_tagged_memory ORDER BY id"
         )]
         tag_ids = [row[0] for row in connection.execute(
-            "SELECT memory_id FROM dispatch_chat_memory_tag ORDER BY memory_id"
+            "SELECT memory_id FROM chat_memory_tag ORDER BY memory_id"
         )]
     assert ids == [1, 2]
     assert tag_ids == ids
@@ -221,7 +221,7 @@ def test_forget_hides_memory_without_deleting_row_and_save_restores_it(
     )
     with sqlite3.connect(tmp_path / "memory.db") as connection:
         original_id = connection.execute(
-            "SELECT id FROM dispatch_chat_tagged_memory WHERE memory_key = 'preference'"
+            "SELECT id FROM chat_tagged_memory WHERE memory_key = 'preference'"
         ).fetchone()[0]
     forget = MemoryArguments(action="forget", key="preference")
     assert memory_store.execute(identity, forget).status == "forgotten"
@@ -232,14 +232,14 @@ def test_forget_hides_memory_without_deleting_row_and_save_restores_it(
     ).records == ()
     with sqlite3.connect(tmp_path / "memory.db") as connection:
         row = connection.execute(
-            "SELECT id, content FROM dispatch_chat_tagged_memory WHERE memory_key = 'preference'"
+            "SELECT id, content FROM chat_tagged_memory WHERE memory_key = 'preference'"
         ).fetchone()
         assert row is not None
         deleted = connection.execute(
-            "SELECT is_deleted FROM dispatch_chat_tagged_memory WHERE id = ?", (original_id,)
+            "SELECT is_deleted FROM chat_tagged_memory WHERE id = ?", (original_id,)
         ).fetchone()[0]
         old_tags = connection.execute(
-            "SELECT tag FROM dispatch_chat_memory_tag WHERE memory_id = ?", (original_id,)
+            "SELECT tag FROM chat_memory_tag WHERE memory_id = ?", (original_id,)
         ).fetchall()
     assert row == (original_id, "old")
     assert deleted == 1
@@ -251,7 +251,7 @@ def test_forget_hides_memory_without_deleting_row_and_save_restores_it(
     )
     with sqlite3.connect(tmp_path / "memory.db") as connection:
         restored = connection.execute(
-            "SELECT id, is_deleted FROM dispatch_chat_tagged_memory WHERE memory_key = 'preference'"
+            "SELECT id, is_deleted FROM chat_tagged_memory WHERE memory_key = 'preference'"
         ).fetchone()
     assert restored == (original_id, 0)
     assert memory_store.execute(
@@ -467,7 +467,8 @@ def test_schema_script_matches_automatic_initialization() -> None:
     script = (Path(__file__).parents[2] / "sql/legacy/2026-09-22-tagged-memory.sql").read_text(
         encoding="utf-8",
     )
-    normalized = " ".join(script.split())
+    # 原始基线只映射表名前缀，继续核对完整结构。
+    normalized = " ".join(script.replace("dispatch_chat_", "chat_").split())
     for statement in SCHEMA_STATEMENTS:
         assert " ".join(statement.split()) + ";" in normalized
 

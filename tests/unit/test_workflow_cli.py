@@ -24,9 +24,9 @@ def test_sync_uses_configured_directory_and_reports_only_counts(
             DatabaseParams(
                 host="127.0.0.1",
                 port=3306,
-                user="dispatch_chat",
+                user="chat",
                 password="secret",
-                database="dispatch_chat",
+                database="chat",
             ),
         ),
     )
@@ -74,9 +74,9 @@ def test_list_reports_description_without_fixed_prompts(monkeypatch, capsys) -> 
             DatabaseParams(
                 host="127.0.0.1",
                 port=3306,
-                user="dispatch_chat",
+                user="chat",
                 password="secret",
-                database="dispatch_chat",
+                database="chat",
             ),
         ),
     )

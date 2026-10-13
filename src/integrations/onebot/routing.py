@@ -39,7 +39,7 @@ class MessageRouting:
             return False
         reply = find_keyword_reply(
             event.get_message().extract_plain_text(),
-            self._config_provider().dispatch_chat_keyword_at_replies,
+            self._config_provider().chat_keyword_at_replies,
         )
         if reply is None:
             return False
@@ -78,7 +78,7 @@ class MessageRouting:
         """筛选仅用于记录近期上下文的普通群聊文本。"""
 
         if (
-            not self._config_provider().dispatch_chat_group_recent_context_enabled
+            not self._config_provider().chat_group_recent_context_enabled
             or not isinstance(event, GroupMessageEvent)
             or await target_checker(event)
         ):

@@ -56,7 +56,7 @@ class MediaGenerationService:
         scope = MediaScope(owner=owner, execution_id=execution_id, execution_kind="media")
         resolved = await self.catalog.resolve(request.model)
         validate_generation_request(request, resolved)
-        credential = self.credentials.resolve(resolved.provider.credential_ref)
+        credential = self.credentials.resolve(resolved.provider)
         saved, begun, status, error_code, text = True, False, "failed", None, ""
         try:
             try:

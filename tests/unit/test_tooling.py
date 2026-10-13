@@ -36,7 +36,7 @@ def test_available_tools_includes_tts_only_when_database_client_exists(
     """数据库未完成配置时暴露工具，或配置完成后遗漏工具，均应失败。"""
 
     config = chat_plugin.plugin_config.model_copy(
-        update={"dispatch_chat_mcp_enabled": mcp, "dispatch_chat_tts_enabled": enabled}
+        update={"chat_mcp_enabled": mcp, "chat_tts_enabled": enabled}
     )
     client = object() if configured else None
     manager = ChatToolSessionManager(
@@ -56,12 +56,12 @@ def test_available_group_tools_matches_normal_group_chat_capabilities(chat_plugi
 
     config = chat_plugin.plugin_config.model_copy(
         update={
-            "dispatch_chat_mcp_enabled": True,
-            "dispatch_chat_job_enabled": True,
-            "dispatch_chat_tagged_memory_enabled": True,
-            "dispatch_chat_mention_tool_enabled": True,
-            "dispatch_chat_local_workflow_enabled": True,
-            "dispatch_chat_tts_enabled": True,
+            "chat_mcp_enabled": True,
+            "chat_job_enabled": True,
+            "chat_tagged_memory_enabled": True,
+            "chat_mention_tool_enabled": True,
+            "chat_local_workflow_enabled": True,
+            "chat_tts_enabled": True,
         }
     )
     manager = ChatToolSessionManager(
@@ -94,7 +94,7 @@ async def test_memory_identity_is_bound_in_direct_and_queued_sessions(chat_plugi
     from agent_bot.services.conversation_queue import ConversationJob
     from agent_bot.services.tool_sessions import ToolSessionStore
 
-    config = chat_plugin.plugin_config.model_copy(update={"dispatch_chat_mcp_enabled": True})
+    config = chat_plugin.plugin_config.model_copy(update={"chat_mcp_enabled": True})
     sessions = ToolSessionStore(ttl_seconds=30, max_sessions=3)
     memory_store = Mock()
     bot = Mock(self_id="90001")
@@ -122,7 +122,7 @@ async def test_memory_identity_is_bound_in_direct_and_queued_sessions(chat_plugi
         assert context.memory_session.identity.session_id == "group-session"
         assert context.memory_session.identity.user_id == "10002"
         assert context.memory_session.identity.group_id == "20000"
-    config = config.model_copy(update={"dispatch_chat_tagged_memory_enabled": False})
+    config = config.model_copy(update={"chat_tagged_memory_enabled": False})
     assert manager.available_tools(_private_event()) == ()
     with pytest.raises(RuntimeError, match="configuration changed"):
         async with manager.open_queued_session(job):
@@ -136,8 +136,8 @@ def test_image_management_remains_available_when_generation_is_disabled(
     """关闭生图后仍能管理已提交任务；没有服务或 MCP 权限时隐藏工具。"""
 
     config = chat_plugin.plugin_config.model_copy(update={
-        "dispatch_chat_mcp_enabled": mcp,
-        "dispatch_chat_local_workflow_enabled": False,
+        "chat_mcp_enabled": mcp,
+        "chat_local_workflow_enabled": False,
     })
     manager = ChatToolSessionManager(
         config_provider=lambda: config, store_provider=lambda: object(),
@@ -159,7 +159,7 @@ async def test_image_management_binds_service_and_owner_for_direct_and_queued_se
     from agent_bot.services.conversation_queue import ConversationJob
     from agent_bot.services.tool_sessions import ToolSessionStore
 
-    config = chat_plugin.plugin_config.model_copy(update={"dispatch_chat_mcp_enabled": True})
+    config = chat_plugin.plugin_config.model_copy(update={"chat_mcp_enabled": True})
     sessions = ToolSessionStore(ttl_seconds=30, max_sessions=3)
     service = object()
     bot = Mock(self_id="90001")

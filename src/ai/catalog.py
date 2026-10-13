@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from agent_bot.ai.contracts import (
     CatalogReadiness,
     ModelCreate,
+    ModelImportResult,
     ModelUpdate,
     ModelView,
     Page,
@@ -16,6 +17,7 @@ from agent_bot.ai.contracts import (
 )
 from agent_bot.ai.database import AiDatabase, page_limit, query
 from agent_bot.ai.errors import AiError
+from agent_bot.credential_values import row_values, write_credential
 from agent_bot.media.catalog import (
     model_view,
     read_media_batch,
@@ -27,7 +29,15 @@ _TABLES = {"provider": "agent_bot_ai_provider", "model": "agent_bot_ai_model"}
 _CREATE = {"provider": ProviderCreate, "model": ModelCreate}
 _VIEW = {"provider": ProviderView, "model": ModelView}
 _COLUMNS = {
-    "provider": ("name", "protocol", "base_url", "credential_ref", "enabled", "description"),
+    "provider": (
+        "name",
+        "protocol",
+        "base_url",
+        "credential",
+        "credential_required",
+        "enabled",
+        "description",
+    ),
     "model": ("alias", "upstream_model", "provider_id", "enabled"),
 }
 
@@ -44,7 +54,7 @@ class AiCatalog(AiDatabase):
                     for table, columns in [
                         (
                             _TABLES["provider"],
-                            set(ProviderView.model_fields) - {"credential_available"},
+                            set(ProviderView.model_fields),
                         ),
                         (
                             _TABLES["model"],
@@ -74,9 +84,13 @@ class AiCatalog(AiDatabase):
         )
         if row is None:
             raise AiError("AI_CONFIG_NOT_FOUND", status_code=404)
-        return model_view(connection, row) if kind == "model" else ProviderView.model_validate(row)
+        return (
+            model_view(connection, row)
+            if kind == "model"
+            else ProviderView.model_validate(row_values(row, ProviderView))
+        )
 
-    async def _list(self, kind: str, limit: int, cursor: str | None):
+    async def _list(self, kind: str, limit: int, cursor: str | None, provider_id=None):
         """按稳定主键分页并批量读取媒体能力。"""
         page_limit(limit)
         try:
@@ -90,8 +104,10 @@ class AiCatalog(AiDatabase):
             """分页与能力查询保持在一次数据库事务中。"""
             rows = query(
                 connection,
-                f"SELECT * FROM {_TABLES[kind]} WHERE id>%s ORDER BY id LIMIT %s",
-                (after, limit + 1),
+                f"SELECT * FROM {_TABLES[kind]} WHERE id>%s"
+                + (" AND provider_id=%s" if provider_id is not None else "")
+                + " ORDER BY id LIMIT %s",
+                (after, provider_id, limit + 1) if provider_id is not None else (after, limit + 1),
             )
             if kind == "model":
                 capabilities, initialized = read_media_batch(
@@ -103,7 +119,9 @@ class AiCatalog(AiDatabase):
 
         rows = await self.run(read)
         return Page[_VIEW[kind]](
-            items=[_VIEW[kind].model_validate(row) for row in rows[:limit]],
+            items=[
+                _VIEW[kind].model_validate(row_values(row, _VIEW[kind])) for row in rows[:limit]
+            ],
             next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
         )
 
@@ -112,8 +130,62 @@ class AiCatalog(AiDatabase):
     ) -> Page[ProviderView]:
         return await self._list("provider", limit, cursor)
 
-    async def list_models(self, limit: int = 50, cursor: str | None = None) -> Page[ModelView]:
-        return await self._list("model", limit, cursor)
+    async def list_models(
+        self, limit: int = 50, cursor: str | None = None, provider_id=None
+    ) -> Page[ModelView]:
+        """按供应商过滤已登记模型，避免相同上游 ID 的服务串用。"""
+        return await self._list("model", limit, cursor, provider_id)
+
+    async def get_provider(self, id: int, expected_revision: int):
+        """管理员可以检查停用供应商，但必须基于当前版本发现模型。"""
+
+        def read(connection):
+            """密钥和连接信息在同一数据库读取中固定。"""
+            provider = self._get(connection, "provider", id)
+            if provider.revision != expected_revision:
+                raise AiError("AI_CONFIG_CONFLICT", status_code=409)
+            return provider
+
+        return await self.run(read)
+
+    async def import_models(self, provider_id, body):
+        """整批导入使用一个事务；已登记项跳过，别名冲突不留下部分结果。"""
+
+        def write(connection):
+            """沿用目录写入的供应商加锁顺序，保护导入依据的版本。"""
+            query(connection, "SELECT id FROM agent_bot_ai_provider ORDER BY id FOR UPDATE")
+            provider = self._get(connection, "provider", provider_id, lock=True)
+            if provider.revision != body.expected_revision:
+                raise AiError("AI_CONFIG_CONFLICT", status_code=409)
+            imported, skipped = [], []
+            stamp = datetime.now(timezone.utc).replace(tzinfo=None)
+            for item in body.models:
+                exists = query(
+                    connection,
+                    "SELECT id FROM agent_bot_ai_model WHERE provider_id=%s AND upstream_model=%s",
+                    (provider_id, item.upstream_model),
+                    one=True,
+                )
+                if exists:
+                    skipped.append(item.upstream_model)
+                    continue
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "INSERT INTO agent_bot_ai_model "
+                        "(alias,upstream_model,provider_id,enabled,revision,created_at,updated_at) "
+                        "VALUES (%s,%s,%s,0,1,%s,%s)",
+                        (item.alias, item.upstream_model, provider_id, stamp, stamp),
+                    )
+                    id = cursor.lastrowid
+                imported.append(self._get(connection, "model", id))
+            return ModelImportResult(
+                provider_id=provider_id,
+                revision=provider.revision,
+                imported=tuple(imported),
+                skipped=tuple(skipped),
+            )
+
+        return await self.run(write, write=True)
 
     async def _create(self, kind: str, body):
         """只持久化白名单列，嵌套能力在同事务写入独立表。"""
@@ -121,6 +193,8 @@ class AiCatalog(AiDatabase):
         def write(connection):
             """先锁供应商再写模型，统一配置写入的锁顺序。"""
             values = body.model_dump(include=set(_COLUMNS[kind]))
+            if kind == "provider":
+                write_credential(values, body)
             stamp = datetime.now(timezone.utc).replace(tzinfo=None)
             values.update(created_at=stamp, updated_at=stamp)
             if kind == "model":
@@ -165,6 +239,8 @@ class AiCatalog(AiDatabase):
                 }
             )
             values = validated.model_dump(include=set(_COLUMNS[kind]))
+            if kind == "provider":
+                write_credential(values, body, current)
             values["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
             if kind == "model":
                 provider = self._get(connection, "provider", values["provider_id"], lock=True)

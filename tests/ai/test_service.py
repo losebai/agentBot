@@ -30,7 +30,7 @@ async def make_service(catalog, ai_params, ai_database, handler):
     return AiService(
         catalog,
         AiSessionStore(ai_params, connect=ai_database.connect),
-        CredentialResolver(environ={}),
+        CredentialResolver(),
         {"ollama": OllamaProvider(ProviderTransport(httpx.MockTransport(handler)))},
     )
 

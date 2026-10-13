@@ -21,11 +21,18 @@ class ProviderTransport:
         )
 
     async def iter_bytes(
-        self, url: str, *, payload: JsonValue, headers: Mapping[str, str], timeout_seconds: float
+        self,
+        url: str,
+        *,
+        payload: JsonValue,
+        headers: Mapping[str, str],
+        timeout_seconds: float,
+        method: str = "POST",
     ):
+        """生成使用 POST，模型发现显式使用 GET；共用限时及安全错误分类。"""
         try:
             async with self.http.stream(
-                "POST",
+                method,
                 url,
                 json=payload,
                 headers=headers,
@@ -56,10 +63,18 @@ class ProviderTransport:
         headers: Mapping[str, str],
         timeout_seconds: float,
         maximum_bytes: int = 1048576,
+        method: str = "POST",
     ) -> JsonValue:
+        """按响应字节上限解析 JSON，不能把异常上游内容写入错误信息。"""
         content = bytearray()
         async with aclosing(
-            self.iter_bytes(url, payload=payload, headers=headers, timeout_seconds=timeout_seconds)
+            self.iter_bytes(
+                url,
+                payload=payload,
+                headers=headers,
+                timeout_seconds=timeout_seconds,
+                method=method,
+            )
         ) as chunks:
             async for chunk in chunks:
                 if len(content) + len(chunk) > maximum_bytes:
@@ -69,6 +84,12 @@ class ProviderTransport:
             return json.loads(content)
         except (ValueError, UnicodeError) as error:
             raise AiError("AI_RESPONSE_INVALID") from error
+
+    async def get_json(self, url: str, *, headers: Mapping[str, str], timeout_seconds: float):
+        """模型列表请求不含正文，只使用服务器读取的供应商地址与凭据。"""
+        return await self.read_json(
+            url, payload=None, headers=headers, timeout_seconds=timeout_seconds, method="GET"
+        )
 
     async def aclose(self):
         await self.http.aclose()

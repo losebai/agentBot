@@ -1,4 +1,4 @@
-"""以修改前的结构基线核对中文注释，测试不执行 MySQL DDL。"""
+"""核对历史结构与明确的动态凭据增量，测试不执行真实 MySQL DDL。"""
 
 import json
 import re
@@ -66,32 +66,53 @@ def test_incremental_comments_do_not_redeclare_keys_or_change_column_types():
 
 
 def test_unified_initialization_preserves_owned_schema_and_orders_dependencies():
-    """合并不能遗漏自有表、改变既有约束，或在被引用表之前创建外键。"""
+    """只允许已声明的凭据字段迁移，其他列与外键依赖仍须保留。"""
     sql = (ROOT / "sql/agent_bot_init.sql").read_text("utf-8")
     tables = definitions(sql)
     baseline = json.loads(Path(__file__).with_name("schema_baseline.json").read_text("utf-8"))
     for old in baseline.values():
         for name, declarations in definitions(old).items():
             assert name in tables, name
-            assert normalized(",".join(tables[name])) == normalized(",".join(declarations)), name
+            # 标识符反引号只影响 SQL 解析，不改变列类型或约束。
+            actual = normalized(",".join(tables[name])).replace("`", "")
+            expected = normalized(",".join(declarations)).replace("`", "")
+            if name in {"agent_bot_ai_provider", "agent_bot_mcp"}:
+                # 新库直接使用数据库凭据；既有库的旧列由独立增量脚本保留。
+                expected = expected.replace(
+                    "credential_ref VARCHAR(128)NULL",
+                    "credential TEXT NULL,credential_required TINYINT NOT NULL DEFAULT 0",
+                )
+            assert actual == expected, name
     created = set()
     for name, declarations in tables.items():
         for declaration in declarations:
             for referenced in re.findall(r"REFERENCES\s+`?(\w+)`?", declaration, re.I):
                 assert referenced in created, (name, referenced)
         created.add(name)
-    assert len(tables) == 25
+    assert len(tables) == 27
+
+
+def test_dynamic_credential_migration_only_adds_columns_and_preserves_auth_requirement():
+    """升级不清空或重建表，旧引用保留为需要重新录入的鉴权配置。"""
+    sql = (ROOT / "sql/2026-10-13-dynamic-provider-mcp-credentials.sql").read_text("utf-8")
+    statements = re.sub(r"'[^']*'|--[^\n]*", "", sql)
+    assert not re.search(r"\b(DROP|TRUNCATE|DELETE|INSERT)\b", statements, re.I)
+    assert statements.count("ADD COLUMN credential TEXT NULL") == 2
+    assert statements.count("ADD COLUMN credential_required TINYINT NOT NULL DEFAULT 0") == 2
+    assert statements.count("credential_required = 1") == 2
+    assert "revision = revision + 1" in statements
+    assert "credential_ref IS NOT NULL" in statements
 
 
 def test_unified_initialization_includes_memory_idempotency_and_workflow_uniqueness():
     """新库直接具备请求去重、会话隔离和内容去重，不依赖历史数据修补。"""
     tables = definitions((ROOT / "sql/agent_bot_init.sql").read_text("utf-8"))
-    session = normalized(",".join(tables["dispatch_chat_memory_session"]))
-    turns = normalized(",".join(tables["dispatch_chat_memory_turn"]))
-    workflow = normalized(",".join(tables["dispatch_chat_workflow"]))
+    session = normalized(",".join(tables["chat_memory_session"]))
+    turns = normalized(",".join(tables["chat_memory_turn"]))
+    workflow = normalized(",".join(tables["chat_workflow"]))
     assert "`generation_id` CHAR(32)NOT NULL" in session
     assert "`request_id` VARCHAR(128)COLLATE utf8mb4_bin NULL" in turns
-    assert "UNIQUE KEY `uk_dispatch_chat_memory_turn_request`(`session_id`,`request_id`)" in turns
-    assert "dispatch_chat_memory_receipt" in tables
-    assert "UNIQUE KEY `uk_dispatch_chat_workflow_content_sha256`(`content_sha256`)" in workflow
+    assert "UNIQUE KEY `uk_chat_memory_turn_request`(`session_id`,`request_id`)" in turns
+    assert "chat_memory_receipt" in tables
+    assert "UNIQUE KEY `uk_chat_workflow_content_sha256`(`content_sha256`)" in workflow
     assert "`input_image_node_id` VARCHAR(64)NULL" in workflow

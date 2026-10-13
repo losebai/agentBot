@@ -162,14 +162,14 @@ async def test_plugin_composer_follows_live_ai_timeout(chat_plugin, monkeypatch)
     chat.generate_reply_queued = delayed_reply
     monkeypatch.setattr(chat_plugin, "chat_service", chat)
     monkeypatch.setattr(chat_plugin, "plugin_config", chat_plugin.plugin_config.model_copy(
-        update={"dispatch_chat_timeout_seconds": 0.01},
+        update={"chat_timeout_seconds": 0.01},
     ))
 
     assert await chat_plugin._reply_composer.compose(valid_usage_intent()) is None
     assert cancelled.is_set()
 
     monkeypatch.setattr(chat_plugin, "plugin_config", chat_plugin.plugin_config.model_copy(
-        update={"dispatch_chat_timeout_seconds": 300},
+        update={"chat_timeout_seconds": 300},
     ))
     reply = await chat_plugin._reply_composer.compose(valid_usage_intent())
 

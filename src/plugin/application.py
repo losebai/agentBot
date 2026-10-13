@@ -48,7 +48,7 @@ from agent_bot.integrations.onebot import (
     NarakaCommandHandler,
     SummaryCommandHandler,
 )
-from agent_bot.integrations.onebot.ai_jobs import AiJobPoller
+from agent_bot.integrations.onebot.ai_jobs import AiJobPoller, AiJobRunner
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway, OneBotReplyService
 from agent_bot.integrations.redis_queue import build_conversation_queue
 from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
@@ -101,13 +101,13 @@ _MEMORY_CLEANUP_INTERVAL_SECONDS = 3600
 _MEMORY_CLEANUP_BATCH_SIZE = 500
 
 __plugin_meta__ = PluginMetadata(
-    name="dispatch-chat",
-    description="通过 NapCatQQ 和 NoneBot2 接入 dispatch-ai 的多轮聊天插件",
+    name="chat",
+    description="通过 NapCatQQ 和 NoneBot2 使用本地 AI 服务的多轮聊天插件",
     usage=(
         "私聊直接发送消息，群聊 @机器人或包含配置名称开始聊天；超级用户可用 /new 重置当前对话；"
         "引用消息后发送 /总结，可总结普通消息、合并聊天记录和图片；"
         "/画图 <提示词> 使用默认本地工作流直接生成图片；"
-        "/laya [目标或问题] 结合当前上下文，由 LLM 提炼目标、Laya 决策并输出完整报告；"
+        "/laya 通用决策指令尚未实现；"
         "/at <QQ号或@成员> <内容> 在群聊中提醒成员；"
         "启用语音后由 AI 根据对话选择是否发送原生 QQ 语音；"
         "/永劫 <角色ID、昵称或比赛ID> 查询战绩；"
@@ -138,11 +138,11 @@ _redis_bootstrap = load_redis_bootstrap_config()
 plugin_config = get_plugin_config(RuntimeConfig)
 _database_pool = MySqlConnectionPool(
     _database_params,
-    max_size=plugin_config.dispatch_chat_db_pool_size,
-    acquire_timeout_seconds=plugin_config.dispatch_chat_db_timeout_seconds,
-    connect_timeout_seconds=plugin_config.dispatch_chat_db_timeout_seconds,
-    read_timeout_seconds=plugin_config.dispatch_chat_db_timeout_seconds,
-    write_timeout_seconds=plugin_config.dispatch_chat_db_timeout_seconds,
+    max_size=plugin_config.chat_db_pool_size,
+    acquire_timeout_seconds=plugin_config.chat_db_timeout_seconds,
+    connect_timeout_seconds=plugin_config.chat_db_timeout_seconds,
+    read_timeout_seconds=plugin_config.chat_db_timeout_seconds,
+    write_timeout_seconds=plugin_config.chat_db_timeout_seconds,
 )
 _settings_store = SettingsStore(_database_params, connect=_database_pool.connect)
 # 媒体资源按进程持有；构造不联网、不创建目录，运行时热刷新复用同一个实例。
@@ -153,7 +153,7 @@ _workflow_store = WorkflowStore(_database_params, connect=_database_pool.connect
 _memory_schema = ChatMemorySchema(_database_params, connect=_database_pool.connect)
 _tagged_memory_store = TaggedMemoryStore(
     _database_params, connect=_database_pool.connect,
-    secret=plugin_config.dispatch_chat_session_secret.get_secret_value(),
+    secret=plugin_config.chat_session_secret.get_secret_value(),
 )
 
 
@@ -191,18 +191,18 @@ def _publish_runtime_state(state: _RuntimeState) -> None:
 
     state.conversation_store.update_policy(
         ConversationMemoryPolicy(
-            history_turns=state.config.dispatch_chat_history_turns,
-            max_history_chars=state.config.dispatch_chat_history_max_chars,
-            ttl_seconds=state.config.dispatch_chat_history_ttl_seconds,
-            memory_enabled=state.config.dispatch_chat_memory_enabled,
-            max_memory_chars=state.config.dispatch_chat_memory_max_chars,
+            history_turns=state.config.chat_history_turns,
+            max_history_chars=state.config.chat_history_max_chars,
+            ttl_seconds=state.config.chat_history_ttl_seconds,
+            memory_enabled=state.config.chat_memory_enabled,
+            max_memory_chars=state.config.chat_memory_max_chars,
         )
     )
     state.group_recent_context_store.update_policy(
         GroupContextPolicy(
-            message_limit=state.config.dispatch_chat_group_recent_context_messages,
-            max_chars=state.config.dispatch_chat_group_recent_context_max_chars,
-            ttl_seconds=state.config.dispatch_chat_group_recent_context_ttl_seconds,
+            message_limit=state.config.chat_group_recent_context_messages,
+            max_chars=state.config.chat_group_recent_context_max_chars,
+            ttl_seconds=state.config.chat_group_recent_context_ttl_seconds,
         )
     )
     plugin_config = state.config
@@ -248,20 +248,20 @@ _message_routing = MessageRouting(
 _tool_registry = build_chat_tool_registry()
 _tool_session_store: ToolSessionStore | None = None
 _chat_mcp_server: ChatMcpServer | None = None
-if plugin_config.dispatch_chat_mcp_enabled:
+if plugin_config.chat_mcp_enabled:
     _tool_session_store = ToolSessionStore(
-        ttl_seconds=plugin_config.dispatch_chat_mcp_session_ttl_seconds,
-        max_sessions=plugin_config.dispatch_chat_mcp_max_sessions,
+        ttl_seconds=plugin_config.chat_mcp_session_ttl_seconds,
+        max_sessions=plugin_config.chat_mcp_max_sessions,
     )
     _chat_mcp_server = ChatMcpServer(
         store=_tool_session_store,
         registry=_tool_registry,
-        allowed_hosts=plugin_config.dispatch_chat_mcp_allowed_hosts,
+        allowed_hosts=plugin_config.chat_mcp_allowed_hosts,
     )
     get_driver().server_app.mount(
-        plugin_config.dispatch_chat_mcp_mount_path,
+        plugin_config.chat_mcp_mount_path,
         _chat_mcp_server.app,
-        name="dispatch-chat-mcp",
+        name="chat-mcp",
     )
 
 _tool_session_manager = ChatToolSessionManager(
@@ -274,18 +274,19 @@ _tool_session_manager = ChatToolSessionManager(
     image_tasks_provider=lambda: image_queue.image_tasks,
     tts_service_provider=lambda: tts_client,
     memory_store_provider=lambda: (
-        _tagged_memory_store if plugin_config.dispatch_chat_tagged_memory_enabled else None
+        _tagged_memory_store if plugin_config.chat_tagged_memory_enabled else None
     ),
     operation_store_provider=lambda: RedisToolOperationStore(
         _redis_client,
         key_prefix=_redis_bootstrap.key_prefix,
-        ttl_seconds=plugin_config.dispatch_chat_queue_result_ttl_seconds,
+        ttl_seconds=plugin_config.chat_queue_result_ttl_seconds,
     ),
 )
 
 _runtime_gate = RuntimeLeaseGate()
 _auto_speak_task: asyncio.Task[None] | None = None
 _ai_job_task: asyncio.Task[None] | None = None
+_ai_job_runner_task: asyncio.Task[None] | None = None
 _settings_refresh_task: asyncio.Task[None] | None = None
 _memory_cleanup_task: asyncio.Task[None] | None = None
 
@@ -322,7 +323,7 @@ async def _open_queued_tool_session(job: ConversationJob):
 
 _reply_composer = LlmReplyComposer(
     lambda: chat_service,
-    timeout_seconds_provider=lambda: plugin_config.dispatch_chat_timeout_seconds,
+    timeout_seconds_provider=lambda: plugin_config.chat_timeout_seconds,
 )
 _reply_service = OneBotReplyService(_reply_composer, _reply_gateway)
 
@@ -344,7 +345,7 @@ class _ConversationProcessor(ConversationQueueProcessor):
             operation_store_provider=lambda: RedisToolOperationStore(
                 _redis_client,
                 key_prefix=_redis_bootstrap.key_prefix,
-                ttl_seconds=plugin_config.dispatch_chat_queue_result_ttl_seconds,
+                ttl_seconds=plugin_config.chat_queue_result_ttl_seconds,
             ),
             image_submitter=lambda job: image_queue.enqueue(job),
             workflow_service_provider=lambda: workflow_service,
@@ -435,7 +436,7 @@ async def start_memory_cleanup() -> None:
     _memory_cleanup_task = start_background_task(
         _memory_cleanup_task,
         _memory_cleanup_loop,
-        name="dispatch-chat-memory-cleanup",
+        name="chat-memory-cleanup",
     )
 
 
@@ -456,10 +457,10 @@ async def stop_memory_cleanup() -> None:
 async def initialize_workflow_catalog() -> None:
     """先增补旧表兼容列，再读取工作流或从配置目录导入全部 JSON。"""
 
-    if not plugin_config.dispatch_chat_local_workflow_enabled:
+    if not plugin_config.chat_local_workflow_enabled:
         return
     await asyncio.to_thread(_workflow_store.prepare_for_startup)
-    directory = plugin_config.dispatch_chat_local_workflow_directory
+    directory = plugin_config.chat_local_workflow_directory
     if directory is None:
         await asyncio.to_thread(_workflow_store.list_all, limit=1)
         return
@@ -493,14 +494,14 @@ async def start_auto_speak() -> None:
     _auto_speak_task = start_background_task(
         _auto_speak_task,
         auto_speak_service.run,
-        name="dispatch-chat-auto-speak",
+        name="chat-auto-speak",
     )
 
 
 @get_driver().on_startup
 async def start_ai_job_polling() -> None:
-    """启动单一轮询任务，开关和凭据由每轮运行时租约读取。"""
-    global _ai_job_task
+    """分别启动执行与投递轮询，两者均在租约内读取最新配置。"""
+    global _ai_job_task, _ai_job_runner_task
     poller = AiJobPoller(
         config_provider=lambda: plugin_config,
         client_provider=lambda: chat_service.client,
@@ -508,12 +509,24 @@ async def start_ai_job_polling() -> None:
         bot_ids_provider=lambda: [key for key, bot in get_bots().items() if isinstance(bot, Bot)],
         runtime_lease=_runtime_lease,
     )
-    _ai_job_task = start_background_task(_ai_job_task, poller.run, name="dispatch-chat-ai-jobs")
+    _ai_job_task = start_background_task(_ai_job_task, poller.run, name="chat-ai-jobs")
+    runner = AiJobRunner(
+        config_provider=lambda: plugin_config,
+        client_provider=lambda: chat_service.client,
+        runtime_lease=_runtime_lease,
+    )
+    _ai_job_runner_task = start_background_task(
+        _ai_job_runner_task, runner.run, name="chat-python-jobs"
+    )
 
 
 async def stop_ai_job_polling() -> None:
-    """先停止结果生产者，再关闭消息队列和 HTTP 客户端。"""
-    global _ai_job_task
+    """先取消执行并记录中断，再停止投递生产者；消费者由外层关闭。"""
+    global _ai_job_task, _ai_job_runner_task
+    runner = _ai_job_runner_task
+    await stop_background_task(runner, error_message="Python 任务执行器异常结束：{}")
+    if _ai_job_runner_task is runner:
+        _ai_job_runner_task = None
     task = _ai_job_task
     await stop_background_task(task, error_message="AI 任务结果调度器异常结束：{}")
     if _ai_job_task is task:
@@ -569,7 +582,7 @@ def _activate_runtime_state(state: _RuntimeState) -> None:
 
 _initial_settings_revision = getattr(
     get_driver().config,
-    "dispatch_chat_settings_revision",
+    "chat_settings_revision",
     1,
 )
 if type(_initial_settings_revision) is not int or _initial_settings_revision < 1:
@@ -624,7 +637,7 @@ async def start_settings_refresh() -> None:
     _settings_refresh_task = start_background_task(
         _settings_refresh_task,
         _settings_refresh_loop,
-        name="dispatch-chat-settings-refresh",
+        name="chat-settings-refresh",
     )
 
 
@@ -712,7 +725,7 @@ async def _handle_group_member_notice_impl(
     )
 
 
-_KEYWORD_REPLY_STATE_KEY = "dispatch_chat_keyword_at_reply"
+_KEYWORD_REPLY_STATE_KEY = "chat_keyword_at_reply"
 
 
 async def _matches_keyword_at_reply(event: MessageEvent, state: T_State) -> bool:
@@ -959,5 +972,5 @@ async def close_clients() -> None:
 
 @get_driver().on_startup
 async def start_media_resources() -> None:
-    """可选媒体资源启动失败只影响媒体就绪，不阻断 Java 和纯文本入口。"""
+    """可选媒体资源启动失败只影响媒体就绪，不阻断纯文本入口。"""
     await _media_resources.start()

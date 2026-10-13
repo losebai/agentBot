@@ -7,9 +7,6 @@ from pathlib import Path
 
 import tomllib
 
-from agent_bot.config import RuntimeConfig
-from agent_bot.settings import runtime_config_to_plain_values
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -31,7 +28,7 @@ def test_release_versions_match_frontend_and_python():
     import agent_bot
 
     package = json.loads((ROOT / "web/package.json").read_text(encoding="utf-8"))
-    assert agent_bot.__version__ == package["version"] == "0.4.0"
+    assert agent_bot.__version__ == package["version"] == "0.5.0"
     assert (ROOT / "dist/agent_bot-0.3.0-py3-none-any.whl").is_file()
 
 
@@ -56,18 +53,3 @@ print('媒体模块导入无启动副作用')
     )
     assert result.returncode == 0, result.stderr
     assert list(tmp_path.iterdir()) == []
-
-
-def test_rollback_removes_only_media_backend():
-    """回退交接只去掉新增持久字段，密钥、Agent、工具和预算不变。"""
-    config = RuntimeConfig(
-        onebot_v11_access_token="x" * 40, dispatch_chat_session_secret="y" * 40,
-        dispatch_chat_media_backend="python", dispatch_chat_agent_backend="python",
-        dispatch_chat_python_agent_code="helper", dispatch_chat_agent_max_steps=2,
-        dispatch_chat_timeout_seconds=90, dispatch_chat_mcp_services=["library"],
-    )
-    values = runtime_config_to_plain_values(config)
-    restored = {key: value for key, value in values.items() if key != "dispatch_chat_media_backend"}
-    assert values.keys() - restored.keys() == {"dispatch_chat_media_backend"}
-    assert all(restored[key] == value for key, value in values.items() if key in restored)
-    assert "agent_bot_media_directory" not in values

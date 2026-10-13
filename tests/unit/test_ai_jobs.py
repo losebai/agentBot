@@ -5,12 +5,10 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock
 
 import fakeredis.aioredis
-import httpx
 import pytest
 from pydantic import ValidationError
 
 from agent_bot.config import PluginConfig
-from agent_bot.integrations.dispatch_ai import DispatchAiClient
 from agent_bot.integrations.onebot.ai_jobs import AiJobPoller
 from agent_bot.integrations.redis_queue import RedisConversationQueueStore
 from agent_bot.models import AiJobResult, ChatContext
@@ -22,7 +20,7 @@ def make_config(**overrides: object) -> PluginConfig:
     """提供必要的离线测试凭据。"""
     return PluginConfig(
         onebot_v11_access_token="test-onebot-access-token-with-enough-entropy",
-        dispatch_chat_session_secret="test-session-secret-with-enough-entropy",
+        chat_session_secret="test-session-secret-with-enough-entropy",
         **overrides,
     )
 
@@ -68,9 +66,8 @@ async def test_poller_enqueues_stable_job_without_acknowledging_delivery():
     client = Mock(pending_jobs=AsyncMock(return_value=(job_result(),)), acknowledge_job=AsyncMock())
     queue = Mock(enqueue=AsyncMock())
     config = make_config(
-        dispatch_chat_job_enabled=True,
-        dispatch_chat_mcp_enabled=True,
-        dispatch_chat_ai_token="t" * 40,
+        chat_job_enabled=True,
+        chat_mcp_enabled=True,
     )
     poller = AiJobPoller(
         config_provider=lambda: config,
@@ -94,9 +91,8 @@ async def test_poller_does_not_lose_results_when_queue_is_full():
     client = Mock(pending_jobs=AsyncMock(return_value=(job_result(),)), acknowledge_job=AsyncMock())
     queue = Mock(enqueue=AsyncMock(side_effect=ConnectionError))
     config = make_config(
-        dispatch_chat_job_enabled=True,
-        dispatch_chat_mcp_enabled=True,
-        dispatch_chat_ai_token="t" * 40,
+        chat_job_enabled=True,
+        chat_mcp_enabled=True,
     )
     poller = AiJobPoller(
         config_provider=lambda: config,
@@ -110,34 +106,6 @@ async def test_poller_does_not_lose_results_when_queue_is_full():
     client.acknowledge_job.assert_not_awaited()
 
 
-async def test_client_polls_and_acknowledges_with_configured_authentication():
-    """轮询接口使用服务凭据，确认仅包含机器人与任务 ID。"""
-    paths = []
-
-    async def handler(request):
-        """隔离 HTTP 网络并检查请求契约。"""
-        paths.append(request.url.path)
-        assert request.headers["Authorization"] == "Bearer " + "t" * 40
-        assert request.url.params["botId"] == "90001"
-        data = (
-            [job_result().model_dump(by_alias=True, mode="json")]
-            if request.method == "GET"
-            else None
-        )
-        return httpx.Response(200, json={"code": 200, "data": data})
-
-    client = DispatchAiClient(
-        base_url="http://ai.test/dispatch-ai",
-        timeout_seconds=3,
-        token="t" * 40,
-        transport=httpx.MockTransport(handler),
-    )
-    try:
-        assert len(await client.pending_jobs("90001")) == 1
-        await client.acknowledge_job("90001", "a" * 32)
-    finally:
-        await client.aclose()
-    assert paths == ["/dispatch-ai/job/results", "/dispatch-ai/job/" + "a" * 32 + "/ack"]
 
 
 async def test_queue_uses_ai_text_and_acknowledges_only_in_commit(chat_plugin, monkeypatch):
@@ -207,18 +175,12 @@ async def test_redis_deduplicates_repeated_polls_and_preserves_receipt_until_com
         await redis.aclose()
 
 
-@pytest.mark.parametrize(
-    "fields",
-    [
-        {"dispatch_chat_mcp_enabled": False, "dispatch_chat_ai_token": "t" * 40},
-        {"dispatch_chat_mcp_enabled": True, "dispatch_chat_ai_token": None},
-        {"dispatch_chat_mcp_enabled": True, "dispatch_chat_ai_token": "short"},
-    ],
-)
-def test_job_configuration_requires_authenticated_mcp(fields):
-    """未配置必要的服务边界时不能开启有副作用的任务工具。"""
+def test_job_configuration_requires_authenticated_mcp():
+    """本地任务通过短期 Chat 令牌绑定身份，不需要外部服务长期令牌。"""
     with pytest.raises(ValidationError):
-        make_config(dispatch_chat_job_enabled=True, **fields)
+        make_config(chat_job_enabled=True, chat_mcp_enabled=False)
+    config = make_config(chat_job_enabled=True, chat_mcp_enabled=True)
+    assert config.chat_job_enabled
 
 
 async def test_disabled_poller_does_not_contact_ai():
@@ -242,10 +204,9 @@ async def test_poller_advances_past_blocked_results_and_restarts_at_end():
     client = Mock(pending_jobs=AsyncMock(side_effect=[(first,), (second,), ()]))
     queue = Mock(enqueue=AsyncMock())
     config = make_config(
-        dispatch_chat_job_enabled=True,
-        dispatch_chat_mcp_enabled=True,
-        dispatch_chat_ai_token="t" * 40,
-        dispatch_chat_blocked_users={"10001"},
+        chat_job_enabled=True,
+        chat_mcp_enabled=True,
+        chat_blocked_users={"10001"},
     )
     poller = AiJobPoller(
         config_provider=lambda: config,
@@ -266,36 +227,15 @@ async def test_poller_advances_past_blocked_results_and_restarts_at_end():
     assert poller._cursors["90001"] is None
 
 
-async def test_client_rejects_foreign_bot_result():
-    """服务返回其他机器人的任务时拒绝投递。"""
-    from agent_bot.integrations.dispatch_ai import DispatchAiProtocolError
-
-    response = job_result().model_copy(update={"bot_id": "90002"})
-    client = DispatchAiClient(
-        base_url="http://ai.test/dispatch-ai",
-        timeout_seconds=3,
-        token="t" * 40,
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200,
-                json={"code": 200, "data": [response.model_dump(by_alias=True)]},
-            )
-        ),
-    )
-    try:
-        with pytest.raises(DispatchAiProtocolError):
-            await client.pending_jobs("90001")
-    finally:
-        await client.aclose()
 
 
 async def test_failed_ack_retries_commit_without_repeating_delivery(chat_plugin, monkeypatch):
     """使用真实 Redis 队列恢复流程，确认故障只重试提交，不重发消息或调用模型。"""
-    from agent_bot.integrations.dispatch_ai import DispatchAiUnavailableError
+    from agent_bot.ai.chat_errors import ChatAiUnavailableError
     from agent_bot.services.conversation_queue import ConversationQueue, QueuePolicy
 
     client = Mock(
-        acknowledge_job=AsyncMock(side_effect=[DispatchAiUnavailableError("retry"), None])
+        acknowledge_job=AsyncMock(side_effect=[ChatAiUnavailableError("retry"), None])
     )
     service = Mock(client=client, generate_queued=AsyncMock(), commit_queued=AsyncMock())
     monkeypatch.setattr(chat_plugin, "chat_service", service)

@@ -1,4 +1,4 @@
-"""Preserve the Java text gateway's QQ source context and trust boundary."""
+"""保留 QQ 上下文来源及系统提示的信任边界。"""
 
 from collections.abc import Sequence
 

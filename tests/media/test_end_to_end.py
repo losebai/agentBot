@@ -125,10 +125,10 @@ async def test_qq_delivery_and_stopping_agent_preserve_queue_semantics(
         bot.call_api.side_effect = ConnectionError("离线发送失败")
     config = RuntimeConfig(
         onebot_v11_access_token="x" * 40,
-        dispatch_chat_session_secret="y" * 40,
-        dispatch_chat_local_workflow_enabled=True,
-        dispatch_chat_image_generation_enabled=True,
-        dispatch_chat_mcp_enabled=True,
+        chat_session_secret="y" * 40,
+        chat_local_workflow_enabled=True,
+        chat_image_generation_enabled=True,
+        chat_mcp_enabled=True,
     )
     operations = RedisToolOperationStore(
         env.redis, key_prefix="media:e2e:operations", ttl_seconds=60
@@ -181,21 +181,16 @@ async def test_qq_delivery_and_stopping_agent_preserve_queue_semantics(
     service = AgentService(
         AgentCatalog(agent_params, connect=media_database.connect),
         AgentRunStore(agent_params, connect=media_database.connect),
-        CredentialResolver(environ={}),
+        CredentialResolver(),
         {"openai-chat": provider},
         ToolRuntime(NoRemote(), chat_bridge=bridge),
     )
     routing = RoutingAiClient(
-        JavaMustNotBeCalled(),
         None,
-        plain_backend="java",
-        agent_backend="python",
-        media_backend="python",
         agent_service=service,
         timeout_seconds=30,
         default_options=LlmRequestOptions(),
         mcp_services=(),
-        laya_enabled=False,
     )
     async with sessions.open(context) as token:
         task = asyncio.create_task(

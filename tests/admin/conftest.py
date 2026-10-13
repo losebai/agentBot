@@ -45,8 +45,8 @@ def admin_runtime():
     return FakeRuntime(
         RuntimeConfig(
             onebot_v11_access_token="offline-onebot-token-at-least-thirty-two-characters",
-            dispatch_chat_session_secret="offline-session-secret-at-least-thirty-two-characters",
-            dispatch_chat_ai_token="offline-ai-secret-do-not-disclose",
+            chat_session_secret="offline-session-secret-at-least-thirty-two-characters",
+            chat_naraka_default_role_id="offline-role-secret-do-not-disclose",
         )
     )
 

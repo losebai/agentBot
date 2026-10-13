@@ -1,14 +1,16 @@
--- 用途：统一初始化 agentBot 0.4.0 的全部 25 张业务表，供新独立数据库使用。
+-- 用途：统一初始化 agentBot 0.5.0 的全部 27 张业务表，供新独立数据库使用。
 -- 执行顺序：管理员先创建并选中数据库，再执行本文件，最后用 settings import-env 导入配置。
 -- 数据影响：仅创建不存在的表，不插入配置、不覆盖模型、不清空或迁移现有数据。
--- 本文件不升级既有表；旧库按 sql/README.md 选择增量脚本，不能批量执行 legacy 目录。
--- 建表按外键依赖排序；保留现有表名、字段类型、默认值、可空性、索引和删除约束。
+-- 记忆及工作流索引使用 chat 前缀；既有表遗留 dispatch 索引名时执行 2026-10-13-chat-index-names.sql。
+-- 旧服务模型目录 ai_model 已退出运行时，新库不再创建；本脚本不会删除已有旧表。
+-- 聊天相关表统一使用 chat_ 前缀；配置键使用 chat_*，对应环境变量为 CHAT_*。
+-- 建表按外键依赖排序；字段类型、默认值、可空性、索引和删除约束与运行时代码一致。
 -- 服务启动不会自动执行本文件；已有十张自有表补注释时使用独立的注释增量脚本。
 
 
 -- 运行配置与群成员目录
 
-CREATE TABLE IF NOT EXISTS `dispatch_chat_setting` (
+CREATE TABLE IF NOT EXISTS `chat_setting` (
     `id`            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     `config_key`    VARCHAR(128) NOT NULL                COMMENT '配置键名（RuntimeConfig 字段名）',
     `config_value`  MEDIUMTEXT                           COMMENT '配置值（JSON 编码）',
@@ -19,19 +21,19 @@ CREATE TABLE IF NOT EXISTS `dispatch_chat_setting` (
     PRIMARY KEY (`id`),
     -- 唯一索引约束业务标识，支持并发写入时的重复检查。
     UNIQUE KEY `uk_config_key` (`config_key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 配置键值表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 配置键值表';
 
-CREATE TABLE IF NOT EXISTS `dispatch_chat_setting_revision` (
+CREATE TABLE IF NOT EXISTS `chat_setting_revision` (
     `id`           BIGINT   NOT NULL COMMENT '固定为 1，保证单行',
     `revision`     BIGINT   NOT NULL COMMENT '当前配置快照版本号，从 1 起',
     `update_time`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     -- 主键定义记录身份，防止同一业务记录重复创建。
     PRIMARY KEY (`id`),
     -- 固定单行标识，保证配置版本号只维护一个快照。
-    CONSTRAINT `chk_dispatch_chat_setting_revision_singleton` CHECK (`id` = 1)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 配置版本号（单行）';
+    CONSTRAINT `chk_chat_setting_revision_singleton` CHECK (`id` = 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 配置版本号（单行）';
 
-CREATE TABLE IF NOT EXISTS `dispatch_chat_group_member` (
+CREATE TABLE IF NOT EXISTS `chat_group_member` (
     `bot_id`          VARCHAR(20)  NOT NULL COMMENT '机器人 QQ 号',
     `group_id`        VARCHAR(20)  NOT NULL COMMENT 'QQ群号',
     `user_id`         VARCHAR(20)  NOT NULL COMMENT '群成员 QQ 号',
@@ -46,12 +48,12 @@ CREATE TABLE IF NOT EXISTS `dispatch_chat_group_member` (
     -- 主键定义记录身份，防止同一业务记录重复创建。
     PRIMARY KEY (`bot_id`, `group_id`, `user_id`),
     -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-    KEY `idx_dispatch_chat_group_member_user` (`bot_id`, `user_id`)
+    KEY `idx_chat_group_member_user` (`bot_id`, `user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='NapCat OneBot QQ群成员目录';
 
 -- 聊天记忆、幂等回执与群上下文
 
-CREATE TABLE IF NOT EXISTS `dispatch_chat_memory_session` (
+CREATE TABLE IF NOT EXISTS `chat_memory_session` (
         `session_id` VARCHAR(128) NOT NULL COMMENT 'HMAC 会话标识',
         `generation_id` CHAR(32) NOT NULL COMMENT '会话代际标识，重建时重新生成',
         `memory_summary` MEDIUMTEXT NOT NULL COMMENT '压缩后的会话摘要',
@@ -64,10 +66,10 @@ CREATE TABLE IF NOT EXISTS `dispatch_chat_memory_session` (
         -- 主键定义记录身份，防止同一业务记录重复创建。
         PRIMARY KEY (`session_id`),
         -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-        KEY `idx_dispatch_chat_memory_session_expires` (`expires_at`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 持久会话记忆';
+        KEY `idx_chat_memory_session_expires` (`expires_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 持久会话记忆';
 
-CREATE TABLE IF NOT EXISTS `dispatch_chat_memory_turn` (
+CREATE TABLE IF NOT EXISTS `chat_memory_turn` (
         `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '轮次主键',
         `session_id` VARCHAR(128) NOT NULL COMMENT 'HMAC 会话标识',
         `request_id` VARCHAR(128) COLLATE utf8mb4_bin NULL COMMENT '幂等请求标识，旧轮次为空',
@@ -77,22 +79,22 @@ CREATE TABLE IF NOT EXISTS `dispatch_chat_memory_turn` (
         -- 主键定义记录身份，防止同一业务记录重复创建。
         PRIMARY KEY (`id`),
         -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-        KEY `idx_dispatch_chat_memory_turn_session_id` (`session_id`, `id`),
+        KEY `idx_chat_memory_turn_session_id` (`session_id`, `id`),
         -- 唯一索引约束业务标识，支持并发写入时的重复检查。
-        UNIQUE KEY `uk_dispatch_chat_memory_turn_request` (`session_id`, `request_id`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 最近会话轮次';
+        UNIQUE KEY `uk_chat_memory_turn_request` (`session_id`, `request_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 最近会话轮次';
 
-CREATE TABLE IF NOT EXISTS `dispatch_chat_memory_receipt` (
+CREATE TABLE IF NOT EXISTS `chat_memory_receipt` (
         `session_id` VARCHAR(128) NOT NULL COMMENT 'HMAC 会话标识',
         `request_id` VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '幂等请求标识',
         `expires_at` DATETIME(6) NOT NULL COMMENT '独立重试去重截止时间',
         -- 主键定义记录身份，防止同一业务记录重复创建。
         PRIMARY KEY (`session_id`, `request_id`),
         -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-        KEY `idx_dispatch_chat_memory_receipt_expires` (`expires_at`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 已提交请求回执';
+        KEY `idx_chat_memory_receipt_expires` (`expires_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 已提交请求回执';
 
-CREATE TABLE IF NOT EXISTS `dispatch_chat_group_context` (
+CREATE TABLE IF NOT EXISTS `chat_group_context` (
         `scope_id` VARCHAR(128) NOT NULL COMMENT 'HMAC Bot/群作用域',
         `messages_json` MEDIUMTEXT NOT NULL COMMENT '强类型最近群文本 JSON',
         `expires_at` DATETIME(6) NOT NULL COMMENT '滑动过期时间',
@@ -102,19 +104,19 @@ CREATE TABLE IF NOT EXISTS `dispatch_chat_group_context` (
         -- 主键定义记录身份，防止同一业务记录重复创建。
         PRIMARY KEY (`scope_id`),
         -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-        KEY `idx_dispatch_chat_group_context_expires` (`expires_at`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='dispatch-chat 群聊最近文本';
+        KEY `idx_chat_group_context_expires` (`expires_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 群聊最近文本';
 
 -- 标签记忆：由应用事务维护关联，不添加外键
 
-CREATE TABLE IF NOT EXISTS dispatch_chat_memory_scope (
+CREATE TABLE IF NOT EXISTS chat_memory_scope (
     scope_id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '匿名作用域键',
     scope VARCHAR(16) NOT NULL COMMENT '记忆作用域：全局、会话、用户或群组',
     -- 主键定义记录身份，防止同一业务记录重复创建。
     PRIMARY KEY (scope_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='标签记忆作用域与写锁';
 
-CREATE TABLE IF NOT EXISTS dispatch_chat_tagged_memory (
+CREATE TABLE IF NOT EXISTS chat_tagged_memory (
     id INT NOT NULL AUTO_INCREMENT COMMENT '记忆自增主键',
     scope_id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '关联作用域',
     memory_key VARCHAR(80) COLLATE utf8mb4_bin NOT NULL COMMENT '稳定事实键',
@@ -130,7 +132,7 @@ CREATE TABLE IF NOT EXISTS dispatch_chat_tagged_memory (
     KEY idx_tagged_memory_scope_time (scope_id, is_deleted, update_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM 自主保存的标签记忆';
 
-CREATE TABLE IF NOT EXISTS dispatch_chat_memory_tag (
+CREATE TABLE IF NOT EXISTS chat_memory_tag (
     memory_id INT NOT NULL COMMENT '关联记忆',
     tag VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '规范化主题标签',
     -- 主键定义记录身份，防止同一业务记录重复创建。
@@ -141,7 +143,7 @@ CREATE TABLE IF NOT EXISTS dispatch_chat_memory_tag (
 
 -- 本地 ComfyUI 工作流：包含图生图字段和内容唯一索引
 
-CREATE TABLE IF NOT EXISTS `dispatch_chat_workflow` (
+CREATE TABLE IF NOT EXISTS `chat_workflow` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
     `workflow_key` VARCHAR(128) NOT NULL COMMENT '稳定工作流键',
     `display_name` VARCHAR(256) NOT NULL COMMENT '工作流显示名称',
@@ -167,23 +169,12 @@ CREATE TABLE IF NOT EXISTS `dispatch_chat_workflow` (
     -- 主键定义记录身份，防止同一业务记录重复创建。
     PRIMARY KEY (`id`),
     -- 唯一索引约束业务标识，支持并发写入时的重复检查。
-    UNIQUE KEY `uk_dispatch_chat_workflow_key` (`workflow_key`),
+    UNIQUE KEY `uk_chat_workflow_key` (`workflow_key`),
     -- 唯一索引约束业务标识，支持并发写入时的重复检查。
-    UNIQUE KEY `uk_dispatch_chat_workflow_content_sha256` (`content_sha256`),
+    UNIQUE KEY `uk_chat_workflow_content_sha256` (`content_sha256`),
     -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-    KEY `idx_dispatch_chat_workflow_enabled` (`enabled`)
+    KEY `idx_chat_workflow_enabled` (`enabled`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='本地 Comfy 工作流定义与执行绑定';
-
--- Java 模型兼容目录：管理员显式登记模型，初始为空
-
-CREATE TABLE IF NOT EXISTS ai_model (
-    model_id VARCHAR(255) NOT NULL COMMENT 'Java 服务中的实际模型标识',
-    type VARCHAR(32) NOT NULL COMMENT '模型类型，聊天使用 chat',
-    enabled TINYINT NOT NULL DEFAULT 0 COMMENT '是否启用，默认禁用',
-    -- 联合主键允许同一标识登记不同类型，并支持模型可用性查询。
-    -- 主键定义记录身份，防止同一业务记录重复创建。
-    PRIMARY KEY (model_id, type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Java 模型可用性兼容目录';
 
 -- Python AI：供应商先于模型创建
 
@@ -192,7 +183,8 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_provider (
   name VARCHAR(100) COLLATE utf8mb4_bin NOT NULL COMMENT '显示名称',
   protocol VARCHAR(32) NOT NULL COMMENT '供应商接口协议',
   base_url VARCHAR(2048) NOT NULL COMMENT '供应商接口根地址',
-  credential_ref VARCHAR(128) NULL COMMENT '环境凭据引用，不保存密钥',
+  credential TEXT NULL COMMENT '供应商或 MCP 实际凭据，仅写入和内部调用，不通过管理接口回显',
+  credential_required TINYINT NOT NULL DEFAULT 0 COMMENT '是否要求鉴权：零无需凭据，一必须配置凭据',
   enabled TINYINT NOT NULL DEFAULT 0 COMMENT '是否启用：零禁用，一启用',
   description VARCHAR(1000) NOT NULL DEFAULT '' COMMENT '中文用途说明',
   revision BIGINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '乐观锁版本，每次修改递增',
@@ -300,7 +292,8 @@ CREATE TABLE IF NOT EXISTS agent_bot_mcp (
   category VARCHAR(16) NOT NULL COMMENT '功能分类',
   transport VARCHAR(16) NOT NULL COMMENT '远程工具传输方式',
   endpoint VARCHAR(512) NOT NULL COMMENT '远程工具服务端点',
-  credential_ref VARCHAR(128) NULL COMMENT '环境凭据引用，不保存密钥',
+  credential TEXT NULL COMMENT '供应商或 MCP 实际凭据，仅写入和内部调用，不通过管理接口回显',
+  credential_required TINYINT NOT NULL DEFAULT 0 COMMENT '是否要求鉴权：零无需凭据，一必须配置凭据',
   allowed_tools JSON NOT NULL COMMENT '允许使用的远程工具列表',
   search_tool VARCHAR(100) NULL COMMENT '搜索工具名称',
   timeout_seconds INT NOT NULL COMMENT '调用超时时间，单位秒',
@@ -410,3 +403,66 @@ CREATE TABLE IF NOT EXISTS agent_bot_media_asset (
   -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
   KEY idx_media_asset_expiry (status,expires_at,id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='受认证媒体文件元数据';
+
+-- 用途：为纯 Python 一次性任务及自动发言决策增加三张表。
+-- 顺序：已有 agentBot 数据库由管理员备份后显式执行；新库使用统一初始化脚本。
+-- 数据影响：仅创建不存在的表，不复制 Java 待办、不覆盖配置、不删除任何数据；无自动执行。
+-- 所有时间为 UTC，任务正文不包含服务凭据；决策记录不保存群聊状态正文。
+
+CREATE TABLE IF NOT EXISTS agent_bot_job_owner (
+  owner_key CHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '机器人、会话、发起人的稳定摘要，作为创建配额行锁',
+  -- 主键串行化同一所有者的创建事务，防止并发突破五十个活动任务的上限。
+  PRIMARY KEY (owner_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='一次性任务所有者配额锁';
+
+CREATE TABLE IF NOT EXISTS agent_bot_job (
+  id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '服务端随机任务标识',
+  owner_key CHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '可信所有者摘要',
+  deduplication_key CHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '所有者与请求组成的幂等摘要，每条请求最多一个任务',
+  bot_id VARCHAR(20) COLLATE utf8mb4_bin NOT NULL COMMENT '原机器人 QQ 号',
+  session_id VARCHAR(256) COLLATE utf8mb4_bin NOT NULL COMMENT '原会话标识',
+  sender_id VARCHAR(20) COLLATE utf8mb4_bin NOT NULL COMMENT '发起人 QQ 号',
+  scene VARCHAR(16) NOT NULL COMMENT '原投递场景 group 或 private',
+  group_id VARCHAR(20) COLLATE utf8mb4_bin NULL COMMENT '群聊目标，私聊为空',
+  model VARCHAR(200) NOT NULL COMMENT '创建时的有效模型别名，到期仍须在目录启用',
+  system_prompt MEDIUMTEXT NOT NULL COMMENT '创建时的系统提示快照，不含凭据',
+  prompt TEXT NOT NULL COMMENT '一次性任务正文，最多八千字符',
+  status VARCHAR(16) NOT NULL COMMENT '状态 PENDING、RUNNING、SUCCEEDED、FAILED、CANCELLED',
+  result MEDIUMTEXT NULL COMMENT '成功模型正文，最多六万四千字符',
+  error_code VARCHAR(100) NULL COMMENT '稳定脱敏错误码，不保存异常正文',
+  run_at DATETIME(6) NOT NULL COMMENT '计划执行时间，UTC',
+  created_at DATETIME(6) NOT NULL COMMENT '创建时间，UTC',
+  started_at DATETIME(6) NULL COMMENT '获得执行权时间，UTC',
+  completed_at DATETIME(6) NULL COMMENT '进入终态时间，UTC',
+  delivered_at DATETIME(6) NULL COMMENT '消息队列确认投递完成时间，UTC',
+  -- 主键与唯一幂等索引分别约束任务身份和每请求唯一创建。
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_job_request (deduplication_key),
+  -- 所有者索引支持活动配额和最近任务查询。
+  KEY idx_job_owner_status (owner_key,status),
+  KEY idx_job_owner_created (owner_key,created_at,id),
+  -- 调度、陈旧执行恢复和机器人待投递结果分别使用独立复合索引。
+  KEY idx_job_due (status,run_at,id),
+  KEY idx_job_started (status,started_at),
+  KEY idx_job_delivery (bot_id,status,delivered_at,id),
+  -- 任务引用稳定所有者，删除任务不会删除其他历史或配额锁。
+  CONSTRAINT fk_job_owner FOREIGN KEY (owner_key) REFERENCES agent_bot_job_owner(owner_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Python 一次性文本任务及投递回执';
+
+CREATE TABLE IF NOT EXISTS agent_bot_auto_speak_decision (
+  id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '服务端决策记录标识',
+  session_id VARCHAR(256) COLLATE utf8mb4_bin NOT NULL COMMENT '自动发言会话标识',
+  request_id VARCHAR(256) NOT NULL COMMENT '本次决策请求标识',
+  mcp_code VARCHAR(64) NOT NULL COMMENT '已登记的决策服务代码',
+  mcp_revision BIGINT UNSIGNED NULL COMMENT '本次决策使用的服务配置版本',
+  status VARCHAR(16) NOT NULL COMMENT 'completed、failed 或 cancelled',
+  should_speak TINYINT NULL COMMENT '有效结果是否发言，失败为空',
+  confidence DOUBLE NULL COMMENT '有效结果置信度，零到一，失败为空',
+  duration_ms BIGINT UNSIGNED NOT NULL COMMENT '本次调用耗时，毫秒',
+  error_code VARCHAR(100) NULL COMMENT '稳定脱敏错误码，不保存远端原文',
+  created_at DATETIME(6) NOT NULL COMMENT '记录时间，UTC',
+  -- 主键保证记录身份；时间与会话索引用于有界查询与部署方清理。
+  PRIMARY KEY (id),
+  KEY idx_auto_decision_created (created_at,id),
+  KEY idx_auto_decision_session (session_id,created_at,id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Python 自动发言固定选择决策记录';

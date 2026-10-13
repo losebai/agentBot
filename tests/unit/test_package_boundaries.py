@@ -9,7 +9,7 @@ from pathlib import Path
 def test_service_and_integration_types_have_explicit_owners() -> None:
     """核心服务与外部客户端必须从各自分层包导入。"""
 
-    from agent_bot.integrations.dispatch_ai import DispatchAiClient
+    from agent_bot.ai.routing import RoutingAiClient
     from agent_bot.integrations.mcp import ChatMcpServer
     from agent_bot.integrations.naraka import NarakaClient
     from agent_bot.integrations.onebot import (
@@ -32,7 +32,7 @@ def test_service_and_integration_types_have_explicit_owners() -> None:
             ConversationHandler,
             NarakaQueryService,
             ConversationQueueProcessor,
-            DispatchAiClient,
+            RoutingAiClient,
             NarakaClient,
             ChatMcpServer,
             ChatToolSessionManager,

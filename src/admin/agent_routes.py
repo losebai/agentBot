@@ -23,7 +23,6 @@ from agent_bot.agent.contracts import (
     StepView,
 )
 from agent_bot.agent.errors import AgentError
-from agent_bot.agent.mcp.credentials import McpCredentials
 from agent_bot.ai.contracts import Page, VersionDelete
 
 
@@ -38,17 +37,6 @@ def install_agent_routes(router: APIRouter, runtime):
                 *args, **kwargs
             )
 
-            def visible(item):
-                return item.model_copy(
-                    update={
-                        "credential_available": McpCredentials().is_available(item.credential_ref)
-                    }
-                )
-
-            if isinstance(result, McpView):
-                return visible(result)
-            if isinstance(result, Page) and result.items and isinstance(result.items[0], McpView):
-                return result.model_copy(update={"items": [visible(item) for item in result.items]})
             return result
 
     @router.get("/agents", response_model=Page[AgentView])

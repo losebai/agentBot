@@ -1,12 +1,14 @@
 """Exercise real ASGI management routes with isolated persistence and HTTP transports."""
 
-import json
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
-from agent_bot.integrations.dispatch_ai import DispatchAiClient
+from ai.conftest import ai_database as ai_database
+from ai.conftest import ai_params as ai_params
+from ai.conftest import catalog as catalog
+from ai.test_service import make_service
 
 TOKEN = "offline-admin-token-longer-than-thirty-two-characters"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
@@ -45,7 +47,7 @@ async def test_status_without_connected_bots_is_ready(api):
     assert response.status_code == 200
     assert response.json()["ready"] is True
     assert response.json()["bot_count"] == 0
-    assert response.json()["ai_backend"] == "java-compatibility"
+    assert response.json()["ai_backend"] == "python-ordinary"
     assert (await api.get("/api/v1/bots", headers=HEADERS)).json() == []
 
 
@@ -107,49 +109,45 @@ async def test_oversized_chunked_body_is_rejected(api):
     assert response.status_code == 413
 
 
-async def test_chat_only_calls_plain_ai_and_returns_real_reply(api, admin_runtime):
-    def upstream(request):
-        assert request.url.path == "/dispatch-ai/chat/chatOne"
-        payload = json.loads(request.content)
-        assert not payload.get("tools") and not payload.get("mcpServices")
-        assert not payload.get("toolSessionToken")
-        assert payload["messages"][-1]["content"] == "hello"
-        return httpx.Response(200, json={"code": 200, "data": {"replayContext": "actual reply"}})
-
-    client = DispatchAiClient(
-        base_url="http://ai.test/dispatch-ai",
-        timeout_seconds=10,
-        transport=httpx.MockTransport(upstream),
-    )
-    admin_runtime.client = client
+async def test_chat_only_calls_plain_ai_and_returns_real_reply(
+    api, admin_runtime, catalog, ai_params, ai_database,
+):
+    """管理入口仅调用本地普通服务，系统提示和模型目标均由服务端决定。"""
+    service = await make_service(catalog, ai_params, ai_database, lambda req: httpx.Response(
+        200, json={"message": {"content": "actual reply"}, "done": True},
+    ))
+    admin_runtime.ai_service = service
+    admin_runtime.config = admin_runtime.config.model_copy(update={"chat_model": "local"})
     try:
         response = await api.post(
             "/api/v1/chat", headers=HEADERS, json={"prompt": "hello", "session_id": "web-test"}
         )
         assert response.status_code == 200, response.text
         assert response.json()["content"] == "actual reply"
+        assert response.json()["metadata"]["model"] == "exact/model"
     finally:
-        await client.aclose()
+        await service.aclose()
 
 
-async def test_ai_timeout_is_safe_and_not_a_success(api, admin_runtime):
+async def test_ai_timeout_is_safe_and_not_a_success(
+    api, admin_runtime, catalog, ai_params, ai_database,
+):
+    """上游超时经本地错误分类返回，管理响应不泄漏模型端错误。"""
     def timeout(request):
+        """只模拟传输超时，不连接实际服务。"""
         raise httpx.ReadTimeout("private-upstream-token", request=request)
 
-    client = DispatchAiClient(
-        base_url="http://ai.test/dispatch-ai",
-        timeout_seconds=1,
-        transport=httpx.MockTransport(timeout),
-    )
-    admin_runtime.client = client
+    service = await make_service(catalog, ai_params, ai_database, timeout)
+    admin_runtime.ai_service = service
+    admin_runtime.config = admin_runtime.config.model_copy(update={"chat_model": "local"})
     try:
         response = await api.post(
             "/api/v1/chat", headers=HEADERS, json={"prompt": "hello", "session_id": "web-test"}
         )
-        assert response.status_code == 503
+        assert response.status_code == 504
         assert "private-upstream-token" not in response.text
     finally:
-        await client.aclose()
+        await service.aclose()
 
 
 async def test_chat_refuses_browser_selected_tools_or_target(api):

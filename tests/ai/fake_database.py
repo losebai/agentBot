@@ -76,7 +76,8 @@ class FakeDatabase:
         PRAGMA foreign_keys=ON;
         CREATE TABLE agent_bot_ai_provider (
             id INTEGER PRIMARY KEY, name TEXT UNIQUE, protocol TEXT, base_url TEXT,
-            credential_ref TEXT, enabled INTEGER, description TEXT, revision INTEGER,
+            credential TEXT, credential_required INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER, description TEXT, revision INTEGER,
             created_at TEXT, updated_at TEXT);
         CREATE TABLE agent_bot_ai_model (
             id INTEGER PRIMARY KEY, alias TEXT UNIQUE COLLATE BINARY, upstream_model TEXT,

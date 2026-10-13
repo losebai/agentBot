@@ -23,8 +23,8 @@ function OrdinaryChat({token}:{token:string}) {
   const [modelCursor,setModelCursor]=useState<string|null>(null);const [model,setModel]=useState('');const [streaming,setStreaming]=useState(false);
   const [partial,setPartial]=useState<{prompt:string;content:string;state:string}>();const [metadata,setMetadata]=useState<CompletionMetadata>();
   const controller=useRef<AbortController>();const mounted=useRef(true);
-  const python=status?.plain_ai_backend==='python';
-  async function refresh(){try{const value=await api.status();if(mounted.current){setStatus(value);if(value.plain_ai_backend==='python'){const result=await ai.models();if(mounted.current){setModels(result.items);setModelCursor(result.next_cursor);}}else{setStreaming(false);setModel('');}}}catch(e){if(mounted.current)setError(errorMessage(e));}}
+  // 模型目录始终来自本地服务，状态刷新不再切换执行后端。
+  async function refresh(){try{const value=await api.status();if(mounted.current){setStatus(value);const result=await ai.models();if(mounted.current){setModels(result.items);setModelCursor(result.next_cursor);}}}catch(e){if(mounted.current)setError(errorMessage(e));}}
   useEffect(()=>{mounted.current=true;void refresh();return()=>{mounted.current=false;controller.current?.abort();};},[api]);
   async function moreModels(){try{const value=await ai.models(modelCursor!);setModels([...models,...value.items]);setModelCursor(value.next_cursor);}catch(e){setError(errorMessage(e));}}
   async function send(){
@@ -34,21 +34,21 @@ function OrdinaryChat({token}:{token:string}) {
     let history=messages.slice(-20);while(history.reduce((sum,item)=>sum+item.content.length,0)>12000)history=history.slice(2);
     let content='', completed=false, info:CompletionMetadata|undefined;
     try{
-      if(streaming&&python){
+      if(streaming){
         for await(const event of api.streamChat({prompt,session_id:session,messages:history,...(model?{model}:{})},abort.signal)){
           if(event.kind==='delta'){content+=event.delta || '';if(mounted.current)setPartial({prompt,content,state:'正在生成'});}
           if(event.kind==='error')throw new Error(event.message || '对话流未完成');
           if(event.kind==='done'){completed=true;info=event.metadata;controller.current=undefined;}
         }
         if(!completed)throw new Error('对话流未完成');
-      }else{const response=await api.chat(prompt,session,history,python&&model?model:undefined,abort.signal);content=response.content;info=response.metadata || undefined;completed=true;controller.current=undefined;}
+      }else{const response=await api.chat(prompt,session,history,model||undefined,abort.signal);content=response.content;info=response.metadata || undefined;completed=true;controller.current=undefined;}
       if(mounted.current){setMessages(previous=>[...previous,{role:'user',content:prompt},{role:'assistant',content}]);setPartial(undefined);setInput('');setMetadata(info);}
     }catch(e){if(mounted.current){setPartial({prompt,content,state:abort.signal.aborted?'已停止':'生成失败'});if(!abort.signal.aborted)setError(errorMessage(e));}}
     finally{if(controller.current===abort)controller.current=undefined;if(mounted.current)setSending(false);}
   }
   return <div className="page-content chat-page"><div className="page-heading"><div><p className="eyebrow">CONVERSATION</p><h1>对话测试</h1><p>验证普通文本回复与流式输出。</p></div><div className="heading-actions"><Button disabled={sending} onClick={()=>void refresh()}>刷新模型状态</Button><Button icon={<DeleteOutlined aria-hidden/>} disabled={sending||(!messages.length&&!partial)} onClick={()=>{setMessages([]);setPartial(undefined);setMetadata(undefined);setSession(newSession());setError('');}}>新会话</Button></div></div>
-    <div className="chat-scope"><Tag color="cyan">{python?'Python 普通对话':'Java 普通对话'}</Tag><span>消息只用于测试，不会发送到 QQ。</span></div>
-    <div className="chat-controls">{python?<><label htmlFor="chat-model">测试模型</label><select id="chat-model" disabled={sending} value={model} onChange={e=>setModel(e.target.value)}><option value="">使用配置模型 {status?.configured_model}</option>{models.filter(item=>item.enabled).map(item=><option key={item.id} value={item.alias}>{item.alias}</option>)}</select>{modelCursor&&<Button disabled={sending} onClick={()=>void moreModels()}>加载更多模型</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式输出</label></>:<span>Java 模式使用配置模型，流式测试需在机器人配置中切换为 Python 普通文本后端。</span>}</div>
+    <div className="chat-scope"><Tag color="cyan">普通对话</Tag><span>消息只用于测试，不会发送到 QQ。</span></div>
+    <div className="chat-controls"><><label htmlFor="chat-model">测试模型</label><select id="chat-model" disabled={sending} value={model} onChange={e=>setModel(e.target.value)}><option value="">使用配置模型 {status?.configured_model}</option>{models.filter(item=>item.enabled).map(item=><option key={item.id} value={item.alias}>{item.alias}</option>)}</select>{modelCursor&&<Button disabled={sending} onClick={()=>void moreModels()}>加载更多模型</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式输出</label></></div>
     {error&&<Alert type="error" showIcon className="notice" message={error}/>}{metadata&&!metadata.record_saved&&<Alert className="notice" type="warning" showIcon message="回复已生成，但会话记录未保存。请检查数据库，无需重新发送。"/>}
     <div className="conversation" aria-live="polite">{!messages.length&&!partial&&<div className="conversation-empty"><div className="bot-mark">AB</div><h2>开始一段对话</h2><p>发送消息，检查模型配置与服务连接。</p></div>}{messages.map((message,index)=><article className={`message ${message.role}`} key={index}><div className="message-avatar">{message.role==='user'?'你':'AB'}</div><div className="message-body"><span className="message-name">{message.role==='user'?'你':'AgentBot'}</span><MarkdownRenderer content={message.content}/></div></article>)}
       {partial&&<><article className="message user"><div className="message-avatar">你</div><div className="message-body"><MarkdownRenderer content={partial.prompt}/></div></article><article className="message assistant"><div className="message-avatar">AB</div><div className="message-body"><Tag>{partial.state}</Tag><MarkdownRenderer content={partial.content || (sending?'正在等待模型回复…':'此轮没有生成正文。')}/></div></article></>}

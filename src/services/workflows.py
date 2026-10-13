@@ -640,7 +640,7 @@ def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
             if node["class_type"] != class_type or not isinstance(node["inputs"].get(field), str):
                 raise WorkflowValidationError("image workflow binding is invalid")
         if definition.workflow_type == "fixed_reference" and not re.fullmatch(
-            r"dispatch-chat-reference/[a-f0-9]{64}\.(png|jpg|webp)",
+            r"chat-reference/[a-f0-9]{64}\.(png|jpg|webp)",
             workflow[definition.input_image_node_id]["inputs"]["image"],
         ):
             raise WorkflowValidationError("fixed reference path is invalid")

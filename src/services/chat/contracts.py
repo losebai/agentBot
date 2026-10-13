@@ -16,10 +16,10 @@ from agent_bot.models import (
 
 
 class ChatClient(Protocol):
-    """dispatch-ai 客户端能力边界。"""
+    """本地 AI 服务能力边界。"""
 
     def media_route(self, output_type: MediaOutputType):
-        """路由客户端提供媒体能力预检决策；原 Java 适配器保持兼容。"""
+        """按实际输出类型提供媒体能力预检决策。"""
         ...
 
     async def complete(

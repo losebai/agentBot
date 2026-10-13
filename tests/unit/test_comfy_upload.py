@@ -9,7 +9,7 @@ from agent_bot.integrations.comfy import ComfyClient, ComfyWorkflowError
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"source-image"
 SCOPE = "a" * 32
-FOLDER = "dispatch-chat-i2i/" + SCOPE
+FOLDER = "chat-i2i/" + SCOPE
 NAME = hashlib.sha256(PNG).hexdigest() + ".png"
 
 
@@ -83,7 +83,7 @@ async def test_invalid_source_or_upload_never_submits_prompt(problem, caplog):
         if problem == "other_filename":
             payload["name"] = "b" * 64 + ".png"
         if problem == "other_folder":
-            payload["subfolder"] = "dispatch-chat-i2i/" + "b" * 32
+            payload["subfolder"] = "chat-i2i/" + "b" * 32
         return httpx.Response(200, json=payload)
 
     client = ComfyClient(base_url="http://comfy.example.invalid", timeout_seconds=30,

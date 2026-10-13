@@ -14,8 +14,8 @@ from pymysql.err import DatabaseError, InterfaceError, OperationalError
 from agent_bot.services.workflows import WorkflowDefinition
 from agent_bot.settings import DatabaseParams
 
-DEFAULT_WORKFLOW_TABLE = "dispatch_chat_workflow"
-WORKFLOW_CONTENT_HASH_INDEX = "uk_dispatch_chat_workflow_content_sha256"
+DEFAULT_WORKFLOW_TABLE = "chat_workflow"
+WORKFLOW_CONTENT_HASH_INDEX = "uk_chat_workflow_content_sha256"
 WORKFLOW_COLUMNS = frozenset(
     {
         "id",
@@ -167,10 +167,10 @@ class WorkflowStore:
                             update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                                 ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                             PRIMARY KEY (id),
-                            UNIQUE KEY uk_dispatch_chat_workflow_key (workflow_key),
-                            UNIQUE KEY uk_dispatch_chat_workflow_content_sha256
+                            UNIQUE KEY uk_chat_workflow_key (workflow_key),
+                            UNIQUE KEY uk_chat_workflow_content_sha256
                                 (content_sha256),
-                            KEY idx_dispatch_chat_workflow_enabled (enabled)
+                            KEY idx_chat_workflow_enabled (enabled)
                         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                             COMMENT='本地 Comfy 工作流定义与执行绑定'
                         """

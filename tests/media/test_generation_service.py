@@ -26,7 +26,7 @@ async def build(media_model, media_database, agent_params, tmp_path):
     provider = AsyncMock()
     provider.generate.return_value = response(picture())
     service = MediaGenerationService(
-        media_model[0], CredentialResolver(environ={}), provider, resources
+        media_model[0], CredentialResolver(), provider, resources
     )
     request = media_request().model_copy(update={"model": media_model[2].alias})
     return service, resources, provider, request

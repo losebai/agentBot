@@ -14,7 +14,7 @@ from agent_bot import config_cli
 
 ONEBOT_TOKEN = "cli-onebot-token-that-is-longer-than-thirty-two-characters"
 SESSION_SECRET = "cli-session-secret-that-is-longer-than-thirty-two-characters"
-AI_TOKEN = "cli-private-ai-token"
+ROLE_SECRET = "cli-private-ai-token"
 TTS_TOKEN = "cli-private-tts-token"
 NARAKA_COOKIE = (
     "pkey=cli-private-pkey; x_heybox_id=556677; x_pkey=cli-private-x-pkey; "
@@ -32,18 +32,17 @@ QQ_VALUES = {
     "654322",
     "765432",
     "876543",
-    "987654",
     "940000000000009",
 }
 
 
 def _legacy_values() -> dict[str, str]:
     return {
-        "DISPATCH_CHAT_DB_HOST": "db.example.test",
-        "DISPATCH_CHAT_DB_PORT": "3306",
-        "DISPATCH_CHAT_DB_USER": "dispatch_chat",
-        "DISPATCH_CHAT_DB_PASSWORD": "db-secret",
-        "DISPATCH_CHAT_DB_NAME": "dispatch_chat",
+        "CHAT_DB_HOST": "db.example.test",
+        "CHAT_DB_PORT": "3306",
+        "CHAT_DB_USER": "chat",
+        "CHAT_DB_PASSWORD": "db-secret",
+        "CHAT_DB_NAME": "chat",
         "DRIVER": "~fastapi",
         "HOST": "127.0.0.1",
         "PORT": "8765",
@@ -55,29 +54,26 @@ def _legacy_values() -> dict[str, str]:
         "ONEBOT_V11_SECRET": ONEBOT_SECRET,
         "ONEBOT_V11_WS_URLS": f'["{PRIVATE_WS_URL}"]',
         "ONEBOT_V11_API_ROOTS": f'{{"cli-bot":"{PRIVATE_API_URL}"}}',
-        "DISPATCH_CHAT_SESSION_SECRET": SESSION_SECRET,
-        "DISPATCH_CHAT_AI_BASE_URL": "https://cli-ai.example.test/dispatch-ai",
-        "DISPATCH_CHAT_AI_TOKEN": AI_TOKEN,
-        "DISPATCH_CHAT_TTS_URL": "https://cli-tts.example.test/v1/audio/speech",
-        "DISPATCH_CHAT_TTS_TOKEN": TTS_TOKEN,
-        "DISPATCH_CHAT_MODEL": "cli-test-model",
-        "DISPATCH_CHAT_SYSTEM_PROMPT": "cli supplemental prompt",
-        "DISPATCH_CHAT_ALLOWED_USERS": '["123456", "123457"]',
-        "DISPATCH_CHAT_ALLOWED_GROUPS": '["654321", "654322"]',
-        "DISPATCH_CHAT_AUTO_SPEAK_ENABLED": "true",
-        "DISPATCH_CHAT_AUTO_SPEAK_BOT_ID": "765432",
-        "DISPATCH_CHAT_AUTO_SPEAK_GROUPS": '["876543"]',
-        "DISPATCH_CHAT_AUTO_SPEAK_USERS": '["987654"]',
-        "DISPATCH_CHAT_AUTO_SPEAK_TRIGGER_MODE": "interval",
-        "DISPATCH_CHAT_AUTO_SPEAK_PROMPT": AUTO_PROMPT,
-        "DISPATCH_CHAT_AUTO_SPEAK_INITIAL_DELAY_SECONDS": "10",
-        "DISPATCH_CHAT_AUTO_SPEAK_INTERVAL_SECONDS": "60",
-        "DISPATCH_CHAT_MCP_ENABLED": "true",
-        "DISPATCH_CHAT_LAYA_ENABLED": "true",
-        "DISPATCH_CHAT_GROUP_RECENT_CONTEXT_ENABLED": "true",
-        "DISPATCH_CHAT_NARAKA_COOKIE": NARAKA_COOKIE,
-        "DISPATCH_CHAT_NARAKA_HEYBOX_ID": "556677",
-        "DISPATCH_CHAT_NARAKA_DEFAULT_ROLE_ID": "cli_private_role",
+        "CHAT_SESSION_SECRET": SESSION_SECRET,
+        "CHAT_NARAKA_DEFAULT_ROLE_ID": ROLE_SECRET,
+        "CHAT_TTS_URL": "https://cli-tts.example.test/v1/audio/speech",
+        "CHAT_TTS_TOKEN": TTS_TOKEN,
+        "CHAT_MODEL": "cli-test-model",
+        "CHAT_SYSTEM_PROMPT": "cli supplemental prompt",
+        "CHAT_ALLOWED_USERS": '["123456", "123457"]',
+        "CHAT_ALLOWED_GROUPS": '["654321", "654322"]',
+        "CHAT_AUTO_SPEAK_ENABLED": "true",
+        "CHAT_AUTO_SPEAK_BOT_ID": "765432",
+        "CHAT_AUTO_SPEAK_GROUPS": '["876543"]',
+        "CHAT_AUTO_SPEAK_TRIGGER_MODE": "interval",
+        "CHAT_AUTO_SPEAK_PROMPT": AUTO_PROMPT,
+        "CHAT_AUTO_SPEAK_INITIAL_DELAY_SECONDS": "10",
+        "CHAT_AUTO_SPEAK_INTERVAL_SECONDS": "60",
+        "CHAT_MCP_ENABLED": "true",
+        "CHAT_AUTO_SPEAK_MCP_CODE": "decision",
+        "CHAT_GROUP_RECENT_CONTEXT_ENABLED": "true",
+        "CHAT_NARAKA_COOKIE": NARAKA_COOKIE,
+        "CHAT_NARAKA_HEYBOX_ID": "556677",
     }
 
 
@@ -151,23 +147,6 @@ def _line_for(output: str, name: str) -> str:
     return line.partition("  #")[0]
 
 
-def test_auto_speak_trigger_mode_is_documented_with_group_only_prerequisites() -> None:
-    project_root = Path(__file__).resolve().parents[2]
-    env_example = (project_root / ".env.example").read_text(encoding="utf-8")
-    readme = (project_root / "README.md").read_text(encoding="utf-8")
-
-    assert "DISPATCH_CHAT_AUTO_SPEAK_TRIGGER_MODE=interval" in env_example
-    assert "interval" in env_example and "message" in env_example
-    assert "DISPATCH_CHAT_AUTO_SPEAK_TRIGGER_MODE" in readme
-    assert "interval" in readme and "message" in readme
-    for prerequisite in (
-        "DISPATCH_CHAT_MCP_ENABLED",
-        "DISPATCH_CHAT_LAYA_ENABLED",
-        "DISPATCH_CHAT_GROUP_RECENT_CONTEXT_ENABLED",
-    ):
-        assert prerequisite in readme
-    assert "私聊" in readme and "不再" in readme
-    assert "热刷新" in readme
 
 
 def test_import_env_initializes_once_without_printing_configuration(
@@ -182,7 +161,7 @@ def test_import_env_initializes_once_without_printing_configuration(
     for private_value in (
         ONEBOT_TOKEN,
         SESSION_SECRET,
-        AI_TOKEN,
+        ROLE_SECRET,
         NARAKA_COOKIE,
         AUTO_PROMPT,
         "cli-test-model",
@@ -193,7 +172,9 @@ def test_import_env_initializes_once_without_printing_configuration(
 
     return_code, duplicate_output = _invoke(capsys, legacy_env, "import-env")
     assert return_code != 0
-    assert all(value not in duplicate_output for value in (ONEBOT_TOKEN, SESSION_SECRET, AI_TOKEN))
+    assert all(
+        value not in duplicate_output for value in (ONEBOT_TOKEN, SESSION_SECRET, ROLE_SECRET)
+    )
 
     return_code, listed = _invoke(capsys, legacy_env, "list")
     assert return_code == 0
@@ -209,27 +190,26 @@ def test_list_displays_normal_values_but_redacts_sensitive_values_and_qq_ids(
     return_code, output = _invoke(capsys, legacy_env, "list")
 
     assert return_code == 0
-    assert "DISPATCH_CHAT_MODEL=cli-test-model" in output
+    assert "CHAT_MODEL=cli-test-model" in output
     assert "PORT=8765" in output
     for field in (
         "ONEBOT_V11_ACCESS_TOKEN",
-        "DISPATCH_CHAT_SESSION_SECRET",
-        "DISPATCH_CHAT_AI_TOKEN",
-        "DISPATCH_CHAT_TTS_TOKEN",
-        "DISPATCH_CHAT_NARAKA_COOKIE",
-        "DISPATCH_CHAT_NARAKA_HEYBOX_ID",
-        "DISPATCH_CHAT_NARAKA_DEFAULT_ROLE_ID",
-        "DISPATCH_CHAT_AUTO_SPEAK_BOT_ID",
-        "DISPATCH_CHAT_AUTO_SPEAK_PROMPT",
+        "CHAT_SESSION_SECRET",
+        "CHAT_NARAKA_DEFAULT_ROLE_ID",
+        "CHAT_TTS_TOKEN",
+        "CHAT_NARAKA_COOKIE",
+        "CHAT_NARAKA_HEYBOX_ID",
+        "CHAT_NARAKA_DEFAULT_ROLE_ID",
+        "CHAT_AUTO_SPEAK_BOT_ID",
+        "CHAT_AUTO_SPEAK_PROMPT",
         "ONEBOT_V11_SECRET",
         "ONEBOT_V11_API_ROOTS",
     ):
         assert _line_for(output, field).endswith("<set>")
     for field in (
-        "DISPATCH_CHAT_ALLOWED_USERS",
-        "DISPATCH_CHAT_ALLOWED_GROUPS",
-        "DISPATCH_CHAT_AUTO_SPEAK_GROUPS",
-        "DISPATCH_CHAT_AUTO_SPEAK_USERS",
+        "CHAT_ALLOWED_USERS",
+        "CHAT_ALLOWED_GROUPS",
+        "CHAT_AUTO_SPEAK_GROUPS",
         "SUPERUSERS",
         "NICKNAME",
         "ONEBOT_V11_WS_URLS",
@@ -238,7 +218,7 @@ def test_list_displays_normal_values_but_redacts_sensitive_values_and_qq_ids(
     for private_value in (
         ONEBOT_TOKEN,
         SESSION_SECRET,
-        AI_TOKEN,
+        ROLE_SECRET,
         TTS_TOKEN,
         NARAKA_COOKIE,
         AUTO_PROMPT,
@@ -259,19 +239,19 @@ def test_set_validates_entire_snapshot_and_invalid_change_keeps_revision(
 ) -> None:
     _initialize(capsys, legacy_env)
 
-    return_code, output = _invoke(capsys, legacy_env, "set", "DISPATCH_CHAT_HISTORY_TURNS", "12")
+    return_code, output = _invoke(capsys, legacy_env, "set", "CHAT_HISTORY_TURNS", "12")
     assert return_code == 0
     assert _revision(output) == 2
     assert _has_restart_notice(output)
 
-    return_code, output = _invoke(capsys, legacy_env, "set", "DISPATCH_CHAT_CHUNK_CHARS", "7000")
+    return_code, output = _invoke(capsys, legacy_env, "set", "CHAT_CHUNK_CHARS", "7000")
     assert return_code != 0
 
     return_code, listed = _invoke(capsys, legacy_env, "list")
     assert return_code == 0
     assert _revision(listed) == 2
-    assert "DISPATCH_CHAT_HISTORY_TURNS=12" in listed
-    assert "DISPATCH_CHAT_CHUNK_CHARS=1200" in listed
+    assert "CHAT_HISTORY_TURNS=12" in listed
+    assert "CHAT_CHUNK_CHARS=1200" in listed
 
 
 def test_set_updates_independent_image_generation_model(
@@ -284,7 +264,7 @@ def test_set_updates_independent_image_generation_model(
         capsys,
         legacy_env,
         "set",
-        "DISPATCH_CHAT_IMAGE_MODEL",
+        "CHAT_IMAGE_MODEL",
         "private-image-generation-model",
     )
 
@@ -292,7 +272,7 @@ def test_set_updates_independent_image_generation_model(
     assert _revision(output) == 2
     return_code, listed = _invoke(capsys, legacy_env, "list")
     assert return_code == 0
-    assert "DISPATCH_CHAT_IMAGE_MODEL=private-image-generation-model" in listed
+    assert "CHAT_IMAGE_MODEL=private-image-generation-model" in listed
 
 
 def test_set_and_list_keyword_at_replies_as_json(
@@ -306,7 +286,7 @@ def test_set_and_list_keyword_at_replies_as_json(
         capsys,
         legacy_env,
         "set",
-        "DISPATCH_CHAT_KEYWORD_AT_REPLIES",
+        "CHAT_KEYWORD_AT_REPLIES",
         rules,
     )
 
@@ -314,19 +294,19 @@ def test_set_and_list_keyword_at_replies_as_json(
     assert _revision(output) == 2
     return_code, listed = _invoke(capsys, legacy_env, "list")
     assert return_code == 0
-    assert _line_for(listed, "DISPATCH_CHAT_KEYWORD_AT_REPLIES") == (
-        "DISPATCH_CHAT_KEYWORD_AT_REPLIES=" + rules
+    assert _line_for(listed, "CHAT_KEYWORD_AT_REPLIES") == (
+        "CHAT_KEYWORD_AT_REPLIES=" + rules
     )
 
 
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("DISPATCH_CHAT_NOT_A_SETTING", "value-that-must-not-be-stored"),
+        ("CHAT_NOT_A_SETTING", "value-that-must-not-be-stored"),
         ("ONEBOT_V11_ACCESS_TOKEN", "value-that-must-not-be-printed-or-stored"),
-        ("DISPATCH_CHAT_TTS_TOKEN", "tts-token-must-use-hidden-input"),
-        ("DISPATCH_CHAT_ALLOWED_USERS", '["111111"]'),
-        ("DISPATCH_CHAT_AUTO_SPEAK_PROMPT", "private prompt passed through ordinary set"),
+        ("CHAT_TTS_TOKEN", "tts-token-must-use-hidden-input"),
+        ("CHAT_ALLOWED_USERS", '["111111"]'),
+        ("CHAT_AUTO_SPEAK_PROMPT", "private prompt passed through ordinary set"),
     ],
 )
 def test_set_rejects_unknown_and_sensitive_fields_without_revision_change(
@@ -358,7 +338,7 @@ def test_set_secret_reads_getpass_and_never_echoes_value(
     if callable(getattr(config_cli, "getpass", None)):
         monkeypatch.setattr(config_cli, "getpass", read_secret)
 
-    return_code, output = _invoke(capsys, legacy_env, "set-secret", "DISPATCH_CHAT_AI_TOKEN")
+    return_code, output = _invoke(capsys, legacy_env, "set-secret", "CHAT_NARAKA_DEFAULT_ROLE_ID")
 
     assert return_code == 0
     assert _revision(output) == 2
@@ -367,7 +347,7 @@ def test_set_secret_reads_getpass_and_never_echoes_value(
     read_secret.assert_called_once()
     return_code, listed = _invoke(capsys, legacy_env, "list")
     assert return_code == 0
-    assert _line_for(listed, "DISPATCH_CHAT_AI_TOKEN").endswith("<set>")
+    assert _line_for(listed, "CHAT_NARAKA_DEFAULT_ROLE_ID").endswith("<set>")
     assert new_secret not in listed
 
 
@@ -384,7 +364,7 @@ def test_set_secret_preserves_scalar_text_that_looks_like_json(
         capsys,
         legacy_env,
         "set-secret",
-        "DISPATCH_CHAT_AI_TOKEN",
+        "CHAT_NARAKA_DEFAULT_ROLE_ID",
     )
 
     assert return_code == 0
@@ -403,8 +383,8 @@ def test_set_secret_updates_cross_validated_fields_atomically(
             capsys,
             legacy_env,
             "clear",
-            "DISPATCH_CHAT_NARAKA_COOKIE",
-            "DISPATCH_CHAT_NARAKA_HEYBOX_ID",
+            "CHAT_NARAKA_COOKIE",
+            "CHAT_NARAKA_HEYBOX_ID",
         )[0]
         == 0
     )
@@ -419,8 +399,8 @@ def test_set_secret_updates_cross_validated_fields_atomically(
         capsys,
         legacy_env,
         "set-secret",
-        "DISPATCH_CHAT_NARAKA_COOKIE",
-        "DISPATCH_CHAT_NARAKA_HEYBOX_ID",
+        "CHAT_NARAKA_COOKIE",
+        "CHAT_NARAKA_HEYBOX_ID",
     )
 
     assert return_code == 0
@@ -436,7 +416,7 @@ def test_clear_allows_only_optional_fields_and_preserves_revision_on_failure(
 ) -> None:
     _initialize(capsys, legacy_env)
 
-    return_code, output = _invoke(capsys, legacy_env, "clear", "DISPATCH_CHAT_AI_TOKEN")
+    return_code, output = _invoke(capsys, legacy_env, "clear", "CHAT_NARAKA_DEFAULT_ROLE_ID")
     assert return_code == 0
     assert _revision(output) == 2
     assert _has_restart_notice(output)
@@ -448,13 +428,13 @@ def test_clear_allows_only_optional_fields_and_preserves_revision_on_failure(
     return_code, listed = _invoke(capsys, legacy_env, "list")
     assert return_code == 0
     assert _revision(listed) == 2
-    assert _line_for(listed, "DISPATCH_CHAT_AI_TOKEN").endswith("<empty>")
+    assert _line_for(listed, "CHAT_NARAKA_DEFAULT_ROLE_ID").endswith("<empty>")
     assert _line_for(listed, "ONEBOT_V11_ACCESS_TOKEN").endswith("<set>")
 
 
 @pytest.mark.parametrize(
     ("name", "value"),
-    [("DISPATCH_CHAT_AGENT_MAX_STEPS", "4"), ("DISPATCH_CHAT_LLM_ENABLE_THINKING", "false")],
+    [("CHAT_AGENT_MAX_STEPS", "4"), ("CHAT_LLM_ENABLE_THINKING", "false")],
 )
 def test_chat_reasoning_settings_can_be_saved_and_cleared(
     legacy_env: Path, capsys: pytest.CaptureFixture[str], name: str, value: str,
@@ -489,3 +469,93 @@ def test_module_entrypoint_dispatches_settings_without_starting_bot(
 
     settings_run.assert_called_once_with(["list"])
     run_bot.assert_not_called()
+
+
+def test_import_failure_identifies_invalid_field_without_echoing_value(monkeypatch, capsys):
+    """导入错误必须指出配置字段，且不输出 Pydantic 输入或校验器上下文。"""
+    from pydantic import ValidationError
+
+    from agent_bot.config import RuntimeConfig
+
+    private = "private-invalid-session-secret"
+    with pytest.raises(ValidationError) as caught:
+        RuntimeConfig(onebot_v11_access_token=ONEBOT_TOKEN, chat_session_secret=private)
+    monkeypatch.setattr(config_cli, "_import_env", Mock(side_effect=caught.value))
+
+    assert config_cli.run(["import-env"]) == 1
+    output = capsys.readouterr().out
+    assert "CHAT_SESSION_SECRET" in output
+    assert private not in output
+    assert ONEBOT_TOKEN not in output
+
+
+def test_list_failure_explains_database_connection_without_driver_details(monkeypatch, capsys):
+    """底层连接失败只显示错误类别与待检查项，不回显供应商消息中的凭据。"""
+    from pymysql.err import OperationalError
+
+    from agent_bot.settings import SettingsError
+
+    failure = SettingsError("settings database operation failed")
+    failure.__cause__ = OperationalError(2003, "private-database-password")
+    monkeypatch.setattr(config_cli, "_list_settings", Mock(side_effect=failure))
+
+    assert config_cli.run(["list"]) == 1
+    output = capsys.readouterr().out
+    assert "MySQL" in output and "CHAT_DB_HOST" in output
+    assert "private-database-password" not in output
+
+
+def test_invalid_saved_configuration_reports_fields_instead_of_database_failure(
+    legacy_env, capsys, fake_mysql,
+):
+    """已开启自动发言的旧快照缺决策配置时，应指出依赖且不泄漏身份或秘密。"""
+    _initialize(capsys, legacy_env)
+    for row in fake_mysql.table:
+        if row['config_key'] == 'chat_auto_speak_mcp_code':
+            row['config_value'] = 'null'
+
+    code, output = _invoke(capsys, legacy_env, 'list')
+
+    assert code == 1
+    assert 'CHAT_AUTO_SPEAK_MCP_CODE' in output
+    assert '配置数据库操作失败' not in output
+    assert ONEBOT_TOKEN not in output and SESSION_SECRET not in output
+    assert all(value not in output for value in QQ_VALUES)
+
+
+def test_set_can_repair_invalid_saved_configuration(legacy_env, capsys, fake_mysql):
+    """显式关闭自动发言可修复旧快照，保留其他值并正常递增版本。"""
+    from agent_bot.bootstrap import database_params, load_bootstrap_config
+    from agent_bot.settings import SettingsStore
+
+    _initialize(capsys, legacy_env)
+    for row in fake_mysql.table:
+        if row['config_key'] == 'chat_auto_speak_mcp_code':
+            row['config_value'] = 'null'
+
+    code, output = _invoke(capsys, legacy_env, 'set', 'CHAT_AUTO_SPEAK_ENABLED', 'false')
+
+    assert code == 0, output
+    assert _revision(output) == 2
+    stored = SettingsStore(database_params(load_bootstrap_config(env_file=str(legacy_env)))).load()
+    assert stored.config.chat_auto_speak_enabled is False
+    assert stored.config.chat_auto_speak_mcp_code is None
+    assert stored.config.chat_model == 'cli-test-model'
+    assert stored.config.onebot_v11_access_token.get_secret_value() == ONEBOT_TOKEN
+    assert stored.config.chat_session_secret.get_secret_value() == SESSION_SECRET
+
+
+def test_invalid_snapshot_repair_still_validates_whole_candidate(legacy_env, capsys, fake_mysql):
+    """读取未验证快照不等于放宽写入校验，无关修改不能保存无效配置。"""
+    from copy import deepcopy
+
+    _initialize(capsys, legacy_env)
+    for row in fake_mysql.table:
+        if row['config_key'] == 'chat_auto_speak_mcp_code':
+            row['config_value'] = 'null'
+    original = deepcopy(fake_mysql.table)
+
+    code, _ = _invoke(capsys, legacy_env, 'set', 'CHAT_MODEL', 'different-model')
+
+    assert code == 1
+    assert fake_mysql.table == original

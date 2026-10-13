@@ -14,11 +14,12 @@ QQ_ONLY_TOOLS = frozenset(
         "mention_member",
         "local_workflow_tasks",
         "local_workflow_cancel",
+        "job",
     }
 )
 MEDIA_TOOLS = ADMIN_MEDIA_TOOLS | {"local_workflow_tasks", "local_workflow_cancel"}
-CHAT_TOOLS = QQ_ONLY_TOOLS | ADMIN_MEDIA_TOOLS
-LEGACY_TOOLS = frozenset({"job", "soloncode"})
+CHAT_TOOLS = (QQ_ONLY_TOOLS - {"job"}) | ADMIN_MEDIA_TOOLS
+LEGACY_TOOLS = frozenset({"soloncode"})
 
 
 class ToolPolicy:

@@ -40,11 +40,13 @@ class BoundTools:
 class ToolRuntime:
     """QQ 和管理入口使用各自媒体适配器，禁止混用身份。"""
 
-    def __init__(self, connector, chat_bridge=None, reader=None, *, admin_media_tools=None):
-        """媒体适配器引用当前运行时的已配置客户端。"""
+    def __init__(self, connector, chat_bridge=None, reader=None, *, admin_media_tools=None,
+                 job_tools=None):
+        """本地适配器引用当前运行时的客户端与任务存储。"""
         self.connector, self.chat_bridge = connector, chat_bridge
         self.reader = reader or PublicPageReader()
         self.admin_media_tools = admin_media_tools
+        self.job_tools = job_tools
 
     @asynccontextmanager
     async def open(self, snapshot, request, authority, *, media_scope=None, images=()):
@@ -85,6 +87,24 @@ class ToolRuntime:
                     if tool.name in handlers:
                         raise AgentError("AGENT_TOOL_NAME_CONFLICT", status_code=409)
                     handlers[tool.name] = invoke_chat
+            if authority.entry == "qq" and "job" in authority.allowed_tools:
+                if self.job_tools is None or self.chat_bridge is None:
+                    raise AgentError("JOB_NOT_INITIALIZED", status_code=503)
+                session = self.job_tools.bind(
+                    snapshot, request, await self.chat_bridge.context(authority)
+                )
+
+                async def invoke_job(call):
+                    """每次执行重新解析令牌并绑定身份，过期令牌不能沿用旧授权。"""
+                    current = self.job_tools.bind(
+                        snapshot, request, await self.chat_bridge.context(authority)
+                    )
+                    return await current.call(call)
+
+                if "job" in handlers:
+                    raise AgentError("AGENT_TOOL_NAME_CONFLICT", status_code=409)
+                definitions.extend(session.definitions)
+                handlers["job"] = invoke_job
             if authority.entry == "admin" and set(authority.allowed_tools) & ADMIN_MEDIA_TOOLS:
                 if self.admin_media_tools is None or media_scope is None:
                     raise AgentError("MEDIA_NOT_READY", status_code=503)

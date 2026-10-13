@@ -238,7 +238,7 @@ class ComfyClient:
         digest = hashlib.sha256(image.data).hexdigest()
         reference = WorkflowInputImage(
             filename=f"{digest}.{extensions[image.media_type]}",
-            subfolder=f"dispatch-chat-i2i/{request_scope}", media_type=image.media_type,
+            subfolder=f"chat-i2i/{request_scope}", media_type=image.media_type,
             size_bytes=len(image.data), sha256=digest,
         )
         try:

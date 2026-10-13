@@ -17,8 +17,8 @@ from nonebot.adapters.onebot.v11 import (
 )
 from nonebot.matcher import Matcher
 
+from agent_bot.ai.chat_errors import ChatAiError
 from agent_bot.config import RuntimeConfig
-from agent_bot.integrations.dispatch_ai import DispatchAiError
 from agent_bot.integrations.onebot.queue_processor import generated_reply_from_model
 from agent_bot.integrations.onebot.replies import OneBotReplyService
 from agent_bot.model_guard import ModelNotAvailableError
@@ -123,7 +123,7 @@ class DrawingCommandHandler:
 
         config = self._config_provider()
         workflow_service = self._workflow_service_provider()
-        if not config.dispatch_chat_local_workflow_enabled or workflow_service is None:
+        if not config.chat_local_workflow_enabled or workflow_service is None:
             await self._finish_reply(
                 matcher, bot, event, FeatureUnavailableFacts(feature="本地绘图工作流"),
             )
@@ -139,7 +139,7 @@ class DrawingCommandHandler:
             await self._finish_reply(
                 matcher, bot, event, InvalidInputFacts(
                     subject="画图提示词",
-                    requirement=f"长度不得超过 {config.dispatch_chat_max_input_chars} 个字符",
+                    requirement=f"长度不得超过 {config.chat_max_input_chars} 个字符",
                 ),
             )
         except (ChatRateLimitedError, ChatBusyError, ConversationQueueFullError):
@@ -155,10 +155,10 @@ class DrawingCommandHandler:
                 chat_context=chat_context,
             )
             generated = generated_reply_from_model(
-                answer[:config.dispatch_chat_max_reply_chars], request_id,
+                answer[:config.chat_max_reply_chars], request_id,
             )
         except (
-            DispatchAiError, ModelNotAvailableError, ChatBusyError, ChatRateLimitedError,
+            ChatAiError, ModelNotAvailableError, ChatBusyError, ChatRateLimitedError,
             ConversationQueueFullError, ValueError,
         ) as exc:
             logger.warning("直接画图的开画回复失败：{}", type(exc).__name__)
@@ -178,7 +178,7 @@ class DrawingCommandHandler:
             userName=self._current_user_name_provider(event), chatContext=chat_context,
             backgroundImage=True,
             workflowRequest=WorkflowImageRequest(
-                workflow_key=config.dispatch_chat_local_workflow_default_key,
+                workflow_key=config.chat_local_workflow_default_key,
                 positive_prompt=normalized_prompt,
             ),
         )

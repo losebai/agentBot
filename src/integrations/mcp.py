@@ -1,4 +1,4 @@
-"""Authenticated Streamable HTTP MCP adapter for chat-owned tools."""
+"""带请求令牌认证的聊天工具 MCP 适配器。"""
 
 from __future__ import annotations
 
@@ -33,12 +33,13 @@ class ToolSessionTokenVerifier(TokenVerifier):
             return None
         return AccessToken(
             token=token,
-            client_id="dispatch-ai-chat",
+            client_id="agent-bot-chat",
             scopes=["tools"],
         )
 
 
 class ChatMcpServer:
+    """管理请求令牌与聊天工具，供网络 MCP 和本地 Python Agent 共用。"""
     def __init__(
         self,
         *,
@@ -57,7 +58,7 @@ class ChatMcpServer:
         self._registry = registry
         self._token_verifier = ToolSessionTokenVerifier(store)
         self._server = Server(
-            "dispatch-chat",
+            "chat",
             version="1.0",
             on_list_tools=self._on_list_tools,
             on_call_tool=self._on_call_tool,
@@ -68,7 +69,7 @@ class ChatMcpServer:
             stateless_http=False,
             max_request_body_size=64 * 1024,
             auth=AuthSettings(
-                issuer_url="http://dispatch-chat.internal",
+                issuer_url="http://chat.internal",
                 required_scopes=["tools"],
                 resource_server_url=None,
             ),
@@ -80,6 +81,12 @@ class ChatMcpServer:
             ),
         )
         self._session_manager_context: AbstractAsyncContextManager[None] | None = None
+
+    async def resolve_context(self, token: str):
+        """本地工具同样每次验证令牌有效期与请求截止时间。"""
+        context = await self._store.resolve(token)
+        context.ensure_active()
+        return context
 
     async def list_tools(self, token: str) -> mcp_types.ListToolsResult:
         """按当前令牌列出工具，并提供作用域内的首屏标签供模型选择。"""

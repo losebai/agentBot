@@ -130,7 +130,7 @@ class ConversationHandler:
     ) -> ReplyIntent:
         """为事件处理器构造共享会话身份和有界输入的类型化回复意图。"""
 
-        prompt_limit = min(self._config_provider().dispatch_chat_max_input_chars, 20_000)
+        prompt_limit = min(self._config_provider().chat_max_input_chars, 20_000)
         original_prompt = event.get_plaintext().strip() or "请回应用户"
         return ReplyIntent(
             requestId=f"qq-reply-{uuid.uuid4().hex}",
@@ -194,8 +194,8 @@ class ConversationHandler:
         try:
             return parse_multimodal_input(
                 message,
-                enabled=config.dispatch_chat_image_recognition_enabled,
-                max_images=config.dispatch_chat_max_images_per_message,
+                enabled=config.chat_image_recognition_enabled,
+                max_images=config.chat_max_images_per_message,
             )
         except ImageRecognitionDisabledError:
             await self._finish_reply(
@@ -206,7 +206,7 @@ class ConversationHandler:
                 matcher, bot, event, InvalidInputFacts(
                     subject="图片数量",
                     requirement=(
-                        f"单条消息最多 {config.dispatch_chat_max_images_per_message} 张图片"
+                        f"单条消息最多 {config.chat_max_images_per_message} 张图片"
                     ),
                 ),
             )
@@ -331,7 +331,7 @@ class ConversationHandler:
     ) -> Message | None:
         """识别自然语言中的单成员提醒，并解析昵称目标。"""
 
-        if not self._config_provider().dispatch_chat_auto_mention_enabled:
+        if not self._config_provider().chat_auto_mention_enabled:
             return None
         try:
             directive = parse_conversational_mention(
@@ -405,16 +405,9 @@ class ConversationHandler:
     async def laya_command(
         self, bot: Bot, event: MessageEvent, argument: Message, *, matcher: type[Matcher],
     ) -> None:
-        """把显式目标或上下文目标交给 LLM 与 Laya，通过现有聊天队列执行。"""
-        config = self._config_provider()
-        if not config.dispatch_chat_mcp_enabled or not config.dispatch_chat_laya_enabled:
-            await self._finish_reply(
-                matcher, bot, event, FeatureUnavailableFacts(feature="Laya 决策"),
-            )
-        message = argument if argument else Message("请结合当前对话上下文确定目标并进行决策。")
-        await self.natural_chat(
-            bot, event, matcher=matcher, mention_handler=None,
-            message=message, laya_decision=True,
+        """通用 Laya 指令尚未实现，调用前明确说明功能不可用。"""
+        await self._finish_reply(
+            matcher, bot, event, FeatureUnavailableFacts(feature="通用 Laya 决策"),
         )
 
     async def natural_chat(
@@ -479,10 +472,10 @@ class ConversationHandler:
                     event.reply.message,
                     current_input=chat_input,
                     quoted_sender=sender_name,
-                    image_recognition_enabled=config.dispatch_chat_image_recognition_enabled,
-                    max_images=config.dispatch_chat_max_images_per_message,
+                    image_recognition_enabled=config.chat_image_recognition_enabled,
+                    max_images=config.chat_max_images_per_message,
                     max_videos=MAX_VIDEOS_PER_MESSAGE,
-                    max_prompt_chars=config.dispatch_chat_max_input_chars,
+                    max_prompt_chars=config.chat_max_input_chars,
                 )
             except ImageRecognitionDisabledError:
                 await self._finish_reply(
@@ -494,7 +487,7 @@ class ConversationHandler:
                         subject="图片数量",
                         requirement=(
                             "当前消息与引用内容合计最多 "
-                            f"{config.dispatch_chat_max_images_per_message} 张图片"
+                            f"{config.chat_max_images_per_message} 张图片"
                         ),
                     ),
                 )
@@ -536,7 +529,7 @@ class ConversationHandler:
                         subject="消息长度",
                         requirement=(
                             "当前消息与引用内容合计最多 "
-                            f"{config.dispatch_chat_max_input_chars} 个字符"
+                            f"{config.chat_max_input_chars} 个字符"
                         ),
                     ),
                 )
@@ -561,7 +554,7 @@ class ConversationHandler:
             await self._finish_reply(
                 matcher, bot, event, InvalidInputFacts(
                     subject="消息长度",
-                    requirement=f"最多 {config.dispatch_chat_max_input_chars} 个字符",
+                    requirement=f"最多 {config.chat_max_input_chars} 个字符",
                 ),
             )
         tools = () if laya_decision else ChatRouteSelector().select(

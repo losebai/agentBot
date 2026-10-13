@@ -82,9 +82,9 @@ class AdminMediaTools:
         if self.resources is not None and not self.resources.readiness.storage_available:
             return frozenset()
         names = set()
-        if self.config.dispatch_chat_local_workflow_enabled and self.workflow is not None:
+        if self.config.chat_local_workflow_enabled and self.workflow is not None:
             names.update({"local_workflow_list", "local_workflow_generate_image"})
-        if self.config.dispatch_chat_tts_enabled and self.tts is not None:
+        if self.config.chat_tts_enabled and self.tts is not None:
             names.add("tts_generate")
         return frozenset(names)
 

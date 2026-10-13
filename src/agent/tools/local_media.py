@@ -1,10 +1,11 @@
-"""受控本地媒体工具的 schema 投影与原始参数校验。"""
+"""受控本地媒体与 Job 工具的 schema 投影和原始参数校验。"""
 
 from copy import deepcopy
 
 from pydantic import ValidationError
 
 from agent_bot.agent.errors import AgentError
+from agent_bot.jobs.contracts import JobArguments
 from agent_bot.services.chat_tools import (
     TtsGenerateArguments,
     WorkflowCancelArguments,
@@ -14,6 +15,7 @@ from agent_bot.services.chat_tools import (
 )
 
 ARGUMENT_MODELS = {
+    "job": JobArguments,
     "local_workflow_list": _StrictArguments,
     "local_workflow_generate_image": WorkflowGenerateArguments,
     "local_workflow_tasks": WorkflowTasksArguments,

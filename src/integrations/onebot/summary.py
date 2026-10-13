@@ -10,8 +10,8 @@ from nonebot import logger
 from nonebot.adapters.onebot.v11 import Bot, MessageEvent
 from nonebot.matcher import Matcher
 
+from agent_bot.ai.chat_errors import ChatAiError, ChatAiImageError
 from agent_bot.config import RuntimeConfig
-from agent_bot.integrations.dispatch_ai import DispatchAiError, DispatchAiImageError
 from agent_bot.integrations.onebot.queue_processor import generated_reply_from_model
 from agent_bot.integrations.onebot.replies import OneBotReplyService
 from agent_bot.model_guard import ModelNotAvailableError
@@ -104,9 +104,9 @@ class SummaryCommandHandler:
         try:
             summary_input = await build_quoted_summary_input(
                 bot, reply.message, quoted_sender=sender_name,
-                image_recognition_enabled=config.dispatch_chat_image_recognition_enabled,
-                max_images=config.dispatch_chat_max_images_per_message,
-                max_prompt_chars=config.dispatch_chat_max_input_chars,
+                image_recognition_enabled=config.chat_image_recognition_enabled,
+                max_images=config.chat_max_images_per_message,
+                max_prompt_chars=config.chat_max_input_chars,
             )
         except ImageRecognitionDisabledError:
             await self._finish_reply(
@@ -116,7 +116,7 @@ class SummaryCommandHandler:
             await self._finish_reply(
                 matcher, bot, event, InvalidInputFacts(
                     subject="引用图片",
-                    requirement=f"最多 {config.dispatch_chat_max_images_per_message} 张",
+                    requirement=f"最多 {config.chat_max_images_per_message} 张",
                 ),
             )
         except InvalidImageAttachmentError:
@@ -155,7 +155,7 @@ class SummaryCommandHandler:
             answer = await self._chat_service_provider().ask_once(
                 f"{self._session_id_provider(bot, event)}:quoted-summary",
                 summary_input.prompt,
-                system_prompt=config.dispatch_chat_system_prompt,
+                system_prompt=config.chat_system_prompt,
                 user=self._llm_user_name_provider(event),
                 user_name=self._current_user_name_provider(event),
                 image_urls=summary_input.image_urls,
@@ -169,12 +169,12 @@ class SummaryCommandHandler:
             )
         except (ChatBusyError, ChatRateLimitedError, ConversationQueueFullError):
             await matcher.finish()
-        except DispatchAiImageError:
+        except ChatAiImageError:
             await self._finish_reply(
                 matcher, bot, event,
                 InvalidInputFacts(subject="引用图片", requirement="可下载且格式受支持"),
             )
-        except (DispatchAiError, ModelNotAvailableError) as exc:
+        except (ChatAiError, ModelNotAvailableError) as exc:
             logger.warning("总结模型调用失败：{}", type(exc).__name__)
             await matcher.finish()
 

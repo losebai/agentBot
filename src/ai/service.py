@@ -21,6 +21,7 @@ from agent_bot.ai.contracts import (
 )
 from agent_bot.ai.credentials import CredentialResolver
 from agent_bot.ai.errors import AiError
+from agent_bot.ai.model_discovery import discover_models
 from agent_bot.ai.providers.base import TextProvider, require_text
 from agent_bot.ai.sessions import AiSessionStore
 from agent_bot.services.request_deadline import remaining_timeout, request_deadline
@@ -44,15 +45,28 @@ class AiService:
         self._active = 0
         self._closed = False
 
-    def credential_available(self, reference: str | None) -> bool:
-        return self.credentials.is_available(reference)
+    def credential_available(self, provider) -> bool:
+        """供应商就绪状态只检查数据库快照中的凭据。"""
+        return self.credentials.is_available(provider)
+
+    async def upstream_models(self, provider_id, expected_revision):
+        """模型发现与生成共用活动配额和协议传输，退出时归还名额。"""
+        async with self._slot():
+            with request_deadline(15):
+                provider = await self.catalog.get_provider(provider_id, expected_revision)
+                result = await discover_models(
+                    provider, self.providers[provider.protocol].transport
+                )
+                # 拉取期间配置发生变化时拒绝旧结果，前端重新刷新后才能导入。
+                await self.catalog.get_provider(provider_id, expected_revision)
+                return result
 
     async def readiness(self, model: str | None = None) -> CatalogReadiness:
         result = await self.catalog.readiness(model)
         if result.code or model is None:
             return result
         resolved = await self.catalog.resolve(model)
-        available = self.credential_available(resolved.provider.credential_ref)
+        available = self.credential_available(resolved.provider)
         return result.model_copy(
             update={
                 "credential_available": available,
@@ -71,12 +85,13 @@ class AiService:
             self._active -= 1
 
     async def _prepare(self, request: TextRequest):
+        """从数据库固定本次调用的模型、地址和凭据，不跨请求缓存配置。"""
         resolved = await self.catalog.resolve(request.model)
         provider = self.providers.get(resolved.provider.protocol)
         if provider is None:
             raise AiError("AI_PROTOCOL_UNSUPPORTED", status_code=422)
         provider.validate_options(request.options)
-        credential = self.credentials.resolve(resolved.provider.credential_ref)
+        credential = self.credentials.resolve(resolved.provider)
         return provider, ProviderCall(request=request, resolved=resolved, credential=credential)
 
     async def _record(

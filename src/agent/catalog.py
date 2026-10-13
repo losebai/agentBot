@@ -15,6 +15,7 @@ from agent_bot.ai.catalog import AiCatalog
 from agent_bot.ai.contracts import Page, ResolvedModel
 from agent_bot.ai.database import AiDatabase, page_limit, query
 from agent_bot.ai.errors import AiError
+from agent_bot.credential_values import row_values, write_credential
 from agent_bot.media.catalog import model_view
 
 
@@ -38,7 +39,7 @@ class AgentCatalog(AiDatabase):
                         (id,),
                     )
                 )
-        return VIEW[kind].model_validate(values)
+        return VIEW[kind].model_validate(row_values(values, VIEW[kind]))
 
     def _relations(self, connection, id, values):
         for field, related in RELATIONS.items():
@@ -57,6 +58,8 @@ class AgentCatalog(AiDatabase):
     async def _create(self, kind, body):
         def write(connection):
             values = body.model_dump()
+            if kind == "mcp":
+                write_credential(values, body)
             relations = {k: values.pop(k) for k in RELATIONS} if kind == "agent" else {}
             if kind == "agent":
                 AiCatalog._get(self, connection, "model", values["model_id"], lock=True)
@@ -98,6 +101,8 @@ class AgentCatalog(AiDatabase):
             if kind == "agent":
                 AiCatalog._get(self, connection, "model", values["model_id"], lock=True)
                 self._relations(connection, id, values)
+            if kind == "mcp":
+                write_credential(values, patch, old)
             values["updated_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
             values = encode(values)
             with connection.cursor() as cursor:
@@ -194,6 +199,18 @@ class AgentCatalog(AiDatabase):
     async def list_mcps(self, *, limit=50, cursor=None):
         return await self._list("mcp", limit, cursor)
 
+    async def decision_mcp(self, code):
+        """只解析已启用的固定决策服务，白名单收紧为 laya_predict。"""
+        def read(connection):
+            """目录代码来自服务器配置，查询参数不包含模型提供的地址。"""
+            server = self._by_code(connection, "mcp", code)
+            if server.category != "general" or not (
+                {"laya_predict", "*"} & set(server.allowed_tools)
+            ):
+                raise AgentError("AUTO_SPEAK_TOOL_UNAVAILABLE", status_code=503)
+            return server.model_copy(update={"allowed_tools": ("laya_predict",), "required": True})
+        return await self.run(read)
+
     def _by_code(self, connection, kind, code):
         row = query(connection, f"SELECT id FROM agent_bot_{kind} WHERE code=%s", (code,), one=True)
         if row is None:
@@ -279,7 +296,7 @@ class AgentCatalog(AiDatabase):
             def check(connection):
                 """在同一只读事务检查必需结构，公开附件不要求新增历史表列。"""
                 for kind, view in VIEW.items():
-                    fields = set(view.model_fields) - {*RELATIONS, "credential_available"}
+                    fields = set(view.model_fields) - {*RELATIONS}
                     query(
                         connection,
                         f"SELECT {','.join(sorted(fields))} FROM agent_bot_{kind} LIMIT 0",

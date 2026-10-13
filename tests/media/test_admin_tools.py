@@ -47,7 +47,7 @@ def adapters(store, tmp_path):
     tts = SimpleNamespace(generate=AsyncMock(return_value=GeneratedSpeech(wav, "audio/wav", 12)))
     comfy = SimpleNamespace(cancel=AsyncMock())
     config = SimpleNamespace(
-        dispatch_chat_local_workflow_enabled=True, dispatch_chat_tts_enabled=True
+        chat_local_workflow_enabled=True, chat_tts_enabled=True
     )
     return AdminMediaTools(config, workflow, tts, store, comfy_client=comfy), workflow, tts, comfy
 
@@ -142,7 +142,7 @@ async def test_comfy_internal_bytes_upload_uses_server_scope():
             200,
             json={
                 "name": filename,
-                "subfolder": f"dispatch-chat-i2i/{SCOPE.execution_id}",
+                "subfolder": f"chat-i2i/{SCOPE.execution_id}",
                 "type": "input",
             },
         )

@@ -93,18 +93,20 @@ class ServiceStatus(ApiModel):
     database_revision: int
     applied_revision: int
     restart_required_fields: list[str]
-    ai_backend: Literal["java-compatibility", "python-ordinary"] = "java-compatibility"
-    plain_ai_backend: Literal["java", "python"] = "java"
+    ai_backend: Literal["python-ordinary"] = "python-ordinary"
+    plain_ai_backend: Literal["python"] = "python"
     configured_model: str = ""
-    agent_backend: Literal["java", "python"] = "java"
+    agent_backend: Literal["python"] = "python"
     configured_agent: str | None = None
     python_agent: AgentReadiness | None = None
     legacy_capabilities: tuple[str, ...] = (
         "laya",
-        "job",
+        "video",
         "soloncode",
     )
-    media_backend: Literal["java", "python"] = "java"
+    media_backend: Literal["python"] = "python"
+    job_enabled: bool = False
+    auto_speak_enabled: bool = False
     python_media: MediaReadiness | None = None
     python_ai: CatalogReadiness | None = None
 

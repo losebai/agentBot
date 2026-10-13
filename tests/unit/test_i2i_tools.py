@@ -26,7 +26,7 @@ from agent_bot.services.workflow_inputs import workflow_input_scope
 async def test_i2i_tool_binds_job_image_and_restores_without_upload():
     definition = i2i_definition()
     scope = workflow_input_scope("parent")
-    uploaded = uploaded_image(subfolder=f"dispatch-chat-i2i/{scope}")
+    uploaded = uploaded_image(subfolder=f"chat-i2i/{scope}")
     client = SimpleNamespace(upload_input_image=AsyncMock(return_value=uploaded))
     service = WorkflowExecutionService(
         store=SimpleNamespace(get_executable=lambda _: definition), client=client,

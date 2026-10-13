@@ -4,9 +4,11 @@ import pytest
 from fastapi import HTTPException
 
 
-def test_admin_token_is_required_and_placeholders_are_rejected(monkeypatch):
+def test_admin_token_is_required_and_placeholders_are_rejected(monkeypatch, tmp_path):
     from agent_bot.admin.config import AdminConfig
 
+    # 认证读取包含 .env，测试应在独立目录验证缺失凭据。
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("AGENT_BOT_ADMIN_TOKEN", raising=False)
     with pytest.raises(ValueError):
         AdminConfig.from_environment()

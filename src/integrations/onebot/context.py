@@ -78,7 +78,7 @@ class EventContextService:
             bot_id=bot.self_id,
             user_id=str(event.user_id),
             group_id=self.group_id(event),
-            group_shared=self._config_provider().dispatch_chat_group_shared_session,
+            group_shared=self._config_provider().chat_group_shared_session,
         )
         return external_session_id(scope, self._session_secret_provider())
 
@@ -140,7 +140,7 @@ class EventContextService:
         """由已解析事件资料构建强类型聊天上下文。"""
 
         sender_name = self.current_user_name(event)
-        bot_id = str(event.self_id) if self._config_provider().dispatch_chat_job_enabled else None
+        bot_id = str(event.self_id) if self._config_provider().chat_job_enabled else None
         if isinstance(event, GroupMessageEvent):
             return ChatContext(
                 botId=bot_id,
@@ -267,7 +267,7 @@ class EventContextService:
     def llm_user_name(self, event: MessageEvent) -> str | None:
         """按隐私开关返回仅供当前上游请求使用的昵称。"""
 
-        if not self._config_provider().dispatch_chat_llm_forward_user_name:
+        if not self._config_provider().chat_llm_forward_user_name:
             return None
         return self.current_user_name(event)
 
@@ -297,7 +297,7 @@ class EventContextService:
         """读取请求前的近期群聊上下文，并随后记录当前消息。"""
 
         if (
-            not self._config_provider().dispatch_chat_group_recent_context_enabled
+            not self._config_provider().chat_group_recent_context_enabled
             or not isinstance(event, GroupMessageEvent)
         ):
             return None
@@ -313,7 +313,7 @@ class EventContextService:
         """把有效的其他成员纯文本消息写入群聊近期上下文。"""
 
         if (
-            not self._config_provider().dispatch_chat_group_recent_context_enabled
+            not self._config_provider().chat_group_recent_context_enabled
             or str(event.user_id) == bot.self_id
         ):
             return

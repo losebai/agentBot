@@ -261,11 +261,11 @@ def _session_manager(harness, monkeypatch):
     """使用真实令牌会话管理器，仅替换已连接机器人查找。"""
     config = RuntimeConfig(
         onebot_v11_access_token="test-token-that-is-longer-than-32-characters",
-        dispatch_chat_session_secret="test-secret-that-is-longer-than-32-characters",
-        dispatch_chat_mcp_enabled=True,
-        dispatch_chat_image_generation_enabled=True,
-        dispatch_chat_local_workflow_enabled=True,
-        dispatch_chat_tts_enabled=True,
+        chat_session_secret="test-secret-that-is-longer-than-32-characters",
+        chat_mcp_enabled=True,
+        chat_image_generation_enabled=True,
+        chat_local_workflow_enabled=True,
+        chat_tts_enabled=True,
     )
     sessions = ToolSessionStore(ttl_seconds=60, max_sessions=8)
     manager = ChatToolSessionManager(

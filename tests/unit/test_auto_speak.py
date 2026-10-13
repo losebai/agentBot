@@ -6,13 +6,9 @@ from collections.abc import Awaitable, Callable, Sequence
 
 import pytest
 
-from agent_bot.integrations.dispatch_ai import DispatchAiUnavailableError
+from agent_bot.ai.chat_errors import ChatAiUnavailableError
 from agent_bot.integrations.onebot.auto_speak import AutoSpeakCycleResult, AutoSpeakService
-from agent_bot.models import (
-    AutoSpeakDecisionResponse,
-    ChatMessage,
-    ChatToolName,
-)
+from agent_bot.models import AutoSpeakDecisionResponse, ChatMessage, ChatToolName
 from agent_bot.services.auto_speak_decision import AutoSpeakContextBuilder
 from agent_bot.services.conversation_queue import ConversationJob
 from agent_bot.state import ConversationContext, external_session_id
@@ -216,7 +212,7 @@ async def test_interval_mode_loads_group_context_and_gates_generation() -> None:
 @pytest.mark.asyncio
 async def test_decision_error_skips_generation_and_does_not_block_later_group() -> None:
     decision_client = FakeDecisionClient(
-        [DispatchAiUnavailableError("safe unavailable"), decision(True)]
+        [ChatAiUnavailableError("safe unavailable"), decision(True)]
     )
     job_submitter = FakeJobSubmitter()
     bot = FakeBot()
@@ -234,7 +230,7 @@ async def test_decision_error_skips_generation_and_does_not_block_later_group() 
 
     assert result == AutoSpeakCycleResult(bot_available=True, sent=1, failed=1)
     assert [job.group_id for job in job_submitter.jobs] == ["99999"]
-    assert errors == ["DispatchAiUnavailableError"]
+    assert errors == ["ChatAiUnavailableError"]
     assert bot.calls == []
 
 
@@ -261,7 +257,7 @@ async def test_message_decision_error_is_silent_and_never_sends() -> None:
     bot = FakeBot()
     service = make_service(
         job_submitter=job_submitter,
-        decision_client=FakeDecisionClient([DispatchAiUnavailableError("safe unavailable")]),
+        decision_client=FakeDecisionClient([ChatAiUnavailableError("safe unavailable")]),
         context_store=FakeContextStore({"88888": "当前消息"}),
         bot_provider=lambda bot_id: bot,
         trigger_mode="message",
@@ -273,7 +269,7 @@ async def test_message_decision_error_is_silent_and_never_sends() -> None:
     assert sent is False
     assert job_submitter.jobs == []
     assert bot.calls == []
-    assert errors == ["DispatchAiUnavailableError"]
+    assert errors == ["ChatAiUnavailableError"]
 
 
 @pytest.mark.asyncio

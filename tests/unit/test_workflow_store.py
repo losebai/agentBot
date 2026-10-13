@@ -146,9 +146,9 @@ def _store(database: _Database) -> WorkflowStore:
         DatabaseParams(
             host="127.0.0.1",
             port=3306,
-            user="dispatch_chat",
+            user="chat",
             password="secret",
-            database="dispatch_chat",
+            database="chat",
         ),
         connect=database.connect,
     )
@@ -169,8 +169,8 @@ async def test_startup_upgrades_old_workflow_columns_before_read_or_import(
     database.columns -= missing_columns
     monkeypatch.setattr(chat_plugin, "_workflow_store", _store(database))
     monkeypatch.setattr(chat_plugin, "plugin_config", chat_plugin.plugin_config.model_copy(update={
-        "dispatch_chat_local_workflow_enabled": True,
-        "dispatch_chat_local_workflow_directory": directory,
+        "chat_local_workflow_enabled": True,
+        "chat_local_workflow_directory": directory,
     }))
     monkeypatch.setattr(chat_plugin, "WorkflowCatalogImporter", Mock(return_value=Mock(
         scan=Mock(return_value=(_definition(),)),
@@ -229,7 +229,7 @@ def test_migrate_deduplicates_content_before_adding_unique_index() -> None:
     assert "MIN(ID)" in sql
     assert "MIN(ENABLED)" in sql
     assert "DELETE DUPLICATE_ROW" in sql
-    assert "ADD UNIQUE KEY `UK_DISPATCH_CHAT_WORKFLOW_CONTENT_SHA256`" in sql
+    assert "ADD UNIQUE KEY `UK_CHAT_WORKFLOW_CONTENT_SHA256`" in sql
     update_index = next(
         index for index, statement in enumerate(statements) if "MIN(enabled)" in statement
     )
@@ -239,7 +239,7 @@ def test_migrate_deduplicates_content_before_adding_unique_index() -> None:
     unique_index = next(
         index
         for index, statement in enumerate(statements)
-        if "ADD UNIQUE KEY `uk_dispatch_chat_workflow_content_sha256`" in statement
+        if "ADD UNIQUE KEY `uk_chat_workflow_content_sha256`" in statement
     )
     assert update_index < delete_index < unique_index
     assert database.commits == 1
@@ -252,7 +252,7 @@ def test_migrate_keeps_duplicates_when_content_hash_index_already_exists() -> No
 
     sql = "\n".join(statement for statement, _ in database.executed).upper()
     assert "DELETE DUPLICATE_ROW" not in sql
-    assert "ADD UNIQUE KEY `UK_DISPATCH_CHAT_WORKFLOW_CONTENT_SHA256`" not in sql
+    assert "ADD UNIQUE KEY `UK_CHAT_WORKFLOW_CONTENT_SHA256`" not in sql
     assert database.commits == 1
 
 
@@ -319,7 +319,7 @@ def test_migrate_backfills_comments_on_existing_table() -> None:
     _store(database).migrate()
 
     executed_sql = "\n".join(statement for statement, _ in database.executed)
-    assert "ALTER TABLE `dispatch_chat_workflow`" in executed_sql
+    assert "ALTER TABLE `chat_workflow`" in executed_sql
     assert executed_sql.count("MODIFY COLUMN") == len(WORKFLOW_COLUMNS)
 
 
@@ -408,7 +408,7 @@ def test_upsert_updates_hash_match_by_id_without_changing_key_or_enabled() -> No
     statement, rows = database.executed[-1]
     update_clause = statement.partition("SET")[2].partition("WHERE")[0]
     assert count == 1
-    assert "UPDATE `dispatch_chat_workflow`" in statement
+    assert "UPDATE `chat_workflow`" in statement
     assert "workflow_key" not in update_clause
     assert "enabled" not in update_clause
     assert "description" not in update_clause
@@ -479,7 +479,7 @@ def test_upsert_rejects_key_and_hash_matching_different_rows() -> None:
 
     assert database.commits == 0
     assert all(
-        "INSERT INTO" not in statement and "UPDATE `dispatch_chat_workflow`" not in statement
+        "INSERT INTO" not in statement and "UPDATE `chat_workflow`" not in statement
         for statement, _ in database.executed
     )
 

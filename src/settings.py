@@ -18,42 +18,40 @@ from pymysql.err import DatabaseError, InterfaceError, OperationalError
 from agent_bot.config import CONFIG_DESCRIPTIONS, RuntimeConfig
 
 _SINGLETON_ID = 1
-_LOCK_NAME = "dispatch_chat_setting"
+_LOCK_NAME = "chat_setting"
 _LOCK_TIMEOUT_SECONDS = 5
 _MAX_KEY_LENGTH = 128
 _MAX_VALUE_BYTES = 1024 * 1024
 _MAX_ROWS = 256
 
-DEFAULT_TABLE = "dispatch_chat_setting"
-DEFAULT_REVISION_TABLE = "dispatch_chat_setting_revision"
+DEFAULT_TABLE = "chat_setting"
+DEFAULT_REVISION_TABLE = "chat_setting_revision"
 
 STORED_SETTING_NAMES = frozenset(RuntimeConfig.model_fields)
 
 SECRET_SETTING_NAMES = frozenset(
     {
         "onebot_v11_access_token",
-        "dispatch_chat_session_secret",
-        "dispatch_chat_ai_token",
-        "dispatch_chat_tts_token",
-        "dispatch_chat_naraka_cookie",
-        "dispatch_chat_naraka_heybox_id",
-        "dispatch_chat_naraka_default_role_id",
-        "dispatch_chat_auto_speak_bot_id",
+        "chat_session_secret",
+        "chat_tts_token",
+        "chat_naraka_cookie",
+        "chat_naraka_heybox_id",
+        "chat_naraka_default_role_id",
         "onebot_v11_secret",
+        "chat_auto_speak_bot_id",
     }
 )
 
 SENSITIVE_SETTING_NAMES = SECRET_SETTING_NAMES | frozenset(
     {
-        "dispatch_chat_system_prompt",
-        "dispatch_chat_allowed_groups",
-        "dispatch_chat_allowed_users",
-        "dispatch_chat_blocked_groups",
-        "dispatch_chat_blocked_users",
-        "dispatch_chat_auto_speak_groups",
-        "dispatch_chat_auto_speak_users",
-        "dispatch_chat_auto_speak_prompt",
-        "dispatch_chat_auto_speak_laya_prompt",
+        "chat_system_prompt",
+        "chat_auto_speak_prompt",
+        "chat_auto_speak_laya_prompt",
+        "chat_auto_speak_groups",
+        "chat_allowed_groups",
+        "chat_allowed_users",
+        "chat_blocked_groups",
+        "chat_blocked_users",
         "superusers",
         "nickname",
         "onebot_v11_ws_urls",
@@ -63,12 +61,11 @@ SENSITIVE_SETTING_NAMES = SECRET_SETTING_NAMES | frozenset(
 
 SENSITIVE_COLLECTION_SETTING_NAMES = frozenset(
     {
-        "dispatch_chat_allowed_groups",
-        "dispatch_chat_allowed_users",
-        "dispatch_chat_blocked_groups",
-        "dispatch_chat_blocked_users",
-        "dispatch_chat_auto_speak_groups",
-        "dispatch_chat_auto_speak_users",
+        "chat_auto_speak_groups",
+        "chat_allowed_groups",
+        "chat_allowed_users",
+        "chat_blocked_groups",
+        "chat_blocked_users",
         "superusers",
         "nickname",
         "onebot_v11_ws_urls",
@@ -160,7 +157,7 @@ def _plain_value(value: Any) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class DatabaseParams:
-    """dispatch-chat 配置库的 MySQL 连接参数。"""
+    """chat 配置库的 MySQL 连接参数。"""
 
     host: str
     port: int
@@ -218,7 +215,17 @@ class SettingsStore:
 
     @_database_boundary
     def load(self) -> VersionedSettings:
-        """读取当前配置快照。"""
+        """读取并验证当前配置，运行时不能使用尚未修复的数据库快照。"""
+
+        values, revision = self.load_values()
+        return VersionedSettings(
+            config=_validate_runtime_config(values),
+            revision=revision,
+        )
+
+    @_database_boundary
+    def load_values(self) -> tuple[dict[str, Any], int]:
+        """读取待修改的原始快照；调用方必须通过 save 的完整校验和版本锁写回。"""
 
         with closing(self._open()) as connection:
             self._validate_schema(connection)
@@ -227,10 +234,7 @@ class SettingsStore:
                 if revision is None:
                     raise SettingsNotInitializedError("settings database is not initialized")
                 values = self._read_values(cursor)
-        return VersionedSettings(
-            config=_validate_runtime_config(values),
-            revision=revision,
-        )
+        return values, revision
 
     @_database_boundary
     def load_revision(self) -> int:

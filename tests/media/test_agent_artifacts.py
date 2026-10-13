@@ -68,7 +68,7 @@ def build_agent(database, params, store, tools, provider):
     return AgentService(
         AgentCatalog(params, connect=database.connect),
         AgentRunStore(params, connect=database.connect, media_store=store),
-        CredentialResolver(environ={}),
+        CredentialResolver(),
         {"openai-chat": provider},
         ToolRuntime(NoRemote(), admin_media_tools=tools),
         media_store=store,

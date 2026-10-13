@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
-from agent_bot.ai.credentials import REFERENCE_PATTERN
+from agent_bot.credential_values import CredentialSnapshot, CredentialValue
 from agent_bot.models import ChatMessage, LlmRequestOptions
 
 ProviderProtocol = Literal["openai-responses", "openai-chat", "ollama"]
@@ -26,11 +26,12 @@ class ModelMediaCapabilities(AiModel):
     audio_chat_enabled: bool = False
 
 
-class ProviderCreate(AiModel):
+class ProviderFields(AiModel):
+    """供应商可公开的连接信息，不包含写入凭据。"""
+
     name: str = Field(min_length=1, max_length=100)
     protocol: ProviderProtocol
     base_url: str = Field(min_length=1, max_length=2048)
-    credential_ref: str | None = None
     enabled: bool = False
     description: str = Field(default="", max_length=1000)
 
@@ -63,28 +64,30 @@ class ProviderCreate(AiModel):
             raise ValueError("use API root rather than complete endpoint")
         return value.rstrip("/")
 
-    @field_validator("credential_ref")
-    @classmethod
-    def check_reference(cls, value: str | None) -> str | None:
-        if value is not None and not REFERENCE_PATTERN.fullmatch(value):
-            raise ValueError("invalid credential reference")
-        return value
+
+class ProviderCreate(ProviderFields):
+    """创建供应商时直接接收密钥，不使用环境变量引用。"""
+
+    credential: CredentialValue | None = Field(default=None, repr=False)
 
 
-class ProviderView(ProviderCreate):
+class ProviderView(ProviderFields, CredentialSnapshot):
+    """公开字段与不序列化的内部凭据快照分离。"""
+
     id: int
     revision: int
-    credential_available: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
 class ProviderUpdate(AiModel):
+    """版本化修改供应商；省略凭据保留，显式 null 清除。"""
+
     expected_revision: int = Field(ge=1)
     name: str | None = None
     protocol: ProviderProtocol | None = None
     base_url: str | None = None
-    credential_ref: str | None = None
+    credential: CredentialValue | None = Field(default=None, repr=False)
     enabled: bool | None = None
     description: str | None = None
 
@@ -138,6 +141,52 @@ class ModelUpdate(AiModel):
 
 class VersionDelete(AiModel):
     expected_revision: int = Field(ge=1)
+
+
+class UpstreamModels(AiModel):
+    """发现结果绑定供应商版本，禁止在切换配置后误用旧列表。"""
+
+    provider_id: int
+    revision: int
+    models: tuple[str, ...]
+
+
+class ModelImportItem(AiModel):
+    """管理员选择的准确上游 ID 与独立本地别名。"""
+
+    alias: str
+    upstream_model: str
+
+    @model_validator(mode="after")
+    def validate_names(self):
+        """复用手动登记的名称约束，不根据名称推断能力。"""
+        ModelCreate(alias=self.alias, upstream_model=self.upstream_model, provider_id=1)
+        return self
+
+
+class ModelImportRequest(AiModel):
+    """一个供应商的一批导入，在版本检查后原子写入。"""
+
+    expected_revision: int = Field(ge=1)
+    models: tuple[ModelImportItem, ...] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def unique_names(self):
+        """批内重复直接拒绝，避免不明确的别名覆盖。"""
+        for field in ("alias", "upstream_model"):
+            names = [getattr(item, field) for item in self.models]
+            if len(set(names)) != len(names):
+                raise ValueError("duplicate import model")
+        return self
+
+
+class ModelImportResult(AiModel):
+    """明确区分新登记和已经登记的上游模型。"""
+
+    provider_id: int
+    revision: int
+    imported: tuple[ModelView, ...]
+    skipped: tuple[str, ...]
 
 
 class Page(AiModel, Generic[T]):

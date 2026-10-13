@@ -94,27 +94,25 @@ class ChatToolSessionManager:
         """按会话场景和当前运行时依赖计算最小工具白名单。"""
 
         config = self._config_provider()
-        if not config.dispatch_chat_mcp_enabled or self._store_provider() is None:
+        if not config.chat_mcp_enabled or self._store_provider() is None:
             return ()
         tools: list[ChatToolName] = []
-        if config.dispatch_chat_job_enabled:
+        if config.chat_job_enabled:
             tools.append("job")
-        if config.dispatch_chat_soloncode_enabled:
-            tools.append("soloncode")
-        if config.dispatch_chat_tagged_memory_enabled and self._memory_store_provider() is not None:
+        if config.chat_tagged_memory_enabled and self._memory_store_provider() is not None:
             tools.append("memory")
         if self._naraka_service_provider() is not None:
             tools.extend(("naraka_query", "naraka_search"))
-        if group and config.dispatch_chat_mention_tool_enabled:
+        if group and config.chat_mention_tool_enabled:
             tools.append("mention_member")
         if (
-            config.dispatch_chat_local_workflow_enabled
+            config.chat_local_workflow_enabled
             and self._workflow_service_provider() is not None
         ):
             tools.extend(("local_workflow_list", "local_workflow_generate_image"))
         if self._image_tasks_provider() is not None:
             tools.extend(("local_workflow_tasks", "local_workflow_cancel"))
-        if config.dispatch_chat_tts_enabled and self._tts_service_provider() is not None:
+        if config.chat_tts_enabled and self._tts_service_provider() is not None:
             tools.append("tts_generate")
         return tuple(tools)
 
@@ -169,7 +167,7 @@ class ChatToolSessionManager:
             image_urls=image_urls,
             tts_service=self._tts_service_provider(),
             tts_collector=speech_collector,
-            deadline_at=time.monotonic() + remaining_timeout(config.dispatch_chat_timeout_seconds),
+            deadline_at=time.monotonic() + remaining_timeout(config.chat_timeout_seconds),
         )
         context.memory_session = self._memory_session(context)
         async with store.open(context) as token:
@@ -201,9 +199,9 @@ class ChatToolSessionManager:
             return
         config = self._config_provider()
         store = self._store_provider()
-        if store is None or not config.dispatch_chat_mcp_enabled:
+        if store is None or not config.chat_mcp_enabled:
             raise RuntimeError("queued chat tools are not available")
-        if job.laya_decision and not config.dispatch_chat_laya_enabled:
+        if job.laya_decision:
             raise RuntimeError("queued Laya decision is not available")
 
         available_tools = set(self._available_tools(group=job.scene == "group"))
@@ -247,7 +245,7 @@ class ChatToolSessionManager:
             tts_collector=speech_collector,
             job_id=job.job_id,
             operation_store=self._operation_store_provider(),
-            deadline_at=time.monotonic() + remaining_timeout(config.dispatch_chat_timeout_seconds),
+            deadline_at=time.monotonic() + remaining_timeout(config.chat_timeout_seconds),
         )
         context.memory_session = self._memory_session(context)
         if context.operation_store is not None:

@@ -31,7 +31,7 @@ def run(
             raw_directory = arguments.directory
             if raw_directory is None:
                 config = SettingsStore(params).load().config
-                raw_directory = config.dispatch_chat_local_workflow_directory
+                raw_directory = config.chat_local_workflow_directory
             if raw_directory is None:
                 raise ValueError("workflow directory is not configured")
             definitions = WorkflowCatalogImporter().scan(Path(raw_directory))
@@ -63,7 +63,7 @@ def run(
 def _build_parser() -> argparse.ArgumentParser:
     """构造工作流离线命令参数。"""
 
-    parser = argparse.ArgumentParser(prog="dispatch-chat workflows")
+    parser = argparse.ArgumentParser(prog="chat workflows")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("migrate")
     sync_parser = commands.add_parser("sync")

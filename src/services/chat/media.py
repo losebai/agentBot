@@ -16,7 +16,7 @@ from agent_bot.services.chat.request_control import ChatRequestCoordinator
 from agent_bot.state import ConversationStoreProtocol
 
 if TYPE_CHECKING:
-    from agent_bot.model_guard import ModelGuard
+    from agent_bot.ai.routing import RoutedModelGuard
 
 
 class ChatMediaGenerator:
@@ -30,7 +30,7 @@ class ChatMediaGenerator:
         prompt_builder: ChatPromptBuilder,
         request_coordinator: ChatRequestCoordinator,
         model_router: ContentModelRouter,
-        model_guard: ModelGuard | None,
+        model_guard: RoutedModelGuard | None,
     ) -> None:
         """初始化媒体生成依赖。"""
 
@@ -60,7 +60,7 @@ class ChatMediaGenerator:
         consume_cooldown: bool,
         request_id: str | None,
     ) -> ChatMediaResponse:
-        """构建媒体请求并返回 dispatch-ai 的类型化响应。"""
+        """构建媒体请求并返回本地服务的类型化响应。"""
 
         normalized = self._prompt_builder.normalize(prompt)
         current_prompt = (
@@ -94,12 +94,12 @@ class ChatMediaGenerator:
             )
             model_id = self._model_router.model_for(category)
             if self._model_guard is not None:
-                # Python 媒体与普通文本可选不同后端，预检必须跟随实际路由。
+                # 媒体预检按输出类型检查模型能力。
                 from agent_bot.ai.routing import RoutedModelGuard
 
                 if isinstance(self._model_guard, RoutedModelGuard):
                     route = self._client.media_route(output_type)
-                    capability = route.capability if route.backend == "python" else "java"
+                    capability = route.capability
                     await self._model_guard.ensure_enabled(model_id, capability=capability)
                 else:
                     await self._model_guard.ensure_enabled(model_id)

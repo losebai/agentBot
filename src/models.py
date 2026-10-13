@@ -1,13 +1,9 @@
 """聊天网关的类型化数据模型。"""
 
-import re
 import unicodedata
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from agent_bot.media_artifacts import ImageArtifact
-from agent_bot.multimodal import validate_image_reference, validate_qq_video_url
 
 ChatToolName = Literal[
     "soloncode",
@@ -78,7 +74,7 @@ class AiJobResultsResponse(BaseModel):
 
 
 class ChatMessage(BaseModel):
-    """发送给 dispatch-ai 的单条聊天消息。"""
+    """本地 AI 服务使用的单条聊天消息。"""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
@@ -88,48 +84,6 @@ class ChatMessage(BaseModel):
         pattern=r"^[^\s\x00-\x1f\x7f]+$", exclude_if=lambda value: value is None,
     )
     content: str = Field(min_length=1)
-
-
-class DispatchAiInputContent(BaseModel):
-    """Responses 风格的单个输入内容块。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    type: Literal["input_text", "input_image"]
-    text: str | None = Field(default=None, min_length=1)
-    image_url: str | None = Field(default=None, repr=False)
-
-    @field_validator("image_url")
-    @classmethod
-    def validate_image_url(cls, value: str | None) -> str | None:
-        """规范化非空图片引用。"""
-
-        return None if value is None else validate_image_reference(value)
-
-    @model_validator(mode="after")
-    def validate_content(self) -> "DispatchAiInputContent":
-        """确保内容块只携带其类型对应的字段。"""
-
-        if self.type == "input_text":
-            if self.text is None or self.image_url is not None:
-                raise ValueError("input_text requires only text")
-            return self
-        if self.image_url is None or self.text is not None:
-            raise ValueError("input_image requires only image_url")
-        return self
-
-
-class DispatchAiInputMessage(BaseModel):
-    """Responses 风格的类型化输入消息。"""
-
-    model_config = ConfigDict(frozen=True, populate_by_name=True)
-
-    role: Literal["system", "user", "assistant"]
-    history_request_id: str | None = Field(
-        default=None, alias="historyRequestId", min_length=1, max_length=128,
-        pattern=r"^[^\s\x00-\x1f\x7f]+$", exclude_if=lambda value: value is None,
-    )
-    content: tuple[DispatchAiInputContent, ...] = Field(min_length=1, max_length=9)
 
 
 class ChatContext(BaseModel):
@@ -237,7 +191,7 @@ class LlmRequestOptions(BaseModel):
 
 
 class AutoSpeakDecisionRequest(BaseModel):
-    """发送给 dispatch-ai 的有界自由发言决策请求。"""
+    """本地自动发言决策使用的有界请求。"""
 
     model_config = ConfigDict(
         frozen=True,
@@ -265,7 +219,7 @@ class AutoSpeakDecisionRequest(BaseModel):
 
 
 class AutoSpeakDecisionResponse(BaseModel):
-    """dispatch-ai 返回的固定 Laya choice 结果。"""
+    """已登记 MCP 决策工具返回的固定 choice 结果。"""
 
     model_config = ConfigDict(
         frozen=True,
@@ -279,136 +233,8 @@ class AutoSpeakDecisionResponse(BaseModel):
     model: Literal["multilingual"]
 
 
-class AutoSpeakDecisionResult(BaseModel):
-    """Solon Result 包装的自由发言决策。"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
-
-    code: int
-    description: str | None = None
-    data: AutoSpeakDecisionResponse | None = None
-
-
-class DispatchAiRequest(LlmRequestOptions):
-    """dispatch-ai 同步聊天或 Agent 请求实体。"""
-
-    model_config = ConfigDict(populate_by_name=True)
-    request_timeout_millis: int | None = Field(
-        default=None, alias="requestTimeoutMillis", ge=1, le=300_000
-    )
-
-    prompt: str
-    session_id: str = Field(alias="sessionId")
-    model: str
-    request_id: str = Field(alias="requestsId")
-    messages: list[ChatMessage] | None = None
-    input: list[DispatchAiInputMessage] | None = None
-    user: str | None = Field(default=None, min_length=1, max_length=128)
-    chat_context: ChatContext | None = Field(
-        default=None,
-        alias="chatContext",
-        repr=False,
-    )
-    tools: tuple[AgentToolName, ...] | None = None
-    laya_decision: bool | None = Field(default=None, alias="layaDecision")
-    mcp_services: tuple[str, ...] | None = Field(
-        default=None, alias="mcpServices", max_length=3,
-    )
-    tool_session_token: str | None = Field(
-        default=None,
-        alias="toolSessionToken",
-        min_length=32,
-        max_length=256,
-        pattern=r"^[A-Za-z0-9_-]+$",
-        repr=False,
-    )
-    max_steps: int | None = Field(default=None, alias="maxSteps", ge=1, le=5)
-    video_urls: tuple[str, ...] | None = Field(
-        default=None,
-        alias="videoUrls",
-        min_length=1,
-        max_length=2,
-    )
-
-    @field_validator("user")
-    @classmethod
-    def validate_user_metadata(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not value.strip() or any(
-            unicodedata.category(character) in {"Cc", "Cs"} for character in value
-        ):
-            raise ValueError("user contains unsupported control characters")
-        return value
-
-    @field_validator("video_urls")
-    @classmethod
-    def validate_video_urls(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
-        if value is None:
-            return None
-        return tuple(validate_qq_video_url(item) for item in value)
-
-    @field_validator("mcp_services")
-    @classmethod
-    def validate_mcp_services(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
-        """请求只携带稳定服务 code，禁止端点和重复项。"""
-
-        if value is None:
-            return None
-        if (
-            any(not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,99}", item) for item in value)
-            or len(set(value)) != len(value)
-        ):
-            raise ValueError("mcpServices contains invalid or duplicate codes")
-        return value
-
-    @model_validator(mode="after")
-    def validate_tool_contract(self) -> "DispatchAiRequest":
-        if (self.messages is None) == (self.input is None):
-            raise ValueError("exactly one of messages or input is required")
-        tools = self.tools or ()
-        if len(set(tools)) != len(tools):
-            raise ValueError("tools cannot contain duplicates")
-        chat_tools = tuple(tool for tool in tools if tool not in {"web_search", "read_url"})
-        if self.laya_decision:
-            if tools or self.mcp_services != ("laya",) or not self.tool_session_token:
-                raise ValueError("Laya decision requires only Laya and an authorized tool session")
-            return self
-        if bool(chat_tools) != bool(self.tool_session_token):
-            raise ValueError("chat tools and tool session token must be provided together")
-        if self.mcp_services and "laya" in self.mcp_services and not chat_tools:
-            raise ValueError("Laya requires an authorized Chat tool session")
-        return self
-
-
-class DispatchAiSession(BaseModel):
-    """dispatch-ai 返回的会话数据中，本模组关心的字段。"""
-
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
-
-    replay_context: str = Field(alias="replayContext")
-    images: tuple[ImageArtifact, ...] = Field(default_factory=tuple, max_length=4)
-
-    @field_validator("images", mode="before")
-    @classmethod
-    def normalize_images(cls, value: object) -> object:
-        """兼容没有附件的旧响应及 Java 可空字段。"""
-        return () if value is None else value
-
-
-
-class DispatchAiResult(BaseModel):
-    """Solon Result 包装器的兼容模型。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    code: int
-    description: str | None = None
-    data: DispatchAiSession | None = None
-
-
 class ChatMediaRequest(BaseModel):
-    """发送给 dispatch-ai 的单次媒体生成请求。"""
+    """本地媒体服务使用的单次生成请求。"""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
     request_timeout_millis: int | None = Field(
@@ -453,7 +279,7 @@ class ChatMediaRequest(BaseModel):
 
 
 class ChatMediaItem(BaseModel):
-    """dispatch-ai 返回的唯一 Base64 媒体项。"""
+    """经过校验的唯一 Base64 媒体项。"""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
 
@@ -463,53 +289,9 @@ class ChatMediaItem(BaseModel):
 
 
 class ChatMediaResponse(BaseModel):
-    """dispatch-ai 媒体响应数据。"""
+    """本地媒体响应数据。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     text: str | None = Field(default=None, max_length=65_536)
     items: tuple[ChatMediaItem, ...] = Field(min_length=1, max_length=1)
-
-
-class ChatMediaResult(BaseModel):
-    """Solon 媒体 Result 包装器。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    code: int
-    description: str | None = None
-    data: ChatMediaResponse | None = None
-
-
-class AgentChatDelta(BaseModel):
-    """dispatch-ai Agent SSE 事件中的增量数据。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    type: AgentEventType
-    content: str | None = None
-    images: tuple[ImageArtifact, ...] = Field(default_factory=tuple, max_length=4)
-
-    @field_validator("images", mode="before")
-    @classmethod
-    def normalize_images(cls, value: object) -> object:
-        """兼容没有附件的旧响应及 Java 可空字段。"""
-        return () if value is None else value
-
-
-
-class AgentChatChoice(BaseModel):
-    """dispatch-ai Agent SSE 事件中的单个候选结果。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    index: int
-    delta: AgentChatDelta
-
-
-class AgentChatChunk(BaseModel):
-    """dispatch-ai `/chat/agentChat` 返回的类型化 SSE 数据块。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    choices: list[AgentChatChoice] = Field(min_length=1, max_length=16)

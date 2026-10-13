@@ -10,7 +10,13 @@ coverage.xml
 !/.env.example
 .superpowers/
 dist/
+dist-ci/
+reports/
+.uv-cache/
+.npm/
+deploy/runtime.env
+deploy/release.env
 web/node_modules/
-src/agent_bot/static/
+src/static/assets/
 *.log
 .idea

@@ -13,12 +13,12 @@ from typing import Any
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment
 from nonebot.adapters.onebot.v11.exception import ActionFailed, ApiNotAvailable, NetworkError
 
-from agent_bot.config import RuntimeConfig
-from agent_bot.integrations.dispatch_ai import (
-    DispatchAiProtocolError,
-    DispatchAiRejectedError,
-    DispatchAiUnavailableError,
+from agent_bot.ai.chat_errors import (
+    ChatAiProtocolError,
+    ChatAiRejectedError,
+    ChatAiUnavailableError,
 )
+from agent_bot.config import RuntimeConfig
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway
 from agent_bot.integrations.workflow_store import WorkflowNotFoundError
 from agent_bot.model_guard import ModelGuardUnavailableError, ModelNotAvailableError
@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 _SILENT_FAILURES = (
     ChatRateLimitedError, ChatBusyError, ConversationQueueFullError, ConversationJobExpiredError,
-    DispatchAiUnavailableError, DispatchAiRejectedError, DispatchAiProtocolError,
+    ChatAiUnavailableError, ChatAiRejectedError, ChatAiProtocolError,
     ModelNotAvailableError,
 )
 
@@ -66,7 +66,7 @@ def generated_reply_from_model(text: str, request_id: str) -> GeneratedReply:
 
     normalized = text.strip()
     if not normalized:
-        raise DispatchAiProtocolError("model reply is empty")
+        raise ChatAiProtocolError("model reply is empty")
     return GeneratedReply(text=normalized, requestId=request_id)
 
 
@@ -105,7 +105,7 @@ class ConversationQueueProcessor:
         """返回队列编排层允许按策略重试的业务与 OneBot 异常。"""
 
         return (
-            DispatchAiUnavailableError,
+            ChatAiUnavailableError,
             ModelGuardUnavailableError,
             ConnectionError,
             TimeoutError,
@@ -135,7 +135,7 @@ class ConversationQueueProcessor:
                     kind="TEXT", reply=job.ai_job_reply,
                     deliveryParts=tuple(split_reply(
                         job.ai_job_reply.text,
-                        chunk_chars=self._config_provider().dispatch_chat_chunk_chars,
+                        chunk_chars=self._config_provider().chat_chunk_chars,
                         max_reply_chars=len(job.ai_job_reply.text),
                     )),
                 )
@@ -244,7 +244,7 @@ class ConversationQueueProcessor:
                 audio = collected_speech.audio
                 if audio is None:
                     if speech is None:
-                        raise DispatchAiProtocolError("tts audio artifact is missing")
+                        raise ChatAiProtocolError("tts audio artifact is missing")
                     audio = await asyncio.to_thread(speech.path.read_bytes)
                 if (
                     (speech is not None and (
@@ -255,7 +255,7 @@ class ConversationQueueProcessor:
                     or not audio.startswith(b"RIFF")
                     or audio[8:12] != b"WAVE"
                 ):
-                    raise DispatchAiProtocolError("tts audio artifact is invalid")
+                    raise ChatAiProtocolError("tts audio artifact is invalid")
                 return ConversationResult(
                     kind="MEDIA",
                     media=ChatMediaResponse(
@@ -271,16 +271,16 @@ class ConversationQueueProcessor:
                 )
 
             config = self._config_provider()
-            max_reply_chars = self._reply_limit(job, config.dispatch_chat_max_reply_chars)
+            max_reply_chars = self._reply_limit(job, config.chat_max_reply_chars)
             if job.laya_decision:
                 if answer is None:
-                    raise DispatchAiProtocolError("Laya decision report is empty")
+                    raise ChatAiProtocolError("Laya decision report is empty")
                 generated = generated_reply_from_model(answer, job.request_id)
                 return ConversationResult(
                     kind="TEXT",
                     reply=PersistedGeneratedReply.model_validate(generated.model_dump(by_alias=True)),
                     deliveryParts=tuple(split_reply(
-                        generated.text, chunk_chars=config.dispatch_chat_chunk_chars,
+                        generated.text, chunk_chars=config.chat_chunk_chars,
                         max_reply_chars=len(generated.text),
                     )),
                 )
@@ -307,7 +307,7 @@ class ConversationQueueProcessor:
                         ),
                     )
             if answer is None:
-                raise DispatchAiProtocolError("model reply is empty")
+                raise ChatAiProtocolError("model reply is empty")
             generated = generated_reply_from_model(
                 answer.strip()[:max_reply_chars], job.request_id,
             )
@@ -315,7 +315,7 @@ class ConversationQueueProcessor:
             parts = tuple(
                 split_reply(
                     generated.text,
-                    chunk_chars=config.dispatch_chat_chunk_chars,
+                    chunk_chars=config.chat_chunk_chars,
                     max_reply_chars=max_reply_chars,
                 )
             )
@@ -329,7 +329,7 @@ class ConversationQueueProcessor:
 
         if (
             workflow_request is None
-            and not self._config_provider().dispatch_chat_image_generation_enabled
+            and not self._config_provider().chat_image_generation_enabled
         ):
             raise RuntimeError("image generation is unavailable")
         if workflow_request is not None and start_reply is None:
@@ -356,7 +356,7 @@ class ConversationQueueProcessor:
                 job.job_id, "image_start_reply",
             )
             if not isinstance(saved, ReplyEffect):
-                raise DispatchAiProtocolError("image start reply is missing")
+                raise ChatAiProtocolError("image start reply is missing")
             reply = PersistedGeneratedReply(text=saved.text, requestId=job.request_id)
         return ConversationResult(kind="IMAGE_QUEUED", reply=reply, deliveryParts=(reply.text,))
 
@@ -367,7 +367,7 @@ class ConversationQueueProcessor:
         if request is None:
             raise ValueError("workflow request is missing")
         service = self._workflow_service_provider()
-        if service is None or not self._config_provider().dispatch_chat_local_workflow_enabled:
+        if service is None or not self._config_provider().chat_local_workflow_enabled:
             raise RuntimeError("background workflow is unavailable")
         store = self._operation_store_provider()
         signature = hashlib.sha256(
@@ -395,7 +395,7 @@ class ConversationQueueProcessor:
             )
             await store.complete(job.job_id, "local_workflow_generate_image", signature, saved)
         if not isinstance(saved, ImageEffect):
-            raise DispatchAiProtocolError("background workflow result is invalid")
+            raise ChatAiProtocolError("background workflow result is invalid")
         return ConversationResult(kind="WORKFLOW_IMAGES", workflowImages=(WorkflowImageArtifact(
             mimeType=saved.media_type, data=saved.data,
         ),))
@@ -418,7 +418,7 @@ class ConversationQueueProcessor:
             )
         config = self._config_provider()
         reply = generated_reply_from_model(
-            answer[:min(config.dispatch_chat_max_reply_chars, 4000)], job.request_id,
+            answer[:min(config.chat_max_reply_chars, 4000)], job.request_id,
         )
         await self._reply_gateway.send_bot_exact_part(
             self._bot_provider(job.bot_id), scene=job.scene,
@@ -445,11 +445,11 @@ class ConversationQueueProcessor:
                 ))
                 if reply is None:
                     return
-                limit = min(self._config_provider().dispatch_chat_max_reply_chars, 4000)
+                limit = min(self._config_provider().chat_max_reply_chars, 4000)
                 saved = ReplyEffect(text=reply.text[:limit])
             await store.complete(job.job_id, "image_completion_reply", signature, saved)
         if not isinstance(saved, ReplyEffect):
-            raise DispatchAiProtocolError("image completion reply is invalid")
+            raise ChatAiProtocolError("image completion reply is invalid")
         if (execution := active_image_task.get()) is not None:
             await execution.check_cancelled()
         await self._reply_gateway.send_bot_exact_part(
@@ -497,23 +497,23 @@ class ConversationQueueProcessor:
 
         config = self._config_provider()
         if job.media_output == "IMAGE":
-            if not config.dispatch_chat_image_generation_enabled:
+            if not config.chat_image_generation_enabled:
                 raise RuntimeError("image generation was disabled after enqueue")
             if not job.background_image:
                 await self._send_image_start(job)
-            timeout_seconds = config.dispatch_chat_image_timeout_seconds
-            max_bytes = config.dispatch_chat_image_max_bytes
-            image_format = config.dispatch_chat_image_response_format
+            timeout_seconds = config.chat_image_timeout_seconds
+            max_bytes = config.chat_image_max_bytes
+            image_format = config.chat_image_response_format
             voice = None
             audio_format = None
         else:
-            if not config.dispatch_chat_tts_enabled:
+            if not config.chat_tts_enabled:
                 raise RuntimeError("audio generation was disabled after enqueue")
-            timeout_seconds = config.dispatch_chat_tts_timeout_seconds
-            max_bytes = config.dispatch_chat_tts_max_audio_bytes
+            timeout_seconds = config.chat_tts_timeout_seconds
+            max_bytes = config.chat_tts_max_audio_bytes
             image_format = None
-            voice = config.dispatch_chat_tts_voice
-            audio_format = config.dispatch_chat_tts_response_format
+            voice = config.chat_tts_voice
+            audio_format = config.chat_tts_response_format
         return await self._chat_service_provider().generate_media_queued(
             f"image:{job.job_id}" if job.background_image else job.session_id,
             job.prompt,
@@ -560,16 +560,16 @@ class ConversationQueueProcessor:
         if job.ai_job_id is not None:
             config = self._config_provider()
             policy = AccessPolicy(
-                allowed_users=config.dispatch_chat_allowed_users,
-                allowed_groups=config.dispatch_chat_allowed_groups,
-                blocked_users=config.dispatch_chat_blocked_users,
-                blocked_groups=config.dispatch_chat_blocked_groups,
-                allow_all=config.dispatch_chat_allow_all,
+                allowed_users=config.chat_allowed_users,
+                allowed_groups=config.chat_allowed_groups,
+                blocked_users=config.chat_blocked_users,
+                blocked_groups=config.chat_blocked_groups,
+                allow_all=config.chat_allow_all,
             )
-            if not config.dispatch_chat_job_enabled or not policy.allows(
+            if not config.chat_job_enabled or not policy.allows(
                 user_id=job.user_id, group_id=job.group_id,
             ):
-                raise DispatchAiRejectedError("AI job delivery is disabled for this target")
+                raise ChatAiRejectedError("AI job delivery is disabled for this target")
         if (execution := active_image_task.get()) is not None:
             await execution.check_cancelled()
         if index < 0:

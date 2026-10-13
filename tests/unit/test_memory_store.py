@@ -22,7 +22,7 @@ from agent_bot.settings import DatabaseParams
 from agent_bot.state import ConversationStore, external_session_id
 
 _EXPECTED_SCHEMA = {
-    "dispatch_chat_memory_session": {
+    "chat_memory_session": {
         "columns": {
             "session_id",
             "generation_id",
@@ -33,9 +33,9 @@ _EXPECTED_SCHEMA = {
             "create_time",
             "update_time",
         },
-        "indexes": {"PRIMARY", "idx_dispatch_chat_memory_session_expires"},
+        "indexes": {"PRIMARY", "idx_chat_memory_session_expires"},
     },
-    "dispatch_chat_memory_turn": {
+    "chat_memory_turn": {
         "columns": {
             "id",
             "session_id",
@@ -44,14 +44,14 @@ _EXPECTED_SCHEMA = {
             "assistant_content",
             "create_time",
         },
-        "indexes": {"PRIMARY", "idx_dispatch_chat_memory_turn_session_id",
-                    "uk_dispatch_chat_memory_turn_request"},
+        "indexes": {"PRIMARY", "idx_chat_memory_turn_session_id",
+                    "uk_chat_memory_turn_request"},
     },
-    "dispatch_chat_memory_receipt": {
+    "chat_memory_receipt": {
         "columns": {"session_id", "request_id", "expires_at"},
-        "indexes": {"PRIMARY", "idx_dispatch_chat_memory_receipt_expires"},
+        "indexes": {"PRIMARY", "idx_chat_memory_receipt_expires"},
     },
-    "dispatch_chat_group_context": {
+    "chat_group_context": {
         "columns": {
             "scope_id",
             "messages_json",
@@ -59,7 +59,7 @@ _EXPECTED_SCHEMA = {
             "create_time",
             "update_time",
         },
-        "indexes": {"PRIMARY", "idx_dispatch_chat_group_context_expires"},
+        "indexes": {"PRIMARY", "idx_chat_group_context_expires"},
     },
 }
 
@@ -75,8 +75,8 @@ class _SchemaCursor:
                        for name, definition in _EXPECTED_SCHEMA.items()}
         self.foreign_keys = {
             (
-                "dispatch_chat_memory_turn",
-                "fk_dispatch_chat_memory_turn_session",
+                "chat_memory_turn",
+                "fk_chat_memory_turn_session",
             )
         }
         self.dropped_foreign_keys: list[tuple[str, str]] = []
@@ -106,17 +106,24 @@ class _SchemaCursor:
             self.foreign_keys.remove(dropped)
             self.dropped_foreign_keys.append(dropped)
             self._rows = []
+        elif normalized.startswith("ALTER TABLE") and "RENAME INDEX" in normalized:
+            identifiers = normalized.split("`")
+            table, old, new = identifiers[1], identifiers[3], identifiers[5]
+            self.schema[table]["indexes"].remove(old)
+            self.schema[table]["indexes"].add(new)
+            self.upgrades.append(normalized)
+            self._rows = []
         elif normalized.startswith("ALTER TABLE") and "ADD COLUMN `request_id`" in normalized:
             self.upgrades.append(normalized)
-            self.schema["dispatch_chat_memory_turn"]["columns"].add("request_id")
+            self.schema["chat_memory_turn"]["columns"].add("request_id")
         elif normalized.startswith("ALTER TABLE") and "ADD UNIQUE KEY" in normalized:
             self.upgrades.append(normalized)
-            self.schema["dispatch_chat_memory_turn"]["indexes"].add(
-                "uk_dispatch_chat_memory_turn_request"
+            self.schema["chat_memory_turn"]["indexes"].add(
+                "uk_chat_memory_turn_request"
             )
         elif normalized.startswith("ALTER TABLE") and "ADD COLUMN `generation_id`" in normalized:
             self.upgrades.append(normalized)
-            self.schema["dispatch_chat_memory_session"]["columns"].add("generation_id")
+            self.schema["chat_memory_session"]["columns"].add("generation_id")
             self.generation_nullable = True
         elif normalized.startswith("UPDATE") and "SET generation_id = REPLACE(UUID()" in normalized:
             for index, row in enumerate(self.legacy_sessions, start=1):
@@ -226,7 +233,7 @@ def memory_database(tmp_path: Path) -> Callable[..., Any]:
     connection.executescript(
         """
         PRAGMA foreign_keys = ON;
-        CREATE TABLE dispatch_chat_memory_session (
+        CREATE TABLE chat_memory_session (
             session_id TEXT PRIMARY KEY,
             generation_id TEXT NOT NULL,
             memory_summary TEXT NOT NULL DEFAULT '',
@@ -236,7 +243,7 @@ def memory_database(tmp_path: Path) -> Callable[..., Any]:
             create_time TEXT NOT NULL,
             update_time TEXT NOT NULL
         );
-        CREATE TABLE dispatch_chat_memory_turn (
+        CREATE TABLE chat_memory_turn (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT NOT NULL,
             request_id TEXT NULL,
@@ -244,17 +251,17 @@ def memory_database(tmp_path: Path) -> Callable[..., Any]:
             assistant_content TEXT NOT NULL,
             create_time TEXT NOT NULL
         );
-        CREATE INDEX idx_dispatch_chat_memory_turn_session_id
-            ON dispatch_chat_memory_turn(session_id, id);
-        CREATE UNIQUE INDEX uk_dispatch_chat_memory_turn_request
-            ON dispatch_chat_memory_turn(session_id, request_id);
-        CREATE TABLE dispatch_chat_memory_receipt (
+        CREATE INDEX idx_chat_memory_turn_session_id
+            ON chat_memory_turn(session_id, id);
+        CREATE UNIQUE INDEX uk_chat_memory_turn_request
+            ON chat_memory_turn(session_id, request_id);
+        CREATE TABLE chat_memory_receipt (
             session_id TEXT NOT NULL,
             request_id TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             PRIMARY KEY (session_id, request_id)
         );
-        CREATE TABLE dispatch_chat_group_context (
+        CREATE TABLE chat_group_context (
             scope_id TEXT PRIMARY KEY,
             messages_json TEXT NOT NULL,
             expires_at TEXT NOT NULL,
@@ -311,10 +318,10 @@ def test_memory_schema_creates_and_validates_all_tables() -> None:
     schema.initialize()
 
     assert connection.cursor_instance.created_tables == [
-        "dispatch_chat_memory_session",
-        "dispatch_chat_memory_turn",
-        "dispatch_chat_memory_receipt",
-        "dispatch_chat_group_context",
+        "chat_memory_session",
+        "chat_memory_turn",
+        "chat_memory_receipt",
+        "chat_group_context",
     ]
     assert all(
         "FOREIGN KEY" not in statement
@@ -322,21 +329,75 @@ def test_memory_schema_creates_and_validates_all_tables() -> None:
     )
     assert connection.cursor_instance.dropped_foreign_keys == [
         (
-            "dispatch_chat_memory_turn",
-            "fk_dispatch_chat_memory_turn_session",
+            "chat_memory_turn",
+            "fk_chat_memory_turn_session",
         )
     ]
     assert connection.cursor_instance.foreign_keys == set()
     assert connection.committed is True
 
 
+def test_memory_schema_renames_legacy_indexes_without_duplicating_constraints() -> None:
+    """改表名遗留的 dispatch 索引原位升级，多次启动不会重建索引或丢失历史。"""
+    connection = _SchemaConnection()
+    cursor = connection.cursor_instance
+    for definition in cursor.schema.values():
+        definition["indexes"] = {
+            name.replace("idx_chat_", "idx_dispatch_chat_")
+                .replace("uk_chat_", "uk_dispatch_chat_")
+            for name in definition["indexes"]
+        }
+    cursor.legacy_sessions = [{"session_id": "keep", "memory_summary": "保留历史"}]
+    schema = ChatMemorySchema(
+        DatabaseParams(host="localhost", port=3306, user="test", password="test", database="test"),
+        connect=lambda **kwargs: connection,
+    )
+    schema.initialize()
+    schema.initialize()
+    assert len(cursor.upgrades) == 5
+    assert all("RENAME INDEX" in operation for operation in cursor.upgrades)
+    assert cursor.legacy_sessions == [{"session_id": "keep", "memory_summary": "保留历史"}]
+
+
+def test_existing_current_index_does_not_conflict_with_legacy_duplicate() -> None:
+    """当前幂等索引已存在时，不把旧重复索引改成同名索引。"""
+    connection = _SchemaConnection()
+    connection.cursor_instance.schema["chat_memory_turn"]["indexes"].add(
+        "uk_dispatch_chat_memory_turn_request"
+    )
+    schema = ChatMemorySchema(
+        DatabaseParams(host="localhost", port=3306, user="test", password="test", database="test"),
+        connect=lambda **kwargs: connection,
+    )
+    schema.initialize()
+    assert connection.cursor_instance.upgrades == []
+
+
+@pytest.mark.parametrize("kind,name", [
+    ("columns", "memory_summary"), ("indexes", "idx_chat_memory_session_expires"),
+])
+def test_schema_error_identifies_missing_structure(kind: str, name: str) -> None:
+    """无法迁移的结构问题只公开表、字段和索引名，便于定位启动失败。"""
+    connection = _SchemaConnection()
+    connection.cursor_instance.schema["chat_memory_session"][kind].remove(name)
+    schema = ChatMemorySchema(
+        DatabaseParams(host="localhost", port=3306, user="test", password="hidden-db-key", database="test"),
+        connect=lambda **kwargs: connection,
+    )
+    with pytest.raises(ChatMemorySchemaError) as caught:
+        schema.initialize()
+    assert "chat_memory_session" in str(caught.value)
+    assert name in str(caught.value)
+    assert "hidden-db-key" not in str(caught.value)
+
+
 def test_memory_schema_upgrades_old_turns_with_nullable_request_id() -> None:
     """兼容升级仅添加可空列和唯一键，多条旧 NULL 记录仍合法。"""
     connection = _SchemaConnection()
     cursor = connection.cursor_instance
-    cursor.schema["dispatch_chat_memory_turn"]["columns"].remove("request_id")
-    cursor.schema["dispatch_chat_memory_turn"]["indexes"].remove(
-        "uk_dispatch_chat_memory_turn_request"
+    cursor.schema["chat_memory_turn"]["columns"].remove("request_id")
+    cursor.schema["chat_memory_turn"]["indexes"].remove(
+        "uk_chat_memory_turn_request"
     )
     schema = ChatMemorySchema(
         DatabaseParams(host="localhost", port=3306, user="test", password="test", database="test"),
@@ -363,7 +424,7 @@ def test_schema_generation_upgrade_preserves_legacy_memory_and_existing_identity
     if interrupted:
         cursor.generation_nullable = True
     else:
-        cursor.schema["dispatch_chat_memory_session"]["columns"].remove("generation_id")
+        cursor.schema["chat_memory_session"]["columns"].remove("generation_id")
     schema = ChatMemorySchema(
         DatabaseParams(host="localhost", port=3306, user="test", password="test", database="test"),
         connect=lambda **kwargs: connection,
@@ -446,7 +507,7 @@ def test_failed_turn_insert_rolls_back_request_receipt(memory_database, monkeypa
     def fail_turn_once(self, sql, parameters=()):
         """在同一真实 SQLite 事务中模拟一次轮次写入错误。"""
         nonlocal failed
-        if "INSERT" in sql and "`dispatch_chat_memory_turn`" in sql and not failed:
+        if "INSERT" in sql and "`chat_memory_turn`" in sql and not failed:
             failed = True
             raise OperationalError("turn insert failed")
         return execute(self, sql, parameters)
@@ -591,7 +652,7 @@ def test_conversation_expiry_explicitly_deletes_turns_without_foreign_key(
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT id FROM dispatch_chat_memory_turn WHERE session_id = %s",
+                "SELECT id FROM chat_memory_turn WHERE session_id = %s",
                 ("qq_session",),
             )
             assert cursor.fetchall() == []
@@ -613,7 +674,7 @@ def test_conversation_clear_explicitly_deletes_turns_without_foreign_key(
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT id FROM dispatch_chat_memory_turn WHERE session_id = %s",
+                "SELECT id FROM chat_memory_turn WHERE session_id = %s",
                 ("qq_session",),
             )
             assert cursor.fetchall() == []
@@ -635,7 +696,7 @@ def test_expired_cleanup_explicitly_deletes_turns_without_foreign_key(
     try:
         with connection.cursor() as cursor:
             cursor.execute(
-                "SELECT id FROM dispatch_chat_memory_turn WHERE session_id = %s",
+                "SELECT id FROM chat_memory_turn WHERE session_id = %s",
                 ("qq_session",),
             )
             assert cursor.fetchall() == []
@@ -713,7 +774,7 @@ def test_group_context_survives_reconstruction_and_hides_scope_ids(
     connection = memory_database()
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT scope_id FROM dispatch_chat_group_context")
+            cursor.execute("SELECT scope_id FROM chat_group_context")
             scope_id = cursor.fetchone()["scope_id"]
     finally:
         connection.close()
@@ -747,7 +808,7 @@ def test_group_context_rejects_corrupted_json(memory_database) -> None:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO dispatch_chat_group_context (
+                INSERT INTO chat_group_context (
                     scope_id, messages_json, expires_at, create_time, update_time
                 ) VALUES (%s, %s, %s, %s, %s)
                 """,
@@ -779,7 +840,7 @@ def test_group_context_rejects_non_string_sender_id_in_persisted_json(
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO dispatch_chat_group_context (
+                INSERT INTO chat_group_context (
                     scope_id, messages_json, expires_at, create_time, update_time
                 ) VALUES (%s, %s, %s, %s, %s)
                 """,

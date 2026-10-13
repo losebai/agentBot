@@ -51,7 +51,7 @@ class ChatCompressionQueue:
         if self._task is None or self._task.done():
             # 压缩拥有独立生命周期，不继承触发它的消息截止时间和请求上下文。
             self._task = contextvars.Context().run(
-                asyncio.create_task, self._run(), name="dispatch-chat-memory-compression",
+                asyncio.create_task, self._run(), name="chat-memory-compression",
             )
         return True
 

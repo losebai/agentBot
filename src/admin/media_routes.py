@@ -45,9 +45,7 @@ def install_media_routes(router: APIRouter, runtime) -> None:
     """路由继承管理 Bearer 验证，固定路径必须注册在媒体 ID 路径之前。"""
 
     def resources(*, generation=False):
-        """状态查询不触发初始化；生成只允许显式选择 Python 后端。"""
-        if generation and runtime.config.dispatch_chat_media_backend != "python":
-            raise MediaError("MEDIA_REQUIRES_PYTHON", status_code=409)
+        """媒体访问复用已初始化的进程资源，缺失时明确拒绝。"""
         value = getattr(runtime, "media_resources", None)
         if value is None:
             raise MediaError("MEDIA_NOT_INITIALIZED", status_code=503)
@@ -118,25 +116,25 @@ def install_media_routes(router: APIRouter, runtime) -> None:
                         int(
                             min(
                                 120,
-                                config.dispatch_chat_image_timeout_seconds
+                                config.chat_image_timeout_seconds
                                 if image
-                                else config.dispatch_chat_tts_timeout_seconds,
+                                else config.chat_tts_timeout_seconds,
                             )
                         ),
                     ),
                     max_bytes=min(
                         MAX_IMAGE_BYTES,
-                        config.dispatch_chat_image_max_bytes
+                        config.chat_image_max_bytes
                         if image
-                        else config.dispatch_chat_tts_max_audio_bytes,
+                        else config.chat_tts_max_audio_bytes,
                     ),
-                    image_format=(body.image_format or config.dispatch_chat_image_response_format)
+                    image_format=(body.image_format or config.chat_image_response_format)
                     if image
                     else None,
-                    voice=None if image else (body.voice or config.dispatch_chat_tts_voice),
+                    voice=None if image else (body.voice or config.chat_tts_voice),
                     audio_format=None
                     if image
-                    else (body.audio_format or config.dispatch_chat_tts_response_format),
+                    else (body.audio_format or config.chat_tts_response_format),
                 )
                 return await runtime.media_service.generate(
                     request_body, MediaOwner(entry="admin", session_id=session)

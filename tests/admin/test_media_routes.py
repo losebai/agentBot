@@ -70,9 +70,6 @@ async def media_api(
     )
     admin_runtime.media_service, admin_runtime.media_resources = service, resources
     admin_runtime.media_store = resources.store
-    admin_runtime.config = admin_runtime.config.model_copy(
-        update={"dispatch_chat_media_backend": "python"}
-    )
     app = FastAPI()
     install_admin(app, admin_store, admin_runtime, AdminConfig(token=TOKEN))
     async with httpx.AsyncClient(

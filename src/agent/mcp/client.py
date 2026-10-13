@@ -1,4 +1,4 @@
-"""Owned MCP tasks keep SDK task-group enter/exit in the same task on cancellation."""
+"""MCP 工作任务拥有 SDK 生命周期，取消时由同一任务完成资源释放。"""
 
 import asyncio
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -40,8 +40,11 @@ def classify(error):
 
 
 class McpWorker:
-    def __init__(self, server, secret, remaining):
+    """持有单个 MCP 服务连接和显式结果转换器。"""
+    def __init__(self, server, secret, remaining, result_converter=convert_result):
+        """每个工作任务拥有 SDK 生命周期；决策可显式使用严格结构化转换器。"""
         self.server, self.secret, self.remaining = server, secret, remaining
+        self.result_converter = result_converter
         self.queue = asyncio.Queue(maxsize=1)
         self.ready = asyncio.get_running_loop().create_future()
         self.task = asyncio.create_task(self._serve())
@@ -49,6 +52,7 @@ class McpWorker:
         self.write_stream = None
 
     async def _serve(self):
+        """在同一任务进入和退出 SDK，转换结果时不丢弃决策的结构化契约。"""
         current = None
         try:
 
@@ -97,7 +101,7 @@ class McpWorker:
                         call.arguments,
                         read_timeout_seconds=min(self.server.timeout_seconds, self.remaining()),
                     )
-                    value = convert_result(call, result)
+                    value = self.result_converter(call, result)
                     if not current.done():
                         current.set_result(value)
                     current = None
@@ -162,11 +166,13 @@ class McpConnection:
 
 
 class McpConnector:
+    """打开经过目录授权的 MCP 服务，并统一管理退出与取消。"""
     def __init__(self, credentials):
         self.credentials = credentials
 
     @asynccontextmanager
-    async def open(self, servers, *, remaining):
+    async def open(self, servers, *, remaining, result_converter=convert_result):
+        """普通工具仍返回受限文本，固定决策显式选择严格结构化解析。"""
         if len(servers) > 3:
             raise AgentError("AGENT_MCP_SERVICE_LIMIT", status_code=422)
         workers, warnings = [], []
@@ -176,7 +182,8 @@ class McpConnector:
                 if remaining() <= 0:
                     raise AgentError("AGENT_TIMEOUT", status_code=504)
                 worker = McpWorker(
-                    server, self.credentials.resolve(server.credential_ref), remaining
+                    server, self.credentials.resolve(server),
+                    remaining, result_converter,
                 )
                 workers.append(worker)
                 try:

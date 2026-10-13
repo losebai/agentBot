@@ -21,7 +21,8 @@ def agent_database():
         category TEXT, system_prompt TEXT, sample_prompt TEXT, tools TEXT, enabled INTEGER,
         revision INTEGER, created_at TEXT, updated_at TEXT);
     CREATE TABLE agent_bot_mcp(id INTEGER PRIMARY KEY, name TEXT, description TEXT,
-        code TEXT UNIQUE, category TEXT, transport TEXT, endpoint TEXT, credential_ref TEXT,
+        code TEXT UNIQUE, category TEXT, transport TEXT, endpoint TEXT,
+        credential TEXT, credential_required INTEGER NOT NULL DEFAULT 0,
         allowed_tools TEXT, search_tool TEXT, timeout_seconds INTEGER, required INTEGER,
         enabled INTEGER, revision INTEGER, created_at TEXT, updated_at TEXT);
     CREATE TABLE agent_bot_agent(id INTEGER PRIMARY KEY, name TEXT, description TEXT,

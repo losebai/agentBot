@@ -15,10 +15,17 @@ def check(path: Path) -> None:
             "agent_bot/ai/service.py",
             "agent_bot/admin/streaming.py",
             "agent_bot/resources/agent_bot_init.sql",
+            "agent_bot/resources/2026-10-13-dynamic-provider-mcp-credentials.sql",
             "agent_bot/resources/agent_bot_ai_init.sql",
             "agent_bot/resources/agent_bot_agent_init.sql",
             "agent_bot/resources/agent_bot_media_init.sql",
             "agent_bot/resources/2026-10-12-agentbot-schema-comments.sql",
+            "agent_bot/resources/2026-10-12-python-jobs-auto-speak.sql",
+            "agent_bot/jobs/service.py",
+            "agent_bot/jobs/store.py",
+            "agent_bot/jobs/tools.py",
+            "agent_bot/ai/auto_speak.py",
+            "agent_bot/ai/auto_speak_records.py",
             "agent_bot/media/service.py",
             "agent_bot/media/store.py",
             "agent_bot/admin/media_routes.py",
@@ -60,7 +67,10 @@ def check(path: Path) -> None:
         agent_sql = archive.read("agent_bot/resources/agent_bot_agent_init.sql").decode("utf-8")
         if re.search(r"\bDROP\b", agent_sql, flags=re.IGNORECASE):
             raise ValueError("agent initialization SQL contains destructive statements")
-        for name in ("agent_bot_media_init.sql", "2026-10-12-agentbot-schema-comments.sql"):
+        for name in (
+            "agent_bot_media_init.sql", "2026-10-12-agentbot-schema-comments.sql",
+            "2026-10-12-python-jobs-auto-speak.sql",
+        ):
             media_sql = archive.read(f"agent_bot/resources/{name}").decode("utf-8")
             if re.search(r"\b(DROP|TRUNCATE|DELETE\s+FROM)\b", media_sql, flags=re.IGNORECASE):
                 raise ValueError("media SQL contains destructive statements")

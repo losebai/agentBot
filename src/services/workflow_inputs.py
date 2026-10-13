@@ -18,7 +18,7 @@ class WorkflowInputImage(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
     filename: str = Field(pattern=r"^[a-f0-9]{64}\.(png|jpg|webp)$")
-    subfolder: str = Field(pattern=r"^dispatch-chat-i2i/[a-f0-9]{32}$")
+    subfolder: str = Field(pattern=r"^chat-i2i/[a-f0-9]{32}$")
     media_type: Literal["image/png", "image/jpeg", "image/webp"]
     size_bytes: int = Field(gt=0, le=10_485_760)
     sha256: str = Field(pattern=r"^[a-f0-9]{64}$")

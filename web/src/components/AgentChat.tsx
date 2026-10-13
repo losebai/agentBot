@@ -19,7 +19,7 @@ export function AgentChat({token}:{token:string}) {
   const controller=useRef<AbortController>(),mounted=useRef(true);
   const [maximumImages,setMaximumImages]=useState(4);
   // 数量显示跟随管理配置，硬限制仍由上传和服务端共同检查。
-  useEffect(()=>{let alive=true;api.settings().then(value=>{const count=value.fields?.find(f=>f.name==='dispatch_chat_max_images_per_message')?.value;if(alive&&typeof count==='number')setMaximumImages(Math.max(1,Math.min(8,count)));}).catch(()=>{});return()=>{alive=false;};},[api]);
+  useEffect(()=>{let alive=true;api.settings().then(value=>{const count=value.fields?.find(f=>f.name==='chat_max_images_per_message')?.value;if(alive&&typeof count==='number')setMaximumImages(Math.max(1,Math.min(8,count)));}).catch(()=>{});return()=>{alive=false;};},[api]);
   useEffect(()=>{mounted.current=true;api.listAgents().then(p=>{if(mounted.current){setAgents(p.items);setCursor(p.next_cursor);}}).catch(e=>{if(mounted.current)setError(errorMessage(e));});return()=>{mounted.current=false;controller.current?.abort();};},[api]);
   /** 分页补充可用 Agent。 */
   async function more(){try{const p=await api.listAgents(cursor!);if(mounted.current){setAgents([...agents,...p.items]);setCursor(p.next_cursor);}}catch(e){if(mounted.current)setError(errorMessage(e));}}

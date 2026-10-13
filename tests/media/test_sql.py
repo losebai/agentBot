@@ -66,7 +66,7 @@ def test_incremental_comments_do_not_redeclare_keys_or_change_column_types():
 
 
 def test_unified_initialization_preserves_owned_schema_and_orders_dependencies():
-    """只允许已声明的凭据和模型路由迁移，其他列与外键依赖仍须保留。"""
+    """只允许已声明的凭据、路由和工具负载迁移，其他列与依赖仍须保留。"""
     sql = (ROOT / "sql/agent_bot_init.sql").read_text("utf-8")
     tables = definitions(sql)
     baseline = json.loads(Path(__file__).with_name("schema_baseline.json").read_text("utf-8"))
@@ -94,6 +94,12 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
                     "REFERENCES agent_bot_ai_model(id),"
                     "CONSTRAINT fk_agent_fallback_model FOREIGN KEY(fallback_model_id)"
                     "REFERENCES agent_bot_ai_model(id)"
+                )
+            if name == "agent_bot_agent_step":
+                expected = expected.replace(
+                    "summary VARCHAR(1000)NOT NULL,",
+                    "summary VARCHAR(1000)NOT NULL,"
+                    "arguments JSON NULL DEFAULT NULL,result JSON NULL DEFAULT NULL,",
                 )
             assert actual == expected, name
     created = set()

@@ -74,6 +74,23 @@ it('调用详情中的执行步骤打开独立弹窗，关闭后保留调用正�
   expect(within(screen.getByRole('dialog', { name: '调用详情 #1' })).getByText('保存的回复')).toBeVisible();
 });
 
+it('调用详情直接显示工具入参和返回值，无需重新执行或打开另一个弹窗', async () => {
+  vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).includes('?')
+    ? { items: [record], next_cursor: null }
+    : { ...record, tool_steps: [
+      { execution_id: record.execution_id, sequence: 2, turn: 1, kind: 'tool_start', tool: 'lookup',
+        call_id: 'weather-1', status: 'started', duration_ms: 0, summary: '', arguments: { city: '上海' }, result: null },
+      { execution_id: record.execution_id, sequence: 3, turn: 1, kind: 'tool_result', tool: 'lookup',
+        call_id: 'weather-1', status: 'completed', duration_ms: 10, summary: '', arguments: { city: '上海' },
+        result: { content: '{"temperature":23}', is_error: false } },
+    ] })));
+  render(<CallRecords token="offline" />);
+  fireEvent.click(await screen.findByRole('button', { name: '查看详情' }));
+  await waitFor(() => expect(screen.getByText(/"city": "上海"/)).toBeVisible());
+  expect(screen.getByText(/"temperature": 23/)).toBeVisible();
+  expect(screen.getAllByRole('dialog')).toHaveLength(1);
+});
+
 /** 用真实卸载模拟父页面关闭详情，校验正文和步骤共用的取消边界。 */
 function PendingAgent() {
   const [open, setOpen] = useState(true);

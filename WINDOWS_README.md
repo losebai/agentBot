@@ -11,7 +11,8 @@
 
 1. 将程序解压到当前用户可写的目录，例如 `D:\Apps\AgentBot`。
 2. 复制 `.env.example` 为 `.env`，填写 OneBot Token、会话密钥和 Redis 配置。
-   默认 SQLite 无需 MySQL，Redis 仍需单独运行。管理员密码可留空直接进入。
+   未设置 `CHAT_DB_BACKEND` 时默认 SQLite，文件为 `data/agent_bot.sqlite3`，无需 MySQL。
+   MySQL 部署必须显式设置 `CHAT_DB_BACKEND=mysql`，Redis 仍需单独运行。管理员密码可留空直接进入。
 3. 在程序目录打开 PowerShell，显式初始化数据库和运行配置：
 
    ```powershell
@@ -32,6 +33,7 @@
 - 默认地址 `127.0.0.1:8080`，可在 `.env` 修改 `HOST`、`PORT`。端口冲突会明确失败，
   桌面窗口不会接管已经运行的其他服务。
 - 桌面后端日志位于 `logs/desktop-backend.log`，每次桌面启动覆盖上一份。
+  启动页会显示当前阶段；配置错误会直接显示缺失字段，等待超过 60 秒会报告超时阶段。
   启动失败时先检查日志、初始化状态、端口及 Redis；无需密码时管理页面直接进入。
 - 数据库、配置、媒体和日志均不存放在 `_internal`。升级时保留这些外部文件，
   整体替换程序及 `_internal`，不要将运行数据放入构建输出目录后再次执行构建。

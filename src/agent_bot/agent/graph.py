@@ -178,7 +178,7 @@ def build_agent_graph(
         return {"seen": seen}
 
     async def tools_node(state: AgentState) -> AgentState:
-        """顺序执行同批工具，事件与附件按实际执行顺序发布。"""
+        """顺序执行工具，实际入参与返回值走私有记录字段，附件只保存元数据。"""
         completed, turn = state["completed"], state["turn"]
         messages = [
             *state["messages"],
@@ -193,7 +193,10 @@ def build_agent_graph(
         for call in completed.calls:
             remaining_timeout(prepared.request.timeout_seconds)
             started = time.monotonic()
-            await emit("tool_start", turn, tool=call.name, call_id=call.call_id)
+            await emit(
+                "tool_start", turn, tool=call.name, call_id=call.call_id,
+                arguments=call.arguments,
+            )
             result = await tools.call(call)
             messages.append(TurnMessage(role="tool", tool_result=result))
             total += 1
@@ -205,6 +208,13 @@ def build_agent_graph(
                 code="AGENT_TOOL_FAILED" if result.is_error else None,
                 message="工具执行失败" if result.is_error else "工具执行完成",
                 duration_ms=int((time.monotonic() - started) * 1000),
+                arguments=call.arguments,
+                result={
+                    **result.model_dump(),
+                    "attachments": [
+                        attachment.model_dump(mode="json") for attachment in result.attachments
+                    ],
+                },
             )
             if prepared.authority.entry == "admin":
                 for attachment in result.attachments:

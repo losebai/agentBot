@@ -41,7 +41,7 @@ _SAFE_NONEBOT_INIT_FIELDS = frozenset(
 
 
 class BootstrapConfig(BaseModel):
-    """显式选择 MySQL 或 SQLite，连接参数不能由所连接的数据库管理。"""
+    """默认使用 SQLite；显式选择 MySQL 时才校验其独立连接凭据。"""
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True, hide_input_in_errors=True)
 
@@ -50,7 +50,7 @@ class BootstrapConfig(BaseModel):
     user: str = Field(default="", alias="chat_db_user")
     password: SecretStr = Field(default=SecretStr(""), alias="chat_db_password", repr=False)
     database: str = Field(default="chat", alias="chat_db_name")
-    backend: Literal["mysql", "sqlite"] = Field(default="mysql", alias="chat_db_backend")
+    backend: Literal["mysql", "sqlite"] = Field(default="sqlite", alias="chat_db_backend")
     sqlite_path: str = Field(default="data/agent_bot.sqlite3", min_length=1,
                              alias="chat_db_sqlite_path")
 

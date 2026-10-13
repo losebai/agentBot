@@ -264,6 +264,8 @@ CREATE TABLE IF NOT EXISTS agent_bot_agent_step (
   status VARCHAR(16) NOT NULL COMMENT '执行状态：运行中、完成、失败或取消',
   duration_ms BIGINT UNSIGNED NOT NULL COMMENT '执行耗时，单位毫秒',
   summary VARCHAR(1000) NOT NULL COMMENT '脱敏后的步骤摘要',
+  arguments JSON NULL DEFAULT NULL COMMENT '工具调用的脱敏入参；历史空值表示未记录',
+  result JSON NULL DEFAULT NULL COMMENT '脱敏返回值或未知结果错误信息；不包含媒体二进制',
   -- 主键定义记录身份，防止同一业务记录重复创建。
   PRIMARY KEY(execution_id,sequence),
   -- 外键保证引用存在；级联规则沿用原定义，保持删除语义。

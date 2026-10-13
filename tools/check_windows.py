@@ -27,6 +27,7 @@ def check_gui(deployment: Path, port: int, screenshot: Path) -> None:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         debug_port = listener.getsockname()[1]
+    started_at = time.perf_counter()
     process = subprocess.Popen(
         [str(deployment / "AgentBot.exe")], cwd=deployment.parent,
         env=os.environ | {
@@ -76,7 +77,10 @@ def check_gui(deployment: Path, port: int, screenshot: Path) -> None:
             screenshot.parent.mkdir(parents=True, exist_ok=True)
             data = call("Page.captureScreenshot", {"format": "png"})["data"]
             screenshot.write_bytes(base64.b64decode(data))
-            print("Native desktop frontend rendered and screenshot captured.", flush=True)
+            print(
+                f"Native desktop frontend rendered in {time.perf_counter() - started_at:.2f}s "
+                "and screenshot captured.", flush=True,
+            )
     finally:
         # 仅关闭本次测试进程所属的顶层窗口，不触碰用户的浏览器或已有服务。
         callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -126,7 +130,7 @@ def check(bundle: Path, screenshot: Path | None = None) -> None:
                 listener.bind(("127.0.0.1", 0))
                 port = listener.getsockname()[1]
             (deployment / ".env").write_text(
-                "CHAT_DB_BACKEND=sqlite\nCHAT_DB_SQLITE_PATH=data/test.sqlite3\n"
+                "CHAT_DB_SQLITE_PATH=data/test.sqlite3\n"
                 f"CHAT_REDIS_HOST=127.0.0.1\nCHAT_REDIS_PORT={redis.server_address[1]}\n"
                 "CHAT_REDIS_KEY_PREFIX=desktop:qa\nAGENT_BOT_ADMIN_TOKEN=\n"
                 "ONEBOT_V11_ACCESS_TOKEN=desktop-test-onebot-token-at-least-32-characters\n"
@@ -137,6 +141,7 @@ def check(bundle: Path, screenshot: Path | None = None) -> None:
             executable = deployment / "agent-bot.exe"
             # 使用无关 cwd，确保 EXE 从自身目录读取配置及 SQL。
             for arguments in (["--help"], ["database", "init"], ["settings", "init"]):
+                started_at = time.perf_counter()
                 result = subprocess.run(
                     [str(executable), *arguments], cwd=temporary, capture_output=True,
                     env=os.environ | {"PYTHONIOENCODING": "utf-8"},
@@ -144,16 +149,21 @@ def check(bundle: Path, screenshot: Path | None = None) -> None:
                 )
                 if result.returncode:
                     raise RuntimeError(f"CLI {arguments}: {result.stdout}\n{result.stderr}")
-                print(f"CLI verified: {' '.join(arguments)}", flush=True)
+                print(
+                    f"CLI verified: {' '.join(arguments)} "
+                    f"({time.perf_counter() - started_at:.2f}s)", flush=True,
+                )
             assert (deployment / "data" / "test.sqlite3").is_file()
             backend = BackendProcess(
                 [str(executable), "--desktop-child"], Path(temporary),
                 deployment / "logs" / "check.log",
             )
+            started_at = time.perf_counter()
             backend.start()
             try:
                 try:
                     url = backend.wait_ready(timeout=60)
+                    print(f"Backend ready in {time.perf_counter() - started_at:.2f}s", flush=True)
                 except RuntimeError:
                     print(backend.log_path.read_text(encoding="utf-8"), flush=True)
                     raise

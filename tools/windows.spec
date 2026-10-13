@@ -27,8 +27,8 @@ analysis = Analysis(
     datas=data,
     hiddenimports=hidden,
     excludes=["pytest", "tkinter", "PyQt5", "PyQt6", "PySide2", "PySide6"],
-    # NoneBot 的 PluginLoader 使用 SourceFileLoader，插件必须保留真实源码路径。
-    module_collection_mode={"agent_bot": "py"},
+    # 仅插件需要 SourceFileLoader；其他业务模块使用预编译字节码，减少启动编译和磁盘读取。
+    module_collection_mode={"agent_bot.plugin": "py"},
 )
 pyz = PYZ(analysis.pure)
 # 狐耳头像使用多尺寸 ICO，覆盖桌面快捷方式、窗口和任务栏的显示尺寸。

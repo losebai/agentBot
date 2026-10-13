@@ -74,3 +74,41 @@ def test_cli_entry_does_not_import_gui(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "database init" in result.stdout
+
+
+def test_startup_failure_reports_safe_detail_and_last_stage(tmp_path):
+    """启动失败应直接显示脱敏原因，不让用户只看到泛化等待文字。"""
+    from agent_bot.desktop import BackendProcess
+
+    code = (
+        "import json\n"
+        "print('AGENT_BOT_DESKTOP_STAGE ' + json.dumps('读取启动配置'), flush=True)\n"
+        "print('AGENT_BOT_DESKTOP_ERROR ' + json.dumps('配置校验失败：CHAT_DB_USER'), flush=True)\n"
+    )
+    backend = BackendProcess([sys.executable, "-c", code], tmp_path, tmp_path / "failure.log")
+    stages = []
+    backend.start()
+    try:
+        with pytest.raises(RuntimeError, match="CHAT_DB_USER"):
+            backend.wait_ready(on_status=stages.append)
+        assert "读取启动配置" in stages
+    finally:
+        backend.stop()
+
+
+def test_startup_timeout_identifies_waiting_stage(tmp_path):
+    """不通的依赖不能无限等待，超时提示应保留最后收到的启动阶段。"""
+    from agent_bot.desktop import BackendProcess
+
+    code = (
+        "import json, sys\n"
+        "print('AGENT_BOT_DESKTOP_STAGE ' + json.dumps('准备数据库和队列'), flush=True)\n"
+        "sys.stdin.read()\n"
+    )
+    backend = BackendProcess([sys.executable, "-c", code], tmp_path, tmp_path / "timeout.log")
+    backend.start()
+    try:
+        with pytest.raises(RuntimeError, match="准备数据库和队列"):
+            backend.wait_ready(timeout=2)
+    finally:
+        backend.stop()

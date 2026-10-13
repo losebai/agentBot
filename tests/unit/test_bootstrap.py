@@ -32,6 +32,18 @@ NARAKA_COOKIE = (
 )
 
 
+def test_no_backend_uses_sqlite_without_creating_database(tmp_path, monkeypatch):
+    """未配置后端默认使用 SQLite，读取配置不能顺带创建数据库文件。"""
+    monkeypatch.chdir(tmp_path)
+    for name in ("CHAT_DB_BACKEND", "CHAT_DB_USER", "CHAT_DB_PASSWORD", "CHAT_DB_SQLITE_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    config = load_bootstrap_config(env_file=str(tmp_path / ".env"))
+    params = database_params(config)
+    assert params.backend == "sqlite"
+    assert params.sqlite_path == "data/agent_bot.sqlite3"
+    assert not (tmp_path / "data").exists()
+
+
 def write_legacy_env(path: Path) -> None:
     values = {
         "DRIVER": "~fastapi",
@@ -65,6 +77,7 @@ def write_legacy_env(path: Path) -> None:
 def test_bootstrap_config_reads_only_database_connection(tmp_path: Path) -> None:
     env_file = tmp_path / "bootstrap.env"
     env_file.write_text(
+        "CHAT_DB_BACKEND=mysql\n"
         "CHAT_DB_HOST=db.example.test\n"
         "CHAT_DB_PORT=3307\n"
         "CHAT_DB_USER=chat\n"
@@ -77,6 +90,7 @@ def test_bootstrap_config_reads_only_database_connection(tmp_path: Path) -> None
     config = load_bootstrap_config(env_file=env_file)
 
     assert config == BootstrapConfig(
+        backend="mysql",
         host="db.example.test",
         port=3307,
         user="chat",
@@ -89,7 +103,7 @@ def test_bootstrap_config_reads_only_database_connection(tmp_path: Path) -> None
 def test_bootstrap_config_requires_database_user(tmp_path: Path) -> None:
     env_file = tmp_path / "bootstrap.env"
     env_file.write_text(
-        "CHAT_DB_HOST=db.example.test\nCHAT_DB_PASSWORD=db-secret\n",
+        "CHAT_DB_BACKEND=mysql\nCHAT_DB_HOST=db.example.test\nCHAT_DB_PASSWORD=db-secret\n",
         encoding="utf-8",
     )
 
@@ -100,7 +114,7 @@ def test_bootstrap_config_requires_database_user(tmp_path: Path) -> None:
 def test_bootstrap_config_requires_database_password(tmp_path: Path) -> None:
     env_file = tmp_path / "bootstrap.env"
     env_file.write_text(
-        "CHAT_DB_HOST=db.example.test\nCHAT_DB_USER=chat\n",
+        "CHAT_DB_BACKEND=mysql\nCHAT_DB_HOST=db.example.test\nCHAT_DB_USER=chat\n",
         encoding="utf-8",
     )
 
@@ -109,9 +123,10 @@ def test_bootstrap_config_requires_database_password(tmp_path: Path) -> None:
 
 
 def test_bootstrap_defaults_port_and_database(tmp_path: Path) -> None:
+    """显式使用 MySQL 时仍保留其默认端口和库名。"""
     env_file = tmp_path / "bootstrap.env"
     env_file.write_text(
-        "CHAT_DB_USER=chat\nCHAT_DB_PASSWORD=db-secret\n",
+        "CHAT_DB_BACKEND=mysql\nCHAT_DB_USER=chat\nCHAT_DB_PASSWORD=db-secret\n",
         encoding="utf-8",
     )
 
@@ -174,9 +189,10 @@ def test_redis_bootstrap_rejects_unsafe_values(
 
 
 def test_database_params_unpacks_secret(tmp_path: Path) -> None:
+    """传递 MySQL 参数时仅在连接边界解包密码。"""
     env_file = tmp_path / "bootstrap.env"
     env_file.write_text(
-        "CHAT_DB_USER=chat\nCHAT_DB_PASSWORD=db-secret\n",
+        "CHAT_DB_BACKEND=mysql\nCHAT_DB_USER=chat\nCHAT_DB_PASSWORD=db-secret\n",
         encoding="utf-8",
     )
     config = load_bootstrap_config(env_file=env_file)

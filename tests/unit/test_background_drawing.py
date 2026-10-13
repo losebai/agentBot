@@ -378,10 +378,11 @@ async def test_background_image_restart_and_delivery_retry_reuse_result(
 
 @pytest.mark.parametrize("cloud", [False, True])
 @pytest.mark.parametrize("group", [False, True])
+@pytest.mark.parametrize("auto_speak", [False, True])
 async def test_image_is_sent_before_llm_completion_and_requester_mention(
-    monkeypatch, chat_plugin, image_stores, cloud, group,
+    monkeypatch, chat_plugin, image_stores, cloud, group, auto_speak,
 ) -> None:
-    """真实队列必须先发图，再生成完成文案，并仅在群聊原生 @ 原请求者。"""
+    """群聊绘图完成始终 @ 创建人，即使任务继承了主动发言的文字限额。"""
 
     store = image_stores[1]
     monkeypatch.setattr(chat_plugin, "_redis_client", store._redis)
@@ -409,6 +410,7 @@ async def test_image_is_sent_before_llm_completion_and_requester_mention(
         assert args[1] == "画一只猫"
         assert "WORKFLOW_STATUS" in kwargs["instruction"]
         assert "completed" in kwargs["instruction"]
+        assert kwargs["use_agent"] is True
         assert kwargs["user_name"] == "测试用户"
         return "画好啦，看看这只猫！[CQ:at,qq=10002]"
 
@@ -419,6 +421,7 @@ async def test_image_is_sent_before_llm_completion_and_requester_mention(
         "group_id": "20001" if group else None,
         "mention_target_id": "10002" if group else None,
         "chat_context": None,
+        "auto_speak_max_reply_chars": 200 if auto_speak else None,
     })
     await store.enqueue(job)
     entry = (await store.read_new(count=1, block_ms=1))[0]
@@ -435,6 +438,60 @@ async def test_image_is_sent_before_llm_completion_and_requester_mention(
         assert notification[0].data["qq"] == "10001"
     assert notification.extract_plain_text().strip() == "画好啦，看看这只猫！[CQ:at,qq=10002]"
     completion.assert_awaited_once()
+
+
+@pytest.mark.parametrize("cloud", [False, True])
+@pytest.mark.parametrize("group", [False, True])
+async def test_foreground_group_image_notifies_creator_after_delivery(
+    monkeypatch, chat_plugin, image_stores, cloud, group,
+) -> None:
+    """恢复普通绘图结果后，群聊追加创建人完成通知，私聊维持原投递方式。"""
+
+    store = image_stores[0]
+    monkeypatch.setattr(chat_plugin, "_redis_client", store._redis)
+    bot = onebot_mock()
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
+    job = queued_job(
+        chatTools=(), scene="group" if group else "private",
+        groupId="20001" if group else None, chatContext=None,
+        mentionTargetId="10002" if group else None,
+    )
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\nimage").decode()
+    result = (
+        ConversationResult(kind="MEDIA", media=ChatMediaResponse(items=(
+            ChatMediaItem(type="IMAGE", mimeType="image/png", data=png),
+        ))) if cloud else ConversationResult(
+            kind="WORKFLOW_IMAGES", workflowImages=(
+                WorkflowImageArtifact(mimeType="image/png", data=png),
+            ),
+        )
+    )
+
+    async def complete(*_args, **_kwargs):
+        """完成事实只能在图片网络投递成功后交给模型表达。"""
+
+        assert bot.call_api.await_count == 1
+        assert bot.call_api.await_args.kwargs["message"][0].type == "image"
+        return "图片画好了。"
+
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", complete)
+    monkeypatch.setattr(chat_plugin.chat_service, "commit_queued", AsyncMock())
+    stream_id = await store.enqueue(job)
+    entry = (await store.read_new(count=1, block_ms=1))[0]
+    await store.save_result(stream_id, result)
+    queue = ConversationQueue(
+        store=store, processor=chat_plugin._ConversationProcessor(),
+        policy=QueuePolicy(1, 2, .01, .01, 600), clock=lambda: 1_800_000_000,
+    )
+    await queue.process_entry(entry)
+    assert await store.source_length() == 0
+    messages = [call.kwargs["message"] for call in bot.call_api.await_args_list]
+    assert [[part.type for part in message] for message in messages] == (
+        [["image"], ["at", "text"]] if group else [["image"]]
+    )
+    if group:
+        assert messages[1][0].data["qq"] == "10001"
+        assert messages[1].extract_plain_text().strip() == "图片画好了。"
 
 
 async def test_completion_delivery_restart_reuses_llm_text_without_resending_image(
@@ -518,7 +575,7 @@ async def test_completion_llm_failure_keeps_delivered_image_without_fixed_text(
 async def test_slow_completion_llm_does_not_block_same_session_chat(
     monkeypatch, chat_plugin, image_stores,
 ) -> None:
-    """完成文案模型挂起时图片已送达，原会话仍能使用唯一普通聊天槽位。"""
+    """完成通知的 Agent 挂起时图片已送达，原会话仍能使用唯一普通聊天槽位。"""
 
     entered, release = asyncio.Event(), asyncio.Event()
     requests = []
@@ -559,7 +616,7 @@ async def test_slow_completion_llm_does_not_block_same_session_chat(
     try:
         await asyncio.wait_for(entered.wait(), 1)
         assert [part.type for part in bot.call_api.await_args.kwargs["message"]] == ["image"]
-        assert requests[0]["use_agent"] is False
+        assert requests[0]["use_agent"] is True
         assert requests[0]["use_web_search"] is False
         assert "chat_tools" not in requests[0]
         await queues[0].enqueue(queued_job(jobId="normal-chat", chatTools=()))

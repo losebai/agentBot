@@ -63,7 +63,7 @@ if (Test-Path .env) { throw ".env 已存在，请直接编辑已有文件" }
 Copy-Item .env.example .env
 ```
 
-新安装示例默认 `CHAT_DB_BACKEND=sqlite`，数据库保存到 `CHAT_DB_SQLITE_PATH=data/agent_bot.sqlite3`，不需要 MySQL 服务。使用 MySQL 时显式设置 `CHAT_DB_BACKEND=mysql`，填写 `CHAT_DB_HOST`、`CHAT_DB_PORT`、`CHAT_DB_USER`、`CHAT_DB_PASSWORD`、`CHAT_DB_NAME`，并先创建独立数据库及专用账户。未指定后端仍默认为 MySQL，保持旧部署兼容；连接失败不会切换数据库。SQLite 适合单实例部署，Redis 仍负责队列。
+未指定 `CHAT_DB_BACKEND` 时默认使用 SQLite，数据库保存到 `CHAT_DB_SQLITE_PATH=data/agent_bot.sqlite3`，不需要 MySQL 服务。使用 MySQL 时必须显式设置 `CHAT_DB_BACKEND=mysql`，填写 `CHAT_DB_HOST`、`CHAT_DB_PORT`、`CHAT_DB_USER`、`CHAT_DB_PASSWORD`、`CHAT_DB_NAME`，并先创建独立数据库及专用账户；旧 MySQL 部署升级前也需补上后端选择。连接失败不会切换数据库。SQLite 适合单实例部署，Redis 仍负责队列。
 
 填写 Redis 连接参数。管理员密码沿用 `AGENT_BOT_ADMIN_TOKEN` 配置名，支持自定义 8–256 位字母、数字及常见符号，不含空格；含 `#` 等 dotenv 特殊字符时用引号包裹。留空或不配置时直接进入系统，所有管理接口均无需密码。已有随机令牌仍可作为登录密码。
 
@@ -193,6 +193,10 @@ QQ 文字回复在分段和投递前统一清理空白行：连续换行以及�
 Job 默认关闭，启用后作为 QQ 专属工具执行。管理 Agent 不接受 QQ Job 工具；SolonCode 和通用 Laya 指令尚未迁移。自动发言的固定 Laya 决策已由独立 Python 服务接入。
 
 停止请求、切换模式、离开对话页或退出登录会取消当前管理请求。已经完成的工具操作不会撤销；结果无法确认时记录为 `unknown`。残留的 `running` 记录不一定表示任务仍在执行。
+
+“调用记录 → 查看详情”直接展示原生 Agent 每次工具调用的入参和返回值，按调用 ID 配对，保留调用轮次、状态、耗时和附件元数据。“Agent 执行详情”同样提供此视图。入参和返回值保存前递归清除凭据，JSON 工具正文格式化展示；媒体二进制及模型私有延续不进入步骤记录。工具取消或异常而没有返回时保留入参、稳定错误码与结果未知状态，不自动重执行。历史未保存的负载显示“未保存入参／未记录返回值”，无法补回。
+
+既有库需在新版本启动前执行一次 `sql/2026-10-13-tool-call-payloads.sql`（MySQL）或 `sql/2026-10-13-tool-call-payloads.sqlite.sql`（SQLite）。增量只添加工具步骤的可空 JSON 字段，不改写历史记录；新库初始化脚本已包含完整结构。此变更加载后，新工具调用即开始保存负载，服务不会在普通启动时自动升级数据库。
 
 ## 配置图片和音频
 

@@ -165,6 +165,7 @@ class AgentService:
         self.active += 1
         execution_id, started = uuid.uuid4().hex, time.monotonic()
         sequence, text, saved, prepared, pending_tool = 0, "", True, None, None
+        pending_started = None
         begun, final, error_code, status = False, None, None, "failed"
         inputs = AsyncExitStack()
         artifacts = []
@@ -274,6 +275,7 @@ class AgentService:
                                 artifacts.append(item.attachment)
                             if item.kind == "tool_start":
                                 pending_tool = item
+                                pending_started = time.monotonic()
                             elif item.kind == "tool_result":
                                 pending_tool = None
                             if begun and item.kind in {
@@ -300,6 +302,8 @@ class AgentService:
                                         summary=item.message
                                         if item.code == "AGENT_MODEL_FORWARDED"
                                         else item.code or "",
+                                        arguments=item.arguments,
+                                        result=item.result,
                                     ),
                                 )
                             yield item
@@ -341,6 +345,16 @@ class AgentService:
                                         call_id=pending_tool.call_id,
                                         status="unknown",
                                         summary="AGENT_TOOL_OUTCOME_UNKNOWN",
+                                        arguments=pending_tool.arguments,
+                                        result={
+                                            "error_code": (
+                                                error_code or "AGENT_TOOL_OUTCOME_UNKNOWN"
+                                            ),
+                                            "outcome": "unknown",
+                                        },
+                                        duration_ms=int(
+                                            (time.monotonic() - pending_started) * 1000
+                                        ),
                                     ),
                                 )
                             await save(

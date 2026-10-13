@@ -402,6 +402,10 @@ CREATE TABLE IF NOT EXISTS agent_bot_agent_step (
     duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
     -- 脱敏后的步骤摘要
     summary TEXT COLLATE NOCASE NOT NULL,
+    -- 工具调用的脱敏入参；历史空值表示未记录。
+    arguments TEXT DEFAULT NULL CHECK (arguments IS NULL OR json_valid(arguments)),
+    -- 脱敏返回值或未知结果错误信息；不包含媒体二进制。
+    result TEXT DEFAULT NULL CHECK (result IS NULL OR json_valid(result)),
     PRIMARY KEY(execution_id,sequence),
     -- 外键保护引用完整性，保留级联删除规则。
     CONSTRAINT fk_agent_step_run FOREIGN KEY(execution_id) REFERENCES agent_bot_agent_run(execution_id)

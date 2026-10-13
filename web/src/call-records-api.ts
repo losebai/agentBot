@@ -1,5 +1,6 @@
 import { ApiClient } from './api';
 import type { Page } from './ai-types';
+import type { RunStep } from './agent-types';
 
 export type CallType = 'ordinary' | 'agent' | 'auto_speak' | 'unknown';
 export type CallCategory = 'conversation' | 'system';
@@ -13,6 +14,7 @@ export interface CallSummary {
 export interface CallDetail extends CallSummary {
   content: string | null; replay_context: string | null; user_certificate: string | null;
   data: unknown; request_context: unknown;
+  tool_steps?: RunStep[];
 }
 export interface CallFilters { type: string; session_id: string; status: string; category?: CallCategory; system_kind?: string }
 

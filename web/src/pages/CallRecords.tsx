@@ -8,6 +8,7 @@ import type { Page } from '../ai-types';
 import { AgentRunDetail } from '../components/AgentRunDetail';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { DetailDialog } from '../components/DetailDialog';
+import { AgentToolSteps } from '../components/AgentToolSteps';
 
 const types = {ordinary: '普通调用', agent: 'Agent 调用', auto_speak: '自动发言决策', unknown: '历史未知类型'};
 const systemTypes = {auto_speak: '自动发言决策', command: '指令调用'};
@@ -76,6 +77,7 @@ export function CallRecords({token, category = 'conversation'}: {token: string; 
       <h3>用户输入</h3><pre>{detail.content ?? '未记录'}</pre><h3>模型回复</h3><MarkdownRenderer content={detail.replay_context || '没有回复正文。'} />
       <h3>请求上下文</h3><pre>{detail.request_context === null ? '历史记录未保存请求上下文。' : JSON.stringify(detail.request_context, null, 2)}</pre>
       <h3>响应数据</h3><pre>{JSON.stringify(detail.data, null, 2) ?? '未记录'}</pre>
+      {detail.type === 'agent' && <><h3>工具调用</h3><AgentToolSteps steps={detail.tool_steps ?? []} /></>}
       {detail.type === 'agent' && detail.execution_id && <Button onClick={() => setSteps(detail.execution_id!)}>查看执行步骤与附件</Button>}
       </>}
     </DetailDialog>}

@@ -339,6 +339,9 @@ class AgentEvent(AiModel):
     duration_ms: int = 0
     status_code: int | None = None
     attachment: MediaAssetView | None = None
+    # 原始工具负载仅交给记录存储，SSE 不公开这些内部字段。
+    arguments: dict[str, object] | None = Field(default=None, exclude=True, repr=False)
+    result: dict[str, object] | None = Field(default=None, exclude=True, repr=False)
 
     @model_validator(mode="after")
     def valid_attachment(self):
@@ -403,6 +406,8 @@ class RunFinish(AiModel):
 
 
 class StepWrite(AiModel):
+    """保存工具调用的脱敏负载；旧步骤空值明确表示未记录。"""
+
     execution_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     sequence: int = Field(ge=1)
     turn: int = Field(ge=0, le=6)
@@ -412,6 +417,8 @@ class StepWrite(AiModel):
     status: Literal["started", "completed", "failed", "unknown"]
     duration_ms: int = Field(default=0, ge=0)
     summary: str = Field(default="", max_length=1000)
+    arguments: dict[str, object] | None = None
+    result: dict[str, object] | None = None
 
 
 class StepView(StepWrite):

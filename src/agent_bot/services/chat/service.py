@@ -325,8 +325,9 @@ class ChatService:
         user: str | None = None,
         user_name: str | None = None,
         chat_context: ChatContext | None = None,
+        use_agent: bool = False,
     ) -> str:
-        """由 Composer 独立限流生成无历史回复，不重入普通聊天准入边界。"""
+        """由 Composer 独立限流生成无历史回复；完成通知可显式交给 Agent 表达。"""
 
         system_messages = self._prompt_builder.system_messages_with(
             ChatMessage(role="system", content=instruction)
@@ -343,7 +344,7 @@ class ChatService:
             system_messages=system_messages,
             untrusted_facts=untrusted_facts,
             persist_history=False,
-            use_agent=False,
+            use_agent=use_agent,
             use_web_search=False,
             chat_tools=(),
             tool_session_token=None,

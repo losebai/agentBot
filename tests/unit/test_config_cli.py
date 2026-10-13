@@ -37,7 +37,9 @@ QQ_VALUES = {
 
 
 def _legacy_values() -> dict[str, str]:
+    """旧 MySQL 配置显式选择后端，避免被新的 SQLite 启动默认值改变。"""
     return {
+        "CHAT_DB_BACKEND": "mysql",
         "CHAT_DB_HOST": "db.example.test",
         "CHAT_DB_PORT": "3306",
         "CHAT_DB_USER": "chat",

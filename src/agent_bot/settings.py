@@ -159,7 +159,7 @@ def _plain_value(value: Any) -> Any:
 
 @dataclass(frozen=True, slots=True)
 class DatabaseParams:
-    """所选数据库的不可变启动参数，密码不参与对象展示。"""
+    """不可变连接参数；启动入口显式传入后端，旧 MySQL 迁移字典保持兼容。"""
 
     host: str = "127.0.0.1"
     port: int = 3306

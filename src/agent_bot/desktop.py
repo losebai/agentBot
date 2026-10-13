@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 import socket
 import subprocess
 import sys
 import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 _READY = "AGENT_BOT_DESKTOP_READY "
+_STAGE = "AGENT_BOT_DESKTOP_STAGE "
+_ERROR = "AGENT_BOT_DESKTOP_ERROR "
 
 
 def prepare_directory() -> Path:
@@ -31,12 +36,16 @@ class BackendProcess:
         self.log_path = log_path
         self.process: subprocess.Popen[str] | None = None
         self.url: str | None = None
+        self.stage = "加载后端组件"
+        self.error: str | None = None
+        self._started_at = 0.0
         self._ready = threading.Event()
         self.finished = threading.Event()
 
     def start(self) -> None:
         """隐藏后端控制台，并将输出持续写入外部日志。"""
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._started_at = time.monotonic()
         self.process = subprocess.Popen(
             self.command, cwd=self.directory,
             env=os.environ | {
@@ -60,17 +69,36 @@ class BackendProcess:
                     if line.startswith(_READY):
                         self.url = line.removeprefix(_READY).strip()
                         self._ready.set()
+                    elif line.startswith(_STAGE):
+                        self.stage = json.loads(line.removeprefix(_STAGE))
+                    elif line.startswith(_ERROR):
+                        # 仅接受后端专用通道中已脱敏的错误，不把日志或 traceback 展示到页面。
+                        self.error = json.loads(line.removeprefix(_ERROR))
         finally:
             self.process.wait()
             self.finished.set()
             self._ready.set()
 
-    def wait_ready(self, timeout: float = 60) -> str:
-        """等待监听成功或明确失败，启动超时由调用方停止子进程。"""
-        if not self._ready.wait(timeout):
-            raise RuntimeError("后端启动超时，请检查数据库、Redis 和日志。")
+    def wait_ready(
+        self, timeout: float = 60, *, on_status: Callable[[str], None] | None = None,
+    ) -> str:
+        """从进程启动时计时并同步阶段，配置失败不再只给出泛化的等待提示。"""
+        previous = None
+        while True:
+            if on_status is not None and self.stage != previous:
+                previous = self.stage
+                on_status(self.stage)
+            if self._ready.is_set():
+                break
+            remaining = timeout - (time.monotonic() - self._started_at)
+            if remaining <= 0:
+                raise RuntimeError(f"后端启动超时，停在：{self.stage}。请检查配置与日志。")
+            self._ready.wait(min(remaining, 0.2))
         if self.finished.is_set() or self.url is None:
-            raise RuntimeError("后端启动失败，请检查配置、数据库初始化和端口占用。")
+            raise RuntimeError(
+                f"后端启动失败：{self.error}"
+                if self.error else "后端启动失败，请检查配置、数据库初始化和端口占用。"
+            )
         return self.url
 
     def stop(self) -> None:
@@ -116,19 +144,27 @@ def serve(app: Any, host: str, port: int) -> None:
 
 def run_backend() -> int:
     """桌面后端加载现有配置；不创建数据库，不读取或覆盖动态环境配置。"""
+    # 冻结解释器可能忽略 PYTHONIOENCODING，明确匹配父进程的 UTF-8 日志解码。
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
+    sys.stderr.reconfigure(encoding="utf-8", line_buffering=True)
+    print(_STAGE + json.dumps("加载后端组件"), flush=True)
     from agent_bot.admin.config import AdminConfig
-    from agent_bot.application import create_application
     from agent_bot.bootstrap import load_startup_settings
     from agent_bot.cli_errors import describe_config_error
     from agent_bot.settings import SettingsError
 
     try:
+        print(_STAGE + json.dumps("读取启动配置和数据库"), flush=True)
         admin = AdminConfig.from_environment()
         stored = load_startup_settings()
     except (ValueError, SettingsError) as exc:
-        print(f"启动失败：{describe_config_error(exc)}", flush=True)
+        print(_ERROR + json.dumps(describe_config_error(exc)), flush=True)
         return 1
+    print(_STAGE + json.dumps("装配机器人和管理接口"), flush=True)
+    from agent_bot.application import create_application
+
     app = create_application(stored, admin)
+    print(_STAGE + json.dumps("准备数据库和队列"), flush=True)
     serve(app, str(stored.config.host), stored.config.port)
     return 0
 
@@ -161,10 +197,15 @@ def main() -> int:
     )
     window.events.closed += closed.set
 
+    def show_status(stage: str) -> None:
+        """启动过程显示可定位的阶段，关窗后不再操作已销毁的 WebView。"""
+        if not closed.is_set():
+            window.load_html(status_page(f"正在启动服务…\n{stage}"))
+
     def load_frontend() -> None:
         """GUI 就绪后等待后端；启动错误留在窗口中，便于读取日志和初始化。"""
         try:
-            url = backend.wait_ready()
+            url = backend.wait_ready(on_status=show_status)
             if closed.is_set():
                 return
             window.load_url(url)

@@ -19,6 +19,8 @@ def check(path: Path) -> None:
             "agent_bot/resources/2026-10-13-unified-call-records.sqlite.sql",
             "agent_bot/resources/2026-10-13-agent-model-routing.sql",
             "agent_bot/resources/2026-10-13-agent-model-routing.sqlite.sql",
+            "agent_bot/resources/2026-10-13-tool-call-payloads.sql",
+            "agent_bot/resources/2026-10-13-tool-call-payloads.sqlite.sql",
             "agent_bot/agent/model_routing.py",
             "agent_bot/admin/streaming.py",
             "agent_bot/resources/agent_bot_init.sql",

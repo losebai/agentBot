@@ -58,6 +58,6 @@ uv run pytest -m "not e2e" -k "not database_onebot_token_reaches_adapter_without
 
 ## 安全与配置
 
-静态配置（数据库后端及连接、Redis、管理员凭据、NoneBot/OneBot 启动字段、会话密钥、目录及固定资源参数）保留在 `.env` 或环境变量中，修改后重启，管理 API 只读。运行配置及模型供应商、MCP 的 URL、密钥通过管理页面保存到所选 MySQL 或 SQLite，不从环境变量读取或覆盖。首次初始化后，所选数据库是运行配置的权威来源。`CHAT_DB_BACKEND` 未指定时兼容旧 MySQL，示例显式选择 SQLite；SQLite 文件由 `CHAT_DB_SQLITE_PATH` 指定，普通启动不得创建文件或自动切换后端。不得提交凭据或数据库文件。历史 SQL 必须逐项审查：`sql/legacy/dispatch_chat_setting.sql` 含删除表操作。使用独立数据库和 Redis 键前缀。
+静态配置（数据库后端及连接、Redis、管理员凭据、NoneBot/OneBot 启动字段、会话密钥、目录及固定资源参数）保留在 `.env` 或环境变量中，修改后重启，管理 API 只读。运行配置及模型供应商、MCP 的 URL、密钥通过管理页面保存到所选 MySQL 或 SQLite，不从环境变量读取或覆盖。首次初始化后，所选数据库是运行配置的权威来源。`CHAT_DB_BACKEND` 未指定时默认 SQLite，MySQL 部署必须显式指定 `mysql`；SQLite 文件由 `CHAT_DB_SQLITE_PATH` 指定，普通启动不得创建文件或自动切换后端。不得提交凭据或数据库文件。历史 SQL 必须逐项审查：`sql/legacy/dispatch_chat_setting.sql` 含删除表操作。使用独立数据库和 Redis 键前缀。
 
 媒体文件目录由 `AGENT_BOT_MEDIA_DIRECTORY` 启动配置指定，默认 `data/media`；禁止把上传文件、TTS 输出和验收数据打包。媒体 SQL 仅通过明确初始化命令或手动执行，普通启动不执行；保留 0.3.0 wheel 用于隔离回退验证。

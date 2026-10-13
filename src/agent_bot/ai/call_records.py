@@ -7,6 +7,9 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
+from pydantic import Field
+
+from agent_bot.agent.contracts import StepView
 from agent_bot.ai.call_origin import command_call
 from agent_bot.ai.contracts import AiModel, Page
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
@@ -242,6 +245,7 @@ class CallDetail(CallSummary):
     user_certificate: str | None
     data: Any = None
     request_context: Any = None
+    tool_steps: list[StepView] = Field(default_factory=list)
 
 
 class CallRecordStore(AiDatabase):
@@ -289,7 +293,7 @@ class CallRecordStore(AiDatabase):
         return await self.run(write, write=True)
 
     async def get_call(self, id: int):
-        """详情仅按目标主键读取，旧 ID 保存在来源字段。"""
+        """按目标主键读取详情，原生 Agent 同时附带该执行的脱敏工具负载。"""
         row = await self.run(
             lambda c: query(
                 c, f"SELECT *, {_SYSTEM_KIND} AS system_kind FROM {_TABLE} WHERE id=%s",
@@ -300,6 +304,18 @@ class CallRecordStore(AiDatabase):
             raise AiError("AI_RECORD_NOT_FOUND", status_code=404)
         for key in ("data", "request_context"):
             row[key] = json_value(row[key])
+        if row["source"] == "python:agent_bot_agent_run" and row.get("execution_id"):
+            steps = await self.run(lambda c: query(
+                c,
+                "SELECT * FROM agent_bot_agent_step WHERE execution_id=%s "
+                "AND kind IN ('tool_start','tool_result') ORDER BY sequence",
+                (row["execution_id"],),
+            ))
+            row["tool_steps"] = [StepView.model_validate({
+                key: sanitize_context(json_value(value))
+                if key in {"arguments", "result"} else value
+                for key, value in step.items()
+            }) for step in steps]
         return CallDetail.model_validate(row)
 
     async def list_calls(

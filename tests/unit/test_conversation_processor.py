@@ -213,7 +213,7 @@ async def test_processor_returns_only_workflow_image_without_final_text(
     chat_plugin,
     with_speech: bool,
 ) -> None:
-    """图片完成后只发送图片，不再追加 Agent 收尾文字。"""
+    """先投递图片，完成通知单独计入进度，不采用 Agent 的旧收尾文字。"""
 
     generate = AsyncMock(return_value="图片已经生成。")
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
@@ -251,7 +251,7 @@ async def test_processor_returns_only_workflow_image_without_final_text(
     assert result.kind == "WORKFLOW_IMAGES"
     assert len(result.workflow_images) == 1
     assert result.reply is None
-    assert await processor.delivery_count(job, result) == 1
+    assert await processor.delivery_count(job, result) == 2
     await processor.deliver_part(job, result, 0)
     bot.call_api.assert_awaited_once()
     message = bot.call_api.await_args.kwargs["message"]
@@ -642,7 +642,7 @@ async def test_processor_delivers_collected_workflow_image_when_agent_finishing_
     monkeypatch: pytest.MonkeyPatch,
     chat_plugin,
 ) -> None:
-    """Verify processor delivers collected workflow image when agent finishing fails."""
+    """Agent 收尾失败不丢失已有图片，群聊仍保留后续完成通知的投递位置。"""
 
     generate = AsyncMock(side_effect=ChatAiUnavailableError("agent finishing failed"))
     explain = AsyncMock(return_value="不应再次调用模型")
@@ -684,7 +684,7 @@ async def test_processor_delivers_collected_workflow_image_when_agent_finishing_
         result.model_dump_json(by_alias=True)
     ) == result
     explain.assert_not_awaited()
-    assert await processor.delivery_count(job, result) == 1
+    assert await processor.delivery_count(job, result) == 2
     await processor.deliver_part(job, result, 0)
     bot.call_api.assert_awaited_once()
     sent_message = bot.call_api.await_args.kwargs["message"]

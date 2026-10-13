@@ -12,6 +12,7 @@ from ai.mysql_identifiers import reject_unquoted_usage
 
 
 async def test_run_terminal_transition_and_step_order(agent_database, agent_params):
+    """终态与工具步骤顺序保持稳定，旧步骤明确返回空负载。"""
     store = AgentRunStore(agent_params, connect=agent_database.connect)
     run = RunStart(
         execution_id="a" * 32,
@@ -43,7 +44,7 @@ async def test_run_terminal_transition_and_step_order(agent_database, agent_para
     assert duplicate.value.status_code == 409
     steps = await store.list_steps(run.execution_id)
     assert [s.sequence for s in steps.items] == [1, 2, 3]
-    assert "arguments" not in steps.items[0].model_dump()
+    assert steps.items[0].arguments is None and steps.items[0].result is None
     summary = (await store.list_runs()).items[0]
     assert "prompt" not in summary.model_dump()
     assert (await store.get_run(run.execution_id)).content == "answer"

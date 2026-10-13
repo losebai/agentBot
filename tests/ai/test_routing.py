@@ -1,6 +1,7 @@
 """本地聊天入口复用模型目录、请求预算及错误分类。"""
 
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -8,9 +9,69 @@ import pytest
 from agent_bot.ai.chat_errors import ChatAiRejectedError
 from agent_bot.ai.routing import RoutedModelGuard, RoutingAiClient
 from agent_bot.model_guard import ModelNotAvailableError
+from agent_bot.model_router import ContentModelRouter
 from agent_bot.models import ChatMessage, LlmRequestOptions
+from agent_bot.services.chat import ChatService
+from agent_bot.services.replies import LlmReplyComposer, ReplyIntent, WorkflowStatusFacts
+from agent_bot.state import ConversationStore
 
 from .test_service import make_service
+
+
+@pytest.mark.parametrize("status, expected", [
+    ("started", "普通模型正文"), ("completed", "Agent 按人设生成的完成通知"),
+])
+async def test_image_completion_composer_routes_through_agent(status, expected) -> None:
+    """真实 Composer、聊天服务与路由确保完成通知采用 Agent 正文，保持其他状态路由。"""
+
+    class RecordingService:
+        """替换模型执行边界，用不同正文识别实际选择的服务。"""
+
+        def __init__(self, content: str) -> None:
+            """保存模型正文和实际请求，避免触发供应商网络。"""
+
+            self.content = content
+            self.requests = []
+            self.authorities = []
+
+        async def complete(self, request, authority=None):
+            """记录真实路由构造的请求并返回对应模型正文。"""
+
+            self.requests.append(request)
+            self.authorities.append(authority)
+            return SimpleNamespace(content=self.content)
+
+    ordinary = RecordingService("普通模型正文")
+    agent = RecordingService("Agent 按人设生成的完成通知")
+    router = RoutingAiClient(
+        ordinary, agent_service=agent, agent_code="drawing-agent", timeout_seconds=2,
+        default_options=LlmRequestOptions(), mcp_services=(),
+    )
+    store = ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60)
+    chat = ChatService(
+        client=router, store=store, system_prompt="你是群聊助手。", max_input_chars=100,
+        cooldown_seconds=0, max_concurrent_requests=2,
+        model_router=ContentModelRouter("text", "vision", "image", "audio"),
+    )
+    reply = await LlmReplyComposer(lambda: chat, timeout_seconds_provider=lambda: 2).compose(
+        ReplyIntent(
+            requestId="image-status", sessionId="image:task", code="WORKFLOW_STATUS",
+            facts=WorkflowStatusFacts(status=status), originalPrompt="画一只猫",
+        ),
+    )
+
+    assert reply is not None and reply.text == expected
+    assert store.messages("image:task") == []
+    if status == "completed":
+        assert ordinary.requests == []
+        assert len(agent.requests) == 1
+        request = agent.requests[0]
+        assert request.agent_code == "drawing-agent"
+        assert any("图片已生成并已发送" in message.content for message in request.messages)
+        assert agent.authorities[0].allowed_tools == ()
+        assert agent.authorities[0].chat_token is None
+    else:
+        assert agent.requests == []
 
 
 async def test_agent_preflight_checks_preset_model_instead_of_chat_alias() -> None:

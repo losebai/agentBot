@@ -440,7 +440,7 @@ class ConversationQueueProcessor:
         )
 
     async def _deliver_image_completion(self, job: ConversationJob) -> None:
-        """图片送达后生成并保存模型完成文案，投递重试只复用已有正文。"""
+        """图片送达后通知原创建人；保存模型文案供重试复用，群聊始终原生 @。"""
 
         store = self._operation_store_provider()
         signature = hashlib.sha256(job.request_id.encode("utf-8")).hexdigest()
@@ -469,8 +469,7 @@ class ConversationQueueProcessor:
             reply=generated_reply_from_model(saved.text, request_id),
             prefix=(
                 MessageSegment.at(job.user_id)
-                if job.scene == "group" and job.auto_speak_max_reply_chars is None
-                else None
+                if job.scene == "group" else None
             ),
         )
 
@@ -545,14 +544,26 @@ class ConversationQueueProcessor:
         """通用图片逐张投递，原有文本或媒体随后投递。"""
         return len(result.tool_images) + await self._delivery_count(job, result)
 
+    def _requires_image_completion(
+        self, job: ConversationJob, result: ConversationResult,
+    ) -> bool:
+        """群聊生成图片与后台绘图追加完成通知，语音不进入绘图通知流程。"""
+
+        if not job.background_image and job.scene != "group":
+            return False
+        return result.kind == "WORKFLOW_IMAGES" or (
+            result.kind == "MEDIA" and result.media is not None
+            and result.media.items[0].type == "IMAGE"
+        )
+
     async def _delivery_count(
         self,
         job: ConversationJob,
         result: ConversationResult,
     ) -> int:
-        """返回队列恢复投递进度所需的消息段数量。"""
+        """将图片和完成通知分别计入进度，通知重试时不重发已送达图片。"""
 
-        if job.background_image and result.kind in {"WORKFLOW_IMAGES", "MEDIA"}:
+        if self._requires_image_completion(job, result):
             return 2
         if result.kind in {"SILENT", "IMAGE_QUEUED", "TOOL_IMAGES"}:
             return 0
@@ -567,7 +578,7 @@ class ConversationQueueProcessor:
     async def deliver_part(
         self, job: ConversationJob, result: ConversationResult, index: int,
     ) -> None:
-        """独立投递持久化图片，索引保证失败后不会重发已确认附件。"""
+        """按持久化索引先发图片再通知创建人，失败后不重发已确认附件。"""
         if job.ai_job_id is not None:
             config = self._config_provider()
             policy = AccessPolicy(
@@ -597,12 +608,13 @@ class ConversationQueueProcessor:
         index -= len(result.tool_images)
         if result.kind in {"SILENT", "IMAGE_QUEUED"}:
             raise ValueError("silent result has no delivery")
-        if job.background_image and result.kind in {"WORKFLOW_IMAGES", "MEDIA"}:
+        image_completion = self._requires_image_completion(job, result)
+        if image_completion:
             if index == 1:
                 await self._deliver_image_completion(job)
                 return
             if index != 0:
-                raise ValueError("background image has exactly two deliveries")
+                raise ValueError("image with completion has exactly two deliveries")
         if result.kind == "TOOL_REPLY":
             if index != 0:
                 raise ValueError("tool reply has exactly one delivery")
@@ -655,7 +667,7 @@ class ConversationQueueProcessor:
             assert result.media is not None
             prefix = (
                 MessageSegment.at(job.mention_target_id)
-                if index == 0 and job.mention_target_id is not None and not job.background_image
+                if index == 0 and job.mention_target_id is not None and not image_completion
                 else None
             )
             item = result.media.items[0]

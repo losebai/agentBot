@@ -1,4 +1,4 @@
-"""有序执行元数据及独立附件关联，不记录原始工具参数与二进制输出。"""
+"""有序执行记录、脱敏工具负载及独立附件关联，不保存二进制输出。"""
 
 import base64
 import json
@@ -7,7 +7,7 @@ from datetime import datetime
 
 from agent_bot.agent.contracts import RunDetail, RunSummary, StepView
 from agent_bot.agent.errors import AgentError
-from agent_bot.ai.call_records import insert_record, python_record
+from agent_bot.ai.call_records import insert_record, json_value, python_record, sanitize_context
 from agent_bot.ai.contracts import Page
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
@@ -15,14 +15,16 @@ from agent_bot.media.contracts import MediaOwner, MediaScope
 
 
 def decode(row):
+    """解码 JSON 列，读取时仍脱敏工具负载，兼容历史空值。"""
     return {
-        k: json.loads(v) if k in {"usage", "revisions"} and isinstance(v, str) else v
+        k: sanitize_context(json_value(v)) if k in {"arguments", "result"}
+        else json.loads(v) if k in {"usage", "revisions"} and isinstance(v, str) else v
         for k, v in row.items()
     }
 
 
 class AgentRunStore(AiDatabase):
-    """保留原表结构，运行详情通过媒体存储查询已发布成果。"""
+    """管理执行状态和工具负载，运行详情通过媒体存储查询已发布成果。"""
 
     def __init__(self, database, *, connect, media_store=None):
         """存储可选，旧文本安装不依赖媒体表。"""
@@ -30,11 +32,17 @@ class AgentRunStore(AiDatabase):
         self.media_store = media_store
 
     async def _insert(self, table, record):
-        """引用内部列名写入记录，附件属于独立元数据表，不进入旧执行或步骤列。"""
+        """引用内部列名写入记录，工具负载先脱敏，媒体仅保留公开附件元数据。"""
         values = record.model_dump(exclude={"attachments", "request_context"})
-        for field in ("usage", "revisions"):
+        for field in ("arguments", "result"):
             if field in values:
-                values[field] = json.dumps(values[field])
+                values[field] = sanitize_context(values[field])
+        for field in ("usage", "revisions", "arguments", "result"):
+            if field in values:
+                values[field] = (
+                    json.dumps(values[field], ensure_ascii=False, allow_nan=False)
+                    if values[field] is not None else None
+                )
 
         def write(connection):
             """只持久化记录类型已有的标量及 JSON 列。"""
@@ -200,6 +208,7 @@ class AgentRunStore(AiDatabase):
         return Page[RunSummary](items=items, next_cursor=after)
 
     async def list_steps(self, execution_id, *, limit=50, cursor=None):
+        """顺序分页读取保存的工具负载，未知或旧步骤不伪造返回值。"""
         page_limit(limit)
         await self.get_run(execution_id)
         after = 0
@@ -221,7 +230,7 @@ class AgentRunStore(AiDatabase):
                 (execution_id, after, limit + 1),
             )
         )
-        items = [StepView.model_validate(row) for row in rows[:limit]]
+        items = [StepView.model_validate(decode(row)) for row in rows[:limit]]
         return Page[StepView](
             items=items,
             next_cursor=f"{execution_id}:{items[-1].sequence}" if len(rows) > limit else None,

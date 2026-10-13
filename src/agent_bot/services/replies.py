@@ -233,7 +233,7 @@ class LlmReplyComposer:
         self._semaphore = asyncio.Semaphore(4)
 
     async def compose(self, intent: ReplyIntent) -> GeneratedReply | None:
-        """非等待式接纳生成请求，饱和、模型失败或输出无效时脱敏记录并静默。"""
+        """完成通知交给 Agent 表达；饱和、生成失败或输出无效时保持静默。"""
 
         if self._semaphore.locked():
             logger.warning(
@@ -259,6 +259,11 @@ class LlmReplyComposer:
                         user=intent.user,
                         user_name=intent.user_name,
                         chat_context=intent.chat_context,
+                        # 已送达图片由 Agent 表达完成事实，保持聊天工具和网页检索关闭。
+                        **({"use_agent": True} if (
+                            isinstance(intent.facts, WorkflowStatusFacts)
+                            and intent.facts.status == "completed"
+                        ) else {}),
                     ),
                     timeout=self._timeout_seconds_provider(),
                 )

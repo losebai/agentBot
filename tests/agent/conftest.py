@@ -16,7 +16,8 @@ def agent_database():
     CREATE TABLE agent_bot_agent_step(
         execution_id TEXT REFERENCES agent_bot_agent_run(execution_id),
         sequence INTEGER, turn INTEGER, kind TEXT, tool TEXT, call_id TEXT, status TEXT,
-        duration_ms INTEGER, summary TEXT, PRIMARY KEY(execution_id,sequence));
+        duration_ms INTEGER, summary TEXT, arguments TEXT, result TEXT,
+        PRIMARY KEY(execution_id,sequence));
     CREATE TABLE agent_bot_skill(id INTEGER PRIMARY KEY, name TEXT, description TEXT,
         category TEXT, system_prompt TEXT, sample_prompt TEXT, tools TEXT, enabled INTEGER,
         revision INTEGER, created_at TEXT, updated_at TEXT);

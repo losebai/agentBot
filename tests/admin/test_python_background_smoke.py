@@ -8,11 +8,16 @@ from fastapi import FastAPI
 
 from agent_bot.admin.config import AdminConfig
 from agent_bot.admin.routes import install_admin
+from agent_bot.ai.sessions import AiSessionStore
 
 
-async def test_python_status_settings_and_text_probe(admin_store, admin_runtime):
+async def test_python_status_settings_and_text_probe(
+    admin_store, admin_runtime, agent_database, agent_params,
+):
     """使用真实 ASGI 路由及配置存储，只替换外部模型调用。"""
     admin_runtime.ai_service = SimpleNamespace(
+        sessions=AiSessionStore(agent_params, connect=agent_database.connect),
+        active_requests=0,
         readiness=AsyncMock(return_value=None),
         complete=AsyncMock(
             return_value=SimpleNamespace(content="Python 回复", metadata=lambda: None)
@@ -32,6 +37,7 @@ async def test_python_status_settings_and_text_probe(admin_store, admin_runtime)
         assert "job" not in status.json()["legacy_capabilities"]
         assert status.json()["job_enabled"] is False
         assert status.json()["auto_speak_enabled"] is False
+        assert status.json()["statistics"]["conversation_count"] == 0
         settings = await api.get("/api/v1/settings")
         fields = {field["name"]: field for field in settings.json()["fields"]}
         assert "chat_job_enabled" in fields and "chat_auto_speak_mcp_code" in fields

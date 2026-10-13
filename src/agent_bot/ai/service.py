@@ -1,4 +1,4 @@
-"""Ordinary model calls share budgets, cancellation, and honest recording outcomes."""
+"""普通模型调用共享并发预算、取消和归档边界，并暴露当前对话活动计数。"""
 
 import asyncio
 import logging
@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 
 class AiService:
+    """普通模型调用共用并发名额，独立统计对话活动并保留取消和归档边界。"""
+
     def __init__(
         self,
         catalog: AiCatalog,
@@ -39,11 +41,18 @@ class AiService:
         *,
         max_concurrent_requests: int = 8,
     ):
+        """注入目录、记录与协议供应商，模型发现与生成共用并发预算。"""
         self.catalog, self.sessions, self.credentials = catalog, sessions, credentials
         self.providers = providers
         self._maximum = max_concurrent_requests
         self._active = 0
+        self._active_requests = 0
         self._closed = False
+
+    @property
+    def active_requests(self) -> int:
+        """当前普通对话请求数，不将模型目录发现请求算作正在生成的对话。"""
+        return self._active_requests
 
     def credential_available(self, provider) -> bool:
         """供应商就绪状态只检查数据库快照中的凭据。"""
@@ -51,7 +60,7 @@ class AiService:
 
     async def upstream_models(self, provider_id, expected_revision):
         """模型发现与生成共用活动配额和协议传输，退出时归还名额。"""
-        async with self._slot():
+        async with self._slot(conversation=False):
             with request_deadline(15):
                 provider = await self.catalog.get_provider(provider_id, expected_revision)
                 result = await discover_models(
@@ -75,14 +84,19 @@ class AiService:
         )
 
     @asynccontextmanager
-    async def _slot(self):
+    async def _slot(self, *, conversation: bool = True):
+        """在同一事件循环内占用名额，所有终态和取消都归还活动计数。"""
         if self._closed or self._active >= self._maximum:
             raise AiError("AI_BUSY", status_code=429)
         self._active += 1
+        if conversation:
+            self._active_requests += 1
         try:
             yield
         finally:
             self._active -= 1
+            if conversation:
+                self._active_requests -= 1
 
     async def _prepare(self, request: TextRequest):
         """从数据库固定本次调用的模型、地址和凭据，不跨请求缓存配置。"""

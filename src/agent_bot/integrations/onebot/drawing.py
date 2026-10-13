@@ -99,15 +99,15 @@ class DrawingCommandHandler:
     async def handle(
         self, bot: Bot, event: MessageEvent, argument: Message, *, matcher: type[Matcher],
     ) -> None:
-        """非等待取得会话锁，仅覆盖答复、入队和当前聊天轮次提交。"""
+        """开画流程仅计入会话活动，保护重置但允许同群聊天并发。"""
 
         session_id = self._session_id_provider(bot, event)
         try:
-            async with self._queue_provider().session_guard(session_id, wait=False):
+            async with self._queue_provider().session_activity(session_id):
                 await self._draw(
                     bot, event, argument, matcher=matcher, session_id=session_id,
                 )
-        except ConversationSessionBusyError:
+        except (ConversationSessionBusyError, ChatBusyError):
             await matcher.finish()
 
     async def _draw(

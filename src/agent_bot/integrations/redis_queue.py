@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import time
 import uuid
@@ -159,6 +160,25 @@ class RedisConversationQueueStore:
                 except WatchError:
                     continue
 
+    async def contains_entry(self, stream_id: str) -> bool:
+        """完成回执保留时，按精确 Stream 标识检查是否仍有待处理源条目。"""
+        return bool(await self._redis.xrange(
+            self._stream_key, min=stream_id, max=stream_id, count=1,
+        ))
+
+    async def has_session_entries(self, session_id: str) -> bool:
+        """重置时分批检查持久源条目，已完成去重回执不构成活动会话。"""
+        cursor = "-"
+        while True:
+            entries = await self._redis.xrange(self._stream_key, min=cursor, count=128)
+            if not entries:
+                return False
+            if any(
+                json.loads(fields["payload"])["sessionId"] == session_id for _, fields in entries
+            ):
+                return True
+            cursor = f"({entries[-1][0]}"
+
     async def read_new(self, *, count: int, block_ms: int) -> list[QueuedConversation]:
         """读取新任务，并在存储边界隔离损坏或旧版条目。"""
 
@@ -184,7 +204,8 @@ class RedisConversationQueueStore:
             min=self._reclaim_cursor,
             max="+",
             count=count,
-            idle=min_idle_ms,
+            # 零阈值恢复应检查全部 pending，避免同毫秒领取的条目被 IDLE 过滤遗漏。
+            idle=min_idle_ms if min_idle_ms > 0 else None,
         )
         message_ids = [item["message_id"] for item in pending]
         if message_ids:

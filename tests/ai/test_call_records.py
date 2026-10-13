@@ -49,6 +49,59 @@ async def test_new_calls_share_table_and_keep_field_meanings(ai_params, unified_
     assert detail.data["usage"]["total_tokens"] == 4
 
 
+async def test_overview_statistics_sum_usage_once_and_weight_only_reported_cache(
+    ai_params, unified_db,
+):
+    """按调用归档统计，系统调用计用量，未知缓存不稀释命中率，超长记录仍参与。"""
+    store = CallRecordStore(ai_params, connect=unified_db.connect)
+    usages = [
+        {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110,
+         "cached_tokens": 60},
+        {"prompt_tokens": 200, "completion_tokens": 20, "cached_tokens": 50},
+        {"prompt_tokens": 20, "completion_tokens": 2, "total_tokens": 22,
+         "cached_tokens": 0},
+        {"prompt_tokens": 1000, "completion_tokens": 1, "total_tokens": 1001},
+        {},
+        {"prompt_tokens": 50, "completion_tokens": 5, "cached_tokens": 0},
+    ]
+    rows = []
+    for number, usage in enumerate(usages):
+        data = {"choices": [], "usage": usage}
+        if number == 1:
+            data["toolCalls"] = []
+        if number == 2:
+            data["system_kind"] = "command"
+        rows.append(legacy_record({
+            "id": number, "session_Id": "同一会话", "data": data,
+            "content": "长输入" * 30000 if number == 5 else "输入",
+            "replay_context": "回答",
+        }, "overview-test"))
+    # 统一表是权威归档；不再累加原始普通与 Agent 执行表，避免重复计算。
+    await store.import_batch(rows)
+    stats = await store.statistics()
+    assert stats.conversation_count == 5
+    assert stats.total_tokens == 1408
+    assert stats.prompt_tokens == 1370
+    assert stats.completion_tokens == 38
+    assert stats.cached_tokens == 110
+    assert stats.cache_prompt_tokens == 370
+    assert stats.cache_hit_rate == pytest.approx(110 / 370)
+
+
+async def test_empty_or_unreported_cache_statistics_remain_unknown(ai_params, unified_db):
+    """空库累计为零；只有输入用量但没有缓存报告时，命中率仍为未知。"""
+    store = CallRecordStore(ai_params, connect=unified_db.connect)
+    empty = await store.statistics()
+    assert empty.conversation_count == empty.total_tokens == 0
+    assert empty.cache_hit_rate is None
+    await store.import_batch([legacy_record({
+        "id": 1, "data": {"choices": [], "usage": {"prompt_tokens": 100}},
+    }, "overview-test")])
+    partial = await store.statistics()
+    assert partial.cache_hit_rate is None
+    assert partial.total_tokens == 100
+
+
 async def test_legacy_idempotency_and_type_bound_cursor(ai_params, unified_db):
     """来源隔离相同旧主键，重复导入不覆盖记录且游标不能换筛选。"""
     store = CallRecordStore(ai_params, connect=unified_db.connect)

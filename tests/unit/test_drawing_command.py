@@ -267,3 +267,26 @@ async def test_cancelled_direct_draw_releases_session_guard(drawing) -> None:
     async with drawing.plugin.conversation_queue.session_guard(session_id, wait=False):
         pass
     drawing.commit.assert_not_awaited()
+
+
+async def test_drawing_start_allows_concurrent_chat_activity(drawing) -> None:
+    """开画预告仍阻止重置，但不能独占整个群的正常聊天。"""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def pause(*_args, **_kwargs):
+        """保持开画流程活跃，检查同群另一条请求的非等待准入。"""
+        entered.set()
+        await release.wait()
+        return "1-0"
+
+    drawing.enqueue.side_effect = pause
+    task = asyncio.create_task(run_draw(drawing))
+    await entered.wait()
+    try:
+        session_id = drawing.plugin._event_context.session_id(Mock(self_id="90001"), draw_event())
+        async with drawing.plugin.conversation_queue.session_activity(session_id):
+            pass
+    finally:
+        release.set()
+        await task

@@ -43,7 +43,7 @@ async def test_revoked_token_prevents_second_call():
     await store.revoke(token)
     with pytest.raises(AgentError) as error:
         await bridge.call(ToolCall(call_id="two", name="memory", arguments={}), authority)
-    assert error.value.code == "AGENT_TOOL_UNAUTHORIZED"
+    assert error.value.code == "AGENT_TOOL_SESSION_EXPIRED"
     assert invoked == ["group:1"]
 
 

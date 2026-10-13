@@ -28,7 +28,7 @@ from agent_bot.model_guard import (
 )
 from agent_bot.models import ChatMediaItem, ChatMediaResponse, ChatToolName
 from agent_bot.services.chat import ChatService
-from agent_bot.services.chat.errors import ChatBusyError, ChatRateLimitedError
+from agent_bot.services.chat.errors import ChatRateLimitedError, is_chat_busy_error
 from agent_bot.services.conversation_queue import (
     ConversationJob,
     ConversationJobExpiredError,
@@ -59,19 +59,23 @@ logger = logging.getLogger(__name__)
 
 
 _SILENT_FAILURES = (
-    ChatRateLimitedError, ChatBusyError, ConversationQueueFullError, ConversationJobExpiredError,
+    ChatRateLimitedError, ConversationQueueFullError, ConversationJobExpiredError,
     ChatAiUnavailableError, ChatAiRejectedError, ChatAiProtocolError,
     ModelGuardUnavailableError,
 )
 
 
-def generated_reply_from_model(text: str, request_id: str) -> GeneratedReply:
-    """仅适配非空模型文字；空白结果按模型协议错误分类，禁止二次模型解释。"""
+def generated_reply_from_model(
+    text: str, request_id: str, *, as_file: bool = False,
+) -> GeneratedReply:
+    """仅适配非空模型正文，文件保留格式；空白结果不能二次模型解释。"""
 
-    normalized = text.strip()
-    if not normalized:
+    normalized = text if as_file else text.strip()
+    if not normalized.strip():
         raise ChatAiProtocolError("model reply is empty")
-    return GeneratedReply(text=normalized, requestId=request_id)
+    return GeneratedReply.model_validate(
+        {"text": normalized, "requestId": request_id}, context={"file_reply": as_file},
+    )
 
 
 class ConversationQueueProcessor:
@@ -297,6 +301,25 @@ class ConversationQueueProcessor:
                 )
             if not answer and current_tool_images():
                 return ConversationResult(kind="TOOL_IMAGES", toolImages=current_tool_images())
+            # 普通聊天超过文字上限改为完整文件；自动发言继续遵循专用长度上限。
+            if (
+                answer is not None and job.auto_speak_max_reply_chars is None
+                and len(answer.strip()) > max_reply_chars
+            ):
+                generated = generated_reply_from_model(answer, job.request_id, as_file=True)
+                selected = reply_collector.reply if reply_collector is not None else None
+                if reply_collector is not None and reply_collector.already_delivered:
+                    return ConversationResult(kind="SILENT")
+                return ConversationResult(
+                    kind="TOOL_REPLY" if tools else "TEXT", replyAsFile=True,
+                    reply=PersistedGeneratedReply.model_validate(generated.model_dump(by_alias=True)),
+                    deliveryParts=(generated.text,),
+                    mentionTargetId=(
+                        str(selected.target_user_id)
+                        if selected is not None and selected.target_user_id is not None
+                        else job.mention_target_id
+                    ) if tools else None,
+                )
             if tools:
                 selected = reply_collector.reply if reply_collector is not None else None
                 if reply_collector is not None and reply_collector.already_delivered:
@@ -565,6 +588,8 @@ class ConversationQueueProcessor:
 
         if self._requires_image_completion(job, result):
             return 2
+        if result.reply_as_file:
+            return 1 + int(self._file_mention_target(job, result) is not None)
         if result.kind in {"SILENT", "IMAGE_QUEUED", "TOOL_IMAGES"}:
             return 0
         if result.kind == "TEXT":
@@ -574,6 +599,14 @@ class ConversationQueueProcessor:
         if result.kind == "MIXED":
             return 1 + len(result.delivery_parts)
         return 1
+
+    def _file_mention_target(
+        self, job: ConversationJob, result: ConversationResult,
+    ) -> str | None:
+        """文件上传和群提醒分别保存进度，提醒只能使用原任务或工具登记的目标。"""
+        if job.scene != "group":
+            return None
+        return result.mention_target_id if result.kind == "TOOL_REPLY" else job.mention_target_id
 
     async def deliver_part(
         self, job: ConversationJob, result: ConversationResult, index: int,
@@ -615,6 +648,25 @@ class ConversationQueueProcessor:
                 return
             if index != 0:
                 raise ValueError("image with completion has exactly two deliveries")
+        if result.reply_as_file:
+            validated = ConversationResult.model_validate(result.model_dump(by_alias=True))
+            assert validated.reply is not None
+            target = self._file_mention_target(job, validated)
+            if index == 1 and target is not None:
+                await self._reply_gateway.send_file_mention(
+                    self._bot_provider(job.bot_id), target_id=job.group_id, member_id=target,
+                )
+                return
+            if index != 0:
+                raise ValueError("file reply delivery index is invalid")
+            await self._reply_gateway.send_reply_file(
+                self._bot_provider(job.bot_id), scene=job.scene,
+                target_id=job.group_id or job.user_id,
+                reply=GeneratedReply.model_validate(
+                    validated.reply.model_dump(by_alias=True), context={"file_reply": True},
+                ),
+            )
+            return
         if result.kind == "TOOL_REPLY":
             if index != 0:
                 raise ValueError("tool reply has exactly one delivery")
@@ -704,12 +756,18 @@ class ConversationQueueProcessor:
             raise
 
     async def deliver_failure(self, job: ConversationJob, error: Exception) -> None:
-        """模型配置拒绝直接报错，其余模型失败静默，业务失败才调用解释模型。"""
+        """配置和忙碌状态直接通知，其余模型失败静默，业务失败才调用解释模型。"""
 
         if (
             job.ai_job_id is not None
             or job.auto_speak_max_reply_chars is not None
         ):
+            return
+        if is_chat_busy_error(error):
+            await self._reply_gateway.send_busy_error(
+                self._bot_provider(job.bot_id), scene=job.scene,
+                target_id=job.group_id or job.user_id,
+            )
             return
         if model_configuration_error_code(error) is not None:
             await self._reply_gateway.send_configuration_error(

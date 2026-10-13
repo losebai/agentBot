@@ -248,8 +248,64 @@ class CallDetail(CallSummary):
     tool_steps: list[StepView] = Field(default_factory=list)
 
 
+class CallStatistics(AiModel):
+    """统一归档的累计用量，缓存比例只使用同时上报缓存和输入用量的调用。"""
+
+    conversation_count: int = Field(ge=0)
+    total_tokens: int = Field(ge=0)
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    cached_tokens: int = Field(ge=0)
+    cache_prompt_tokens: int = Field(ge=0)
+    cache_hit_rate: float | None = Field(default=None, ge=0, le=1)
+
+
 class CallRecordStore(AiDatabase):
     """统一记录分页和幂等历史导入，时间相同时由自增主键稳定排序。"""
+
+    async def statistics(self) -> CallStatistics:
+        """在数据库内聚合统一记录，避免分页遗漏或重复累加原始执行表。"""
+        def number(*fields: str) -> str:
+            """仅引用固定 JSON 路径，兼容旧协议字段、超长归档和两种后端的 JSON null。"""
+            paths = [f"$.{prefix}.{field}" for prefix in ("usage", "original_data.usage")
+                     for field in fields]
+            parts = []
+            for path in paths:
+                value = f"JSON_EXTRACT(data, '{path}')"
+                parts.append(
+                    f"CASE WHEN JSON_TYPE({value}) IN ('INTEGER','DOUBLE','integer','real') "
+                    f"THEN {value} END"
+                )
+            return "COALESCE(" + ",".join(parts) + ")" if len(parts) > 1 else parts[0]
+
+        prompt = number("prompt_tokens", "input_tokens")
+        completion = number("completion_tokens", "output_tokens")
+        total = number("total_tokens")
+        cached = number("cached_tokens", "prompt_tokens_details.cached_tokens",
+                        "input_tokens_details.cached_tokens")
+        cache_prompt = f"COALESCE({number('cache_prompt_tokens')},{prompt})"
+        row = await self.run(lambda c: query(
+            c,
+            "SELECT COUNT(CASE WHEN system_kind IS NULL THEN 1 END) AS conversation_count, "
+            "COALESCE(SUM(COALESCE(total_tokens,"
+            "COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0))),0) "
+            "AS total_tokens, COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, "
+            "COALESCE(SUM(completion_tokens),0) AS completion_tokens, "
+            "COALESCE(SUM(CASE WHEN cache_prompt_tokens IS NOT NULL THEN cached_tokens END),0) "
+            "AS cached_tokens, "
+            "COALESCE(SUM(CASE WHEN cached_tokens IS NOT NULL THEN cache_prompt_tokens END),0) "
+            "AS cache_prompt_tokens "
+            f"FROM (SELECT {_SYSTEM_KIND} AS system_kind, {prompt} AS prompt_tokens, "
+            f"{completion} AS completion_tokens, {total} AS total_tokens, "
+            f"{cached} AS cached_tokens, {cache_prompt} AS cache_prompt_tokens "
+            f"FROM {_TABLE}) AS usage_records",
+            one=True,
+        ))
+        row["cache_hit_rate"] = (
+            row["cached_tokens"] / row["cache_prompt_tokens"]
+            if row["cache_prompt_tokens"] else None
+        )
+        return CallStatistics.model_validate(row)
 
     async def import_batch(self, rows):
         """单批原子导入，已存在的来源主键不会被历史快照覆盖。"""

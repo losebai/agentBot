@@ -149,6 +149,8 @@ async def image_stores():
     ) for name in ("text", "image"))
     for store in stores:
         await store.initialize()
+        # 该夹具不恢复历史任务，模拟启动器已经完成空队列的恢复扫描。
+        await store.reclaim(count=1, min_idle_ms=0)
     try:
         yield stores
     finally:

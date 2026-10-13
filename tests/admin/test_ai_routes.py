@@ -224,3 +224,67 @@ async def test_system_records_api_filters_and_validates_category(python_api):
     assert [r["source_id"] for r in commands.json()["items"]] == ["3"]
     assert (await api.get("/api/v1/ai/records?category=bad", headers=HEADERS)).status_code == 422
     assert (await api.get("/api/v1/ai/records?category=system")).status_code == 401
+
+
+async def test_status_statistics_use_live_counts_and_authenticated_archive(python_api):
+    """真实认证接口汇总归档，历史 running 状态与模型发现不增加实时对话数。"""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from agent_bot.ai.call_records import CallRecordStore, legacy_record
+
+    api, _, runtime = python_api
+    service = runtime.ai_service
+    store = CallRecordStore(service.sessions.params, connect=service.sessions.connect)
+    await store.import_batch([legacy_record({
+        "id": 1, "data": {"choices": [], "status": "running", "usage": {
+            "prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110,
+            "cached_tokens": 30,
+        }},
+    }, "offline")])
+    runtime.agent_service = SimpleNamespace(
+        active_requests=2, readiness=AsyncMock(return_value=None),
+    )
+    assert (await api.get("/api/v1/status")).status_code == 401
+    async with service._slot(), service._slot(conversation=False):
+        response = await api.get("/api/v1/status", headers=HEADERS)
+        assert response.status_code == 200, response.text
+        stats = response.json()["statistics"]
+        assert stats["conversation_count"] == 1
+        assert stats["running_requests"] == 3
+        assert stats["total_tokens"] == 110
+        assert stats["cache_hit_rate"] == pytest.approx(0.3)
+    runtime.agent_service.active_requests = 0
+    response = await api.get("/api/v1/status", headers=HEADERS)
+    assert response.json()["statistics"]["running_requests"] == 0
+
+
+async def test_statistics_database_error_is_reported_without_secrets(python_api, monkeypatch):
+    """统计失败返回明确错误，不能显示虚假零值或泄漏底层数据库详情。"""
+    import pymysql
+
+    api, _, runtime = python_api
+
+    def broken(**kwargs):
+        """只破坏记录连接，目录就绪与测试数据库保持独立。"""
+        raise pymysql.OperationalError(2003, "private-database-secret")
+
+    monkeypatch.setattr(runtime.ai_service.sessions, "connect", broken)
+    response = await api.get("/api/v1/status", headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json()["statistics"] is None
+    assert response.json()["statistics_error"] == "AI_DATABASE_UNAVAILABLE"
+    assert "private-database-secret" not in response.text
+
+
+async def test_status_keeps_readiness_when_archive_schema_needs_upgrade(python_api):
+    """未升级归档表的已有部署仍可查看服务状态，统计必须明确提示不可用。"""
+    api, _, runtime = python_api
+    sessions = runtime.ai_service.sessions
+    await sessions.run(lambda c: c.db.connection.execute("DROP TABLE agent_bot_call_record"),
+                       write=True)
+    response = await api.get("/api/v1/status", headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json()["ready"] is True
+    assert response.json()["statistics"] is None
+    assert response.json()["statistics_error"] == "AI_NOT_INITIALIZED"

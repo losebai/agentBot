@@ -20,12 +20,26 @@ export interface SettingsSnapshot {
   fields: SettingField[];
 }
 
+/** 持久归档累计与当前进程的活动请求分开统计，未上报缓存信息保持未知。 */
+export interface OverviewStatistics {
+  conversation_count: number;
+  running_requests: number;
+  total_tokens: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  cache_prompt_tokens: number;
+  cache_hit_rate: number | null;
+}
+
 export interface ServiceStatus {
   service: 'agentBot';
   ready: boolean;
   bot_count: number;
   database_revision: number;
   applied_revision: number;
+  statistics?: OverviewStatistics | null;
+  statistics_error?: string | null;
   restart_required_fields: string[];
   ai_backend: 'python-ordinary';
   plain_ai_backend?: 'python';

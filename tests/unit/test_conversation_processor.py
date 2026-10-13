@@ -98,7 +98,7 @@ async def test_missing_model_reports_fixed_configuration_error_without_reply_mod
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error", [
-    ChatBusyError("busy"), ChatRateLimitedError("limited"),
+    ChatRateLimitedError("limited"),
     ConversationQueueFullError("full"), ConversationJobExpiredError("expired"),
 ])
 async def test_queue_overload_failures_are_silent(monkeypatch, chat_plugin, error) -> None:
@@ -110,6 +110,28 @@ async def test_queue_overload_failures_are_silent(monkeypatch, chat_plugin, erro
     monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", generate)
     await chat_plugin._ConversationProcessor().deliver_failure(queued_job(), error)
     assert not bot.mock_calls
+    generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [
+    ChatBusyError("secret"), ChatAiUnavailableError("secret", status_code=429),
+])
+async def test_queue_busy_failure_sends_status_without_requesting_model(
+    monkeypatch, chat_plugin, error,
+):
+    """额度已满时仅发系统状态提示，禁止追加模型负载或暴露异常细节。"""
+    bot = onebot_mock()
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
+    generate = AsyncMock(return_value="不应生成")
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", generate)
+    await chat_plugin._ConversationProcessor().deliver_failure(
+        queued_job(), error,
+    )
+    bot.call_api.assert_awaited_once()
+    message = str(bot.call_api.await_args.kwargs["message"])
+    assert "并发" in message
+    assert "secret" not in message
     generate.assert_not_awaited()
 
 
@@ -931,7 +953,6 @@ async def test_processor_composes_sanitized_failure_once(monkeypatch, chat_plugi
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error", [
     ChatAiUnavailableError("sensitive"),
-    ChatAiUnavailableError("sensitive", status_code=429),
     ChatAiUnavailableError("sensitive", status_code=503),
     ChatAiRejectedError("sensitive", status_code=403),
     ChatAiProtocolError("sensitive"),

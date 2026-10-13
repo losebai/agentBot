@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, create_model, model_validator
 
 from agent_bot.agent.contracts import AgentReadiness
+from agent_bot.ai.call_records import CallStatistics
 from agent_bot.ai.contracts import CatalogReadiness, CompletionMetadata
 from agent_bot.config import RuntimeConfig
 from agent_bot.media.contracts import MediaReadiness
@@ -88,8 +89,14 @@ class BotInfo(ApiModel):
     adapter: str
 
 
+class OverviewStatistics(CallStatistics):
+    """累计数据来自数据库，正在运行数量来自当前进程，避免历史 running 残留误报。"""
+
+    running_requests: int = Field(ge=0)
+
+
 class ServiceStatus(ApiModel):
-    """数据库、媒体存储就绪与机器人连接分别展示。"""
+    """同时展示服务就绪、连接、累计用量与当前对话活动。"""
 
     service: Literal["agentBot"] = "agentBot"
     ready: bool
@@ -113,6 +120,8 @@ class ServiceStatus(ApiModel):
     auto_speak_enabled: bool = False
     python_media: MediaReadiness | None = None
     python_ai: CatalogReadiness | None = None
+    statistics: OverviewStatistics | None = None
+    statistics_error: str | None = None
 
 
 class ChatRequest(ApiModel):

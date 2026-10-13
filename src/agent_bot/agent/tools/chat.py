@@ -30,7 +30,7 @@ class ChatToolBridge:
         try:
             return await server.resolve_context(token)
         except ToolSessionExpiredError as error:
-            raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403) from error
+            raise AgentError("AGENT_TOOL_SESSION_EXPIRED", status_code=403) from error
 
     async def list_tools(self, authority):
         """令牌每次重新验证，本地 schema 投影不改变服务端原始约束。"""
@@ -38,7 +38,7 @@ class ChatToolBridge:
         try:
             result = await server.list_tools(token)
         except ToolSessionExpiredError as error:
-            raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403) from error
+            raise AgentError("AGENT_TOOL_SESSION_EXPIRED", status_code=403) from error
         return tuple(
             ToolDefinition(
                 name=item.name,
@@ -62,5 +62,5 @@ class ChatToolBridge:
         try:
             result = await server.call_tool(token, call.name, call.arguments)
         except ToolSessionExpiredError as error:
-            raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403) from error
+            raise AgentError("AGENT_TOOL_SESSION_EXPIRED", status_code=403) from error
         return convert_result(call, result)

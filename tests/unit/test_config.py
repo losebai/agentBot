@@ -110,7 +110,8 @@ def test_config_has_safe_operational_defaults() -> None:
     assert config.chat_tts_max_input_chars == 1000
     assert config.chat_tts_max_audio_bytes == 5_242_880
     assert config.chat_queue_max_pending == 1000
-    assert config.chat_queue_workers == 4
+    assert config.chat_queue_workers == 8
+    assert config.chat_max_concurrent_requests == 8
     assert config.chat_queue_media_workers == 1
     assert config.chat_queue_max_attempts == 3
     assert config.chat_queue_retry_initial_seconds == 2

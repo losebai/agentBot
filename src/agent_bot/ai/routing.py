@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import SecretStr
 
 from agent_bot.agent.contracts import AgentRequest, ExecutionAuthority
+from agent_bot.agent.errors import PARTIAL_REPLY_ERRORS, AgentError
 from agent_bot.agent.tools.policy import MEDIA_TOOLS
 from agent_bot.ai.catalog import AiCatalog
 from agent_bot.ai.chat_errors import (
@@ -213,7 +214,7 @@ class RoutingAiClient:
         tool_session_token: str | None = None,
         laya_decision: bool = False,
     ) -> str:
-        """将 QQ 图片传给 Python Agent，纯识图强制不启用工具或预设。"""
+        """QQ Agent 超时发送已有正文；图片路由继续保留原请求授权。"""
         route = AiRouteRequest(
             agent=use_agent,
             web=use_web_search,
@@ -275,6 +276,12 @@ class RoutingAiClient:
             )
             return (await self.python_service.complete(request)).content
         except AiError as error:
+            # 仅采用本次 QQ 请求实际产生的文字，失败记录仍由 Agent 保存。
+            if (
+                isinstance(error, AgentError) and error.code in PARTIAL_REPLY_ERRORS
+                and error.partial_content.strip()
+            ):
+                return error.partial_content
             if error.status_code in {503, 504, 429}:
                 exception = ChatAiUnavailableError
             elif error.code.startswith("AI_RESPONSE"):

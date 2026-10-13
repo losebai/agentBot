@@ -1,4 +1,4 @@
-"""聊天直接请求互斥、排队请求并行、全局并发和冷却控制。"""
+"""聊天非等待并发准入、会话活动统计与冷却控制。"""
 
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ class ChatRequestCoordinator:
         self._media_semaphore = asyncio.Semaphore(max_concurrent_media_requests)
         self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         self._next_allowed: OrderedDict[str, float] = OrderedDict()
+        self._active_sessions: dict[str, int] = {}
 
     def accept(self, session_id: str) -> None:
         """消费一次会话冷却额度，超限时抛出明确异常。"""
@@ -61,25 +62,33 @@ class ChatRequestCoordinator:
         consume_cooldown: bool,
         media: bool = False,
     ) -> AsyncIterator[None]:
-        """同会话顺序执行；媒体和文本分别受并发上限约束。"""
+        """同会话并发执行；所有调用在额度满或重置进行中时立即拒绝。"""
 
         lock = self._session_lock(session_id)
         semaphore = self._media_semaphore if media else self._semaphore
-        if reject_busy and lock.locked():
-            raise ChatBusyError("this session already has an in-flight request")
-        async with lock:
-            if reject_busy and semaphore.locked():
-                raise ChatBusyError("global AI concurrency limit reached")
+        # reject_busy 保留调用兼容性；排队入口也不能等待锁或全局执行额度。
+        if lock.locked():
+            raise ChatBusyError("this session is being reset")
+        if semaphore.locked():
+            raise ChatBusyError("global AI concurrency limit reached")
+        async with semaphore:
             if consume_cooldown:
                 self.accept(session_id)
-            async with semaphore:
+            self._active_sessions[session_id] = self._active_sessions.get(session_id, 0) + 1
+            try:
                 yield
+            finally:
+                remaining = self._active_sessions[session_id] - 1
+                if remaining:
+                    self._active_sessions[session_id] = remaining
+                else:
+                    del self._active_sessions[session_id]
 
     async def reset(self, session_id: str, clear: Callable[[], Awaitable[bool]]) -> bool:
-        """在会话互斥范围内清除冷却状态和持久化会话。"""
+        """无活动请求时独占清理会话，重置期间的新请求立即拒绝。"""
 
         lock = self._session_lock(session_id)
-        if lock.locked():
+        if lock.locked() or self._active_sessions.get(session_id, 0):
             raise ChatBusyError("this session already has an in-flight request")
         async with lock:
             self._next_allowed.pop(session_id, None)

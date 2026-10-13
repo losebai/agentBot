@@ -119,6 +119,21 @@ class SqliteConversationQueueStore:
 
         return await run_sqlite(self.path, insert)
 
+    async def contains_entry(self, stream_id: str) -> bool:
+        """只把仍在当前命名空间的源任务算作待处理，忽略完成后保留的去重回执。"""
+        return await run_sqlite(self.path, lambda connection: connection.execute(
+            "SELECT 1 FROM chat_queue_jobs WHERE namespace = ? AND stream_id = ?",
+            (self._namespace, stream_id),
+        ).fetchone() is not None)
+
+    async def has_session_entries(self, session_id: str) -> bool:
+        """在当前命名空间核对待处理会话，不依赖重启后丢失的活动计数。"""
+        return await run_sqlite(self.path, lambda connection: connection.execute(
+            "SELECT 1 FROM chat_queue_jobs "
+            "WHERE namespace = ? AND json_extract(payload, '$.sessionId') = ? LIMIT 1",
+            (self._namespace, session_id),
+        ).fetchone() is not None)
+
     async def read_new(self, *, count: int, block_ms: int) -> list[QueuedConversation]:
         """非阻塞轮询新任务，SQLite 查询本身在线程中执行。"""
         if count <= 0 or block_ms < 0:

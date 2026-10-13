@@ -18,7 +18,7 @@ from agent_bot.agent.contracts import (
     TurnMessage,
 )
 from agent_bot.agent.engine import AgentEngine, PreparedRun
-from agent_bot.agent.errors import AgentError
+from agent_bot.agent.errors import PARTIAL_REPLY_ERRORS, AgentError
 from agent_bot.agent.model_routing import AgentModelRouter
 from agent_bot.agent.tools.policy import LEGACY_TOOLS
 from agent_bot.ai.contracts import TokenUsage
@@ -27,7 +27,11 @@ from agent_bot.media.contracts import MediaOwner, MediaScope
 from agent_bot.media.inputs import ImagePreparer
 from agent_bot.media.store import finish_cleanup
 from agent_bot.models import LlmRequestOptions
-from agent_bot.services.request_deadline import remaining_timeout, request_deadline
+from agent_bot.services.request_deadline import (
+    clear_request_deadline,
+    remaining_timeout,
+    request_deadline,
+)
 
 
 class AgentService:
@@ -52,6 +56,11 @@ class AgentService:
         self.active = 0
         self.media_store, self.image_downloader = media_store, image_downloader
         self.maximum_images = min(maximum_images, 8)
+
+    @property
+    def active_requests(self) -> int:
+        """暴露实际活动请求数，完成和取消沿用既有 finally 归还计数。"""
+        return self.active
 
     async def readiness(self, agent_code=None):
         return await self.catalog.readiness(agent_code)
@@ -141,6 +150,7 @@ class AgentService:
         ), provider
 
     async def complete(self, request, authority):
+        """QQ 超时可携带当前轮正文，调用仍抛错并保存失败终态。"""
         text, result = "", None
         async with aclosing(self.stream(request, authority)) as events:
             async for event in events:
@@ -150,7 +160,10 @@ class AgentService:
                     text += event.delta or ""
                 elif event.kind == "error":
                     raise AgentError(
-                        event.code or "AGENT_FAILED", status_code=event.status_code or 502
+                        event.code or "AGENT_FAILED", status_code=event.status_code or 502,
+                        partial_content=text if (
+                            authority.entry == "qq" and event.code in PARTIAL_REPLY_ERRORS
+                        ) else "",
                     )
                 elif event.kind == "done":
                     result = AgentCompletion(content=text, **event.metadata.model_dump())
@@ -330,7 +343,8 @@ class AgentService:
                         "error", code=error_code, message="Agent 未能完成请求", status_code=500
                     )
                 finally:
-                    with anyio.CancelScope(shield=True):
+                    # 模型预算已耗尽时仍用 save 的最多十秒完成归档，不能重启模型或工具。
+                    with anyio.CancelScope(shield=True), clear_request_deadline():
                         if begun:
                             if pending_tool is not None:
                                 sequence += 1

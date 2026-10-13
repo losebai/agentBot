@@ -34,4 +34,5 @@ docs/**
 /docs/migration/
 /docs/superpowers/
 2026*
-!sql/2026-10-13-local-queue.sql
+# 发布包引用日期命名的迁移脚本，不能被全局日期文件忽略规则排除。
+!sql/2026*.sql

@@ -115,6 +115,9 @@ def build_agent_graph(
                 if completed is None or text != completed.content:
                     raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
             except AiError as error:
+                # QQ 已有正文遇到模型超时直接结束；备用接管会清空这轮可投递内容。
+                if error.code == "AI_TIMEOUT" and prepared.authority.entry == "qq" and text.strip():
+                    raise
                 if router is None:
                     raise
                 message = router.forward(error)
@@ -132,14 +135,7 @@ def build_agent_graph(
         usage = (
             completed.usage
             if previous is None
-            else TokenUsage(
-                **{
-                    key: value + getattr(previous, key)
-                    if value is not None and getattr(previous, key) is not None
-                    else None
-                    for key, value in completed.usage.model_dump().items()
-                }
-            )
+            else previous.add(completed.usage)
         )
         if final_only and completed.calls:
             raise AgentError("AGENT_TOOL_LIMIT", status_code=422)

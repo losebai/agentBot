@@ -162,6 +162,37 @@ class FailingProvider(Provider):
             yield event
 
 
+async def test_qq_timeout_with_body_sends_existing_text_before_fallback(
+    media_database, agent_params, media_model,
+):
+    """已有正文超时即交给 QQ 投递，不切换备用模型丢弃本轮生成。"""
+    from agent_bot.ai.routing import RoutingAiClient
+    from agent_bot.models import LlmRequestOptions
+
+    class PartialTimeoutProvider(Provider):
+        """主模型输出后超时，备用调用会明显暴露重复生成。"""
+
+        async def stream_turn(self, call):
+            """记录实际绑定，输出同一片段后返回稳定超时码。"""
+            self.calls.append(call)
+            yield ModelEvent(kind="text_delta", delta="已生成的汇编代码")
+            raise AiError("AI_TIMEOUT", status_code=504)
+
+    service, _, _, _, _ = await routed_service(media_database, agent_params, media_model)
+    provider = PartialTimeoutProvider()
+    service.providers["openai-chat"] = provider
+    client = RoutingAiClient(
+        AsyncMock(), agent_service=service, agent_code="routed", timeout_seconds=30,
+        default_options=LlmRequestOptions(), mcp_services=(),
+    )
+    assert await client.complete(
+        model="chat", session_id="s", prompt="写代码", messages=(), request_id="r",
+        use_web_search=False,
+    ) == "已生成的汇编代码"
+    assert len(provider.calls) == 1
+    assert (await service.records.list_runs()).items[0].status == "failed"
+
+
 async def test_forward_keeps_completed_tools_and_resets_failed_text(
     media_database,
     agent_params,

@@ -84,10 +84,17 @@ def to_model_turn(message: AIMessage, call: AgentModelCall) -> ModelTurn:
     ):
         raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
     stats = message.usage_metadata or {}
+    # SDK 的服务层级可能使用 priority_cache_read/flex_cache_read，均属于缓存输入。
+    cache_reads = [
+        value for key, value in (stats.get("input_token_details") or {}).items()
+        if (key == "cache_read" or key.endswith("_cache_read")) and value is not None
+    ]
     usage = TokenUsage(
         prompt_tokens=stats.get("input_tokens"),
         completion_tokens=stats.get("output_tokens"),
         total_tokens=stats.get("total_tokens"),
+        cached_tokens=sum(cache_reads) if cache_reads else None,
+        cache_prompt_tokens=stats.get("input_tokens") if cache_reads else None,
     )
     return ModelTurn(
         content=text,

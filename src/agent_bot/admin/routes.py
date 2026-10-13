@@ -25,12 +25,14 @@ from agent_bot.admin.models import (
     BotInfo,
     ChatRequest,
     ChatResponse,
+    OverviewStatistics,
     ServiceStatus,
     SettingsSnapshot,
     SettingsUpdate,
 )
 from agent_bot.admin.settings import SettingsService
 from agent_bot.admin.streaming import ManagedStreamingResponse
+from agent_bot.ai.call_records import CallRecordStore
 from agent_bot.ai.chat_errors import ChatAiError, ChatAiUnavailableError
 from agent_bot.ai.errors import AiError
 from agent_bot.model_guard import ModelGuardUnavailableError, ModelNotAvailableError
@@ -92,7 +94,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
 
     @router.get("/status", response_model=ServiceStatus)
     async def status() -> ServiceStatus:
-        """展示本地能力、后台开关和已缓存媒体状态，不重复初始化资源。"""
+        """在运行时租约内聚合归档并读取活动请求，保持热刷新和数据库释放边界。"""
         snapshot = await asyncio.to_thread(manager.read)
         async with runtime.lease():
             config = runtime.config
@@ -108,6 +110,24 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
             )
             media_resources = getattr(runtime, "media_resources", None)
             python_media = media_resources.readiness if media_resources is not None else None
+            statistics = None
+            statistics_error = None
+            if service is not None:
+                sessions = service.sessions
+                try:
+                    totals = await CallRecordStore(
+                        sessions.params, connect=sessions.connect
+                    ).statistics()
+                except AiError as error:
+                    # 旧部署可能尚未升级归档表；明确报告统计失败，保留独立服务就绪信息。
+                    statistics_error = error.code
+                else:
+                    statistics = OverviewStatistics(
+                        **totals.model_dump(),
+                        running_requests=service.active_requests + (
+                            agent_service.active_requests if agent_service is not None else 0
+                        ),
+                    )
         return ServiceStatus(
             ready=await runtime.is_ready(),
             bot_count=len(runtime.bots()),
@@ -121,6 +141,8 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
             job_enabled=config.chat_job_enabled,
             auto_speak_enabled=config.chat_auto_speak_enabled,
             python_media=python_media,
+            statistics=statistics,
+            statistics_error=statistics_error,
         )
 
     @router.post("/chat", response_model=ChatResponse)

@@ -239,9 +239,33 @@ class ProviderCall(AiModel):
 
 
 class TokenUsage(AiModel):
+    """模型上报的输入、输出和缓存输入用量；未上报字段保留未知值。"""
+
     prompt_tokens: int | None = Field(default=None, ge=0)
     completion_tokens: int | None = Field(default=None, ge=0)
     total_tokens: int | None = Field(default=None, ge=0)
+    cached_tokens: int | None = Field(default=None, ge=0)
+    cache_prompt_tokens: int | None = Field(default=None, ge=0)
+
+    def add(self, other: "TokenUsage") -> "TokenUsage":
+        """累计 Agent 轮次；普通用量保持未知语义，缓存只累计具有有效输入分母的样本。"""
+        values = {
+            field: getattr(self, field) + getattr(other, field)
+            if getattr(self, field) is not None and getattr(other, field) is not None else None
+            for field in ("prompt_tokens", "completion_tokens", "total_tokens")
+        }
+        samples = [
+            (usage.cached_tokens, usage.cache_prompt_tokens
+             if usage.cache_prompt_tokens is not None else usage.prompt_tokens)
+            for usage in (self, other)
+        ]
+        samples = [(cached, prompt) for cached, prompt in samples
+                   if cached is not None and prompt is not None]
+        return TokenUsage(
+            **values,
+            cached_tokens=sum(cached for cached, _ in samples) if samples else None,
+            cache_prompt_tokens=sum(prompt for _, prompt in samples) if samples else None,
+        )
 
 
 class ProviderResult(AiModel):

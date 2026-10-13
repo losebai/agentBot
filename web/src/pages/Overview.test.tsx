@@ -1,0 +1,50 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { expect, it, vi } from 'vitest';
+import { Overview } from './Overview';
+
+/** 用离线接口观察真实指标与刷新，不连接服务或模型。 */
+function status(statistics: object | null) {
+  return { service: 'agentBot', ready: true, bot_count: 0, database_revision: 4,
+    applied_revision: 4, restart_required_fields: [], statistics };
+}
+
+it('首页显示累计用量和加权缓存命中率，刷新更新正在运行数量', async () => {
+  let running = 3;
+  vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).endsWith('/bots') ? [] : status({
+    conversation_count: 1200, running_requests: running, total_tokens: 12345,
+    prompt_tokens: 12000, completion_tokens: 345, cached_tokens: 3000,
+    cache_prompt_tokens: 12000, cache_hit_rate: 0.25,
+  }))));
+  render(<Overview token="offline" />);
+  await screen.findByText('对话总数');
+  expect(screen.getByText('1,200')).toBeInTheDocument();
+  expect(screen.getByText('当前运行中').parentElement).toHaveTextContent('3');
+  expect(screen.getByText('累计 Token 消耗').parentElement).toHaveTextContent('12,345');
+  expect(screen.getByText('缓存命中率').parentElement).toHaveTextContent('25.0%');
+  expect(screen.queryByText(/视频、通用 Laya 和 SolonCode 尚未迁移/)).not.toBeInTheDocument();
+  running = 0;
+  fireEvent.click(screen.getByRole('button', { name: /刷新状态/ }));
+  await waitFor(() => expect(screen.getByText('当前运行中').parentElement).toHaveTextContent('0'));
+});
+
+it('缓存信息未上报时显示未知，不能当作零命中', async () => {
+  vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).endsWith('/bots') ? [] : status({
+    conversation_count: 1, running_requests: 0, total_tokens: 100,
+    prompt_tokens: 100, completion_tokens: 0, cached_tokens: 0,
+    cache_prompt_tokens: 0, cache_hit_rate: null,
+  }))));
+  render(<Overview token="offline" />);
+  await screen.findByText('缓存命中率');
+  expect(screen.getByText('缓存命中率').parentElement).toHaveTextContent('暂无缓存用量');
+  expect(screen.queryByText('0.0%')).not.toBeInTheDocument();
+});
+
+it('归档未初始化时明确提示统计不可用，并保留服务状态', async () => {
+  vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).endsWith('/bots') ? [] : {
+    ...status(null), statistics_error: 'AI_NOT_INITIALIZED',
+  })));
+  render(<Overview token="offline" />);
+  expect(await screen.findByText(/调用记录尚未初始化/)).toBeInTheDocument();
+  expect(screen.getByText('服务状态').parentElement).toHaveTextContent('就绪');
+  expect(screen.getByText('对话总数').parentElement).toHaveTextContent('—');
+});

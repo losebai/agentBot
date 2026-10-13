@@ -617,8 +617,9 @@ class ConversationHandler:
             await self._queue_provider().enqueue(job)
         except asyncio.CancelledError:
             raise
+        except ChatBusyError:
+            await self._reply_service.gateway.finish_busy_error(matcher)
         except (
-            ChatBusyError,
             ChatRateLimitedError,
             ConversationQueueFullError,
             ConversationJobExpiredError,

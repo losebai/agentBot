@@ -1,5 +1,5 @@
 import { Alert, Button, ConfigProvider, Input, Spin } from 'antd';
-import { DashboardOutlined, LogoutOutlined, MessageOutlined, SettingOutlined, ApiOutlined, RobotOutlined, AppstoreOutlined, HistoryOutlined, ToolOutlined } from '@ant-design/icons';
+import { DashboardOutlined, LogoutOutlined, MessageOutlined, SettingOutlined, ApiOutlined, RobotOutlined, HistoryOutlined } from '@ant-design/icons';
 import { useEffect, useState } from 'react';
 import { ApiClient, errorMessage } from './api';
 import { Overview } from './pages/Overview';
@@ -7,9 +7,7 @@ import { Settings } from './pages/Settings';
 import { Chat } from './pages/Chat';
 import { Providers } from './pages/Providers';
 import { Sessions } from './pages/Sessions';
-import { Agents } from './pages/Agents';
-import { Skills } from './pages/Skills';
-import { McpServers } from './pages/McpServers';
+import { AgentManagement } from './pages/AgentManagement';
 
 // 组件库与页面采用同一套中性色；告警仍保留语义颜色，按钮不使用装饰性阴影。
 const workspaceTheme = {
@@ -32,9 +30,9 @@ const workspaceTheme = {
   },
 };
 
-const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理', skills:'Skill 管理', mcps:'MCP 服务'};
+const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理'};
 
-/** 按服务端登录模式进入工作台，密码只保留在内存中。 */
+/** 按服务端登录模式进入工作台；Agent、共享 Skill 与 MCP 使用同一导航入口。 */
 export function App() {
   // null 表示尚未登录，空字符串表示后端明确启用了免登录。
   const [token, setToken] = useState<string | null>(null);
@@ -91,8 +89,6 @@ export function App() {
         { key: 'providers', label: '供应商与模型', icon: <ApiOutlined /> },
         { key: 'sessions', label: '会话记录', icon: <HistoryOutlined /> },
         { key: 'agents', label: 'Agent 管理', icon: <RobotOutlined /> },
-        { key: 'skills', label: 'Skill 管理', icon: <AppstoreOutlined /> },
-        { key: 'mcps', label: 'MCP 服务', icon: <ToolOutlined /> },
       ].map(item => <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
         <main className="main-area"><header className="topbar"><span className="topbar-title">{titles[page]}</span><span className="workspace-label">AgentBot</span></header>
           <section hidden={page !== 'overview'}>{visited.includes('overview') && <Overview token={token} />}</section>
@@ -100,9 +96,7 @@ export function App() {
           <section hidden={page !== 'chat'}>{page === 'chat' && <Chat token={token} />}</section>
           <section hidden={page !== 'providers'}>{visited.includes('providers') && <Providers token={token} />}</section>
           <section hidden={page !== 'sessions'}>{page === 'sessions' && <Sessions token={token} />}</section>
-          <section hidden={page !== 'agents'}>{visited.includes('agents') && <Agents token={token} />}</section>
-          <section hidden={page !== 'skills'}>{visited.includes('skills') && <Skills token={token} />}</section>
-          <section hidden={page !== 'mcps'}>{visited.includes('mcps') && <McpServers token={token} />}</section>
+          <section hidden={page !== 'agents'}>{visited.includes('agents') && <AgentManagement token={token} />}</section>
         </main></div>}
   </ConfigProvider>;
 }

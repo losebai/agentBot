@@ -268,12 +268,13 @@ class PluginConfig(BaseModel):
     chat_db_pool_size: int = Field(default=8, ge=1, le=64)
     chat_db_timeout_seconds: int = Field(default=10, ge=1, le=60)
     chat_max_sessions: int = Field(default=1000, gt=0)
-    chat_max_concurrent_requests: int = Field(default=4, gt=0)
+    # 同会话并发与底层 Agent 的八个执行名额对齐，超限立即拒绝而不等待。
+    chat_max_concurrent_requests: int = Field(default=8, gt=0)
     chat_cooldown_seconds: float = Field(default=2, ge=0)
     chat_chunk_chars: int = Field(default=1200, gt=0)
     chat_max_reply_chars: int = Field(default=6000, gt=0)
     chat_queue_max_pending: int = Field(default=1000, ge=1, le=100_000)
-    chat_queue_workers: int = Field(default=4, ge=1, le=64)
+    chat_queue_workers: int = Field(default=8, ge=1, le=64)
     chat_queue_media_workers: int = Field(default=1, ge=1, le=16)
     chat_queue_max_attempts: int = Field(default=3, ge=1, le=10)
     chat_queue_retry_initial_seconds: float = Field(
@@ -839,12 +840,12 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_db_pool_size": "聊天数据库共享连接池容量 (重启生效)",
     "chat_db_timeout_seconds": "聊天数据库连接等待与读写超时秒数 (重启生效)",
     "chat_max_sessions": "最大并发会话数",
-    "chat_max_concurrent_requests": "最大并发 AI 请求数",
+    "chat_max_concurrent_requests": "最大并发 AI 请求数 (满额立即拒绝)",
     "chat_cooldown_seconds": "非排队聊天冷却时间 (秒)",
     "chat_chunk_chars": "回复分段字符数",
     "chat_max_reply_chars": "单次回复最大字符数",
     "chat_queue_max_pending": "Redis 对话队列最大待处理任务数",
-    "chat_queue_workers": "Redis 对话队列文本并发工作数",
+    "chat_queue_workers": "对话队列文本并发工作数 (重启生效，满额立即拒绝)",
     "chat_queue_media_workers": "Redis 对话队列媒体并发工作数",
     "chat_queue_max_attempts": "对话任务最大尝试次数",
     "chat_queue_retry_initial_seconds": "对话任务首次重试等待秒数",

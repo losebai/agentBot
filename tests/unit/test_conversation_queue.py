@@ -11,7 +11,9 @@ from redis.exceptions import RedisError
 
 from agent_bot.ai.chat_errors import ChatAiRejectedError, ChatAiUnavailableError
 from agent_bot.integrations.redis_queue import RedisConversationQueueStore
+from agent_bot.integrations.sqlite_queue import SqliteConversationQueueStore
 from agent_bot.models import ChatContext, ChatMediaItem, ChatMediaResponse
+from agent_bot.services.chat.errors import ChatBusyError
 from agent_bot.services.conversation_queue import (
     ConversationJob,
     ConversationJobExpiredError,
@@ -21,6 +23,245 @@ from agent_bot.services.conversation_queue import (
     ConversationResult,
     QueuePolicy,
 )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_reserves_slot_before_dispatch_and_releases_on_stop(queue_store) -> None:
+    """突发请求不能在调度器启动前一起入队等待，停止后必须释放预留名额。"""
+    await queue_store.reclaim(count=2, min_idle_ms=0)
+    queue = ConversationQueue(
+        store=queue_store, processor=processor_mock(),
+        policy=QueuePolicy(1, 2, 0.01, 0.01, 600), clock=lambda: 1_800_000_000,
+    )
+    await queue.enqueue(text_job(job_id="first"))
+    with pytest.raises(ChatBusyError):
+        await queue.enqueue(text_job(job_id="second"))
+    assert await queue_store.source_length() == 1
+    await queue.stop()
+    await queue.enqueue(text_job(job_id="second"))
+    await queue.stop()
+
+
+@pytest.mark.asyncio
+async def test_failed_enqueue_releases_reserved_slot(queue_store, monkeypatch) -> None:
+    """持久化失败不泄漏执行额度，也不能阻止后续请求。"""
+    await queue_store.reclaim(count=2, min_idle_ms=0)
+    queue = ConversationQueue(
+        store=queue_store, processor=processor_mock(), policy=QueuePolicy(1, 2, 0.01, 0.01, 600),
+    )
+    enqueue = queue_store.enqueue
+    monkeypatch.setattr(queue_store, "enqueue", AsyncMock(side_effect=ConnectionError("failed")))
+    with pytest.raises(ConnectionError):
+        await queue.enqueue(text_job())
+    monkeypatch.setattr(queue_store, "enqueue", enqueue)
+    await queue.enqueue(text_job())
+    await queue.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expired", [False, True])
+async def test_admitted_entry_consumes_or_releases_its_reservation(queue_store, expired) -> None:
+    """预留名额的任务可直接执行，过期清理也不能留下失效名额。"""
+    await queue_store.reclaim(count=2, min_idle_ms=0)
+    processor = processor_mock()
+    processor.generate.return_value = text_result("完成")
+    processor.delivery_count.return_value = 1
+    queue = ConversationQueue(
+        store=queue_store, processor=processor,
+        policy=QueuePolicy(1, 2, 0.01, 0.01, 600),
+        clock=lambda: 1_800_000_000 + (601 if expired else 0),
+    )
+    await queue.enqueue(text_job())
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    await asyncio.wait_for(queue.process_entry(entry), 1)
+    assert processor.generate.await_count == (0 if expired else 1)
+    await queue.enqueue(text_job(job_id="next"))
+    await queue.stop()
+
+
+@pytest.mark.asyncio
+async def test_recovery_rejects_new_admission_instead_of_stealing_old_slot(queue_store) -> None:
+    """旧任务恢复前不能接受新请求预留名额，否则会导致已接受的任务误入死信。"""
+    await queue_store.enqueue(text_job(job_id="old"))
+    old = (await queue_store.read_new(count=1, block_ms=1))[0]
+    processor = processor_mock()
+    processor.generate.return_value = text_result("旧任务完成")
+    processor.delivery_count.return_value = 1
+    queue = ConversationQueue(
+        store=queue_store, processor=processor,
+        policy=QueuePolicy(1, 2, 0.01, 0.01, 600), clock=lambda: 1_800_000_000,
+    )
+    with pytest.raises(ChatBusyError):
+        await queue.enqueue(text_job(job_id="new"))
+    await queue.process_entry(old)
+    processor.generate.assert_awaited_once_with(old.job)
+    assert await queue_store.dead_letter_length() == 0
+
+
+@pytest.mark.asyncio
+async def test_ai_result_delivery_does_not_wait_for_model_budget(queue_store) -> None:
+    """后台结果已经生成，只投递时不能因模型满额死信并留下无法恢复的去重回执。"""
+    identifier = "a" * 32
+    job = ConversationJob(
+        jobId=f"ai-job-{identifier}", requestId=f"ai-job-{identifier}",
+        createdAt=1_800_000_000, sessionId="s", botId="90001", scene="private",
+        userId="10001", prompt="已完成的后台任务", aiJobId=identifier,
+        aiJobReply={"text": "后台结果", "requestId": f"ai-job-{identifier}"},
+    )
+    processor = processor_mock()
+    processor.generate.return_value = text_result("后台结果")
+    processor.delivery_count.return_value = 1
+    queue = ConversationQueue(
+        store=queue_store, processor=processor,
+        policy=QueuePolicy(1, 2, 0.01, 0.01, 600), clock=lambda: 1_800_000_000,
+    )
+    async with queue._execution_slot(text_job()):
+        await queue.enqueue(job)
+        entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+        await asyncio.wait_for(queue.process_entry(entry), 0.2)
+    processor.commit.assert_awaited_once()
+    assert await queue_store.dead_letter_length() == 0
+
+
+@pytest.mark.asyncio
+async def test_upstream_busy_does_not_retry_or_wait(queue_store) -> None:
+    """上游429也是明确拒绝，不允许按服务不可用错误进入退避重试。"""
+    await queue_store.enqueue(text_job())
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    processor = processor_mock()
+    processor.generate.side_effect = ChatAiUnavailableError("busy", status_code=429)
+    queue = ConversationQueue(
+        store=queue_store, processor=processor,
+        policy=QueuePolicy(1, 3, 2, 2, 600), clock=lambda: 1_800_000_000,
+    )
+    await asyncio.wait_for(queue.process_entry(entry), 0.2)
+    processor.generate.assert_awaited_once()
+    processor.deliver_failure.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admitted_pending_job_rejects_reset_and_new_admission_during_reset(
+    queue_store,
+) -> None:
+    """入队到领取之间也属于活动请求，重置和新消息不能相互越过准入边界。"""
+    await queue_store.reclaim(count=2, min_idle_ms=0)
+    processor = processor_mock()
+    processor.generate.return_value = text_result("已完成")
+    processor.delivery_count.return_value = 1
+    queue = ConversationQueue(
+        store=queue_store, processor=processor, policy=QueuePolicy(2, 2, 0.01, 0.01, 600),
+    )
+    await queue.enqueue(text_job())
+    with pytest.raises(ConversationQueueError):
+        async with queue.session_guard("qq_session_1"):
+            pytest.fail("已准入请求尚未领取时不能清理历史")
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    await queue.process_entry(entry)
+    await queue.stop()
+    async with queue.session_guard("qq_session_1"):
+        with pytest.raises(ChatBusyError):
+            await queue.enqueue(text_job(job_id="new"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["redis", "sqlite"])
+@pytest.mark.parametrize("claimed", [False, True])
+async def test_ai_result_pending_protects_reset_without_leaking_duplicate_activity(
+    queue_store, tmp_path, backend, claimed,
+) -> None:
+    """待投递结果不能被重置删除，已完成结果的去重回执也不能永久占用活动状态。"""
+    store = queue_store
+    if backend == "sqlite":
+        store = SqliteConversationQueueStore(
+            str(tmp_path / "queue.sqlite3"), key_prefix="test:ai-reset", max_pending=2,
+            result_ttl_seconds=60,
+        )
+        await store.initialize()
+    identifier = "b" * 32
+    job = ConversationJob(
+        jobId=f"ai-job-{identifier}", requestId=f"ai-job-{identifier}",
+        createdAt=1_800_000_000, sessionId="s", botId="90001", scene="private",
+        userId="10001", prompt="后台任务", aiJobId=identifier,
+        aiJobReply={"text": "后台结果", "requestId": f"ai-job-{identifier}"},
+    )
+    processor = processor_mock()
+    processor.generate.return_value = text_result("后台结果")
+    processor.delivery_count.return_value = 1
+    queue = ConversationQueue(
+        store=store, processor=processor,
+        policy=QueuePolicy(1, 2, 0.01, 0.01, 600), clock=lambda: 1_800_000_000,
+    )
+    async with queue.session_guard("s"):
+        with pytest.raises(ChatBusyError):
+            await queue.enqueue(job)
+    stream_id = await queue.enqueue(job)
+    with pytest.raises(ConversationQueueError):
+        async with queue.session_guard("s"):
+            pytest.fail("待投递结果不能越过重置边界")
+    if claimed:
+        await store.read_new(count=1, block_ms=1)
+    await queue.stop()
+    await store.initialize()
+    # 重启后内存活动记录消失，仍需保护已领取和尚未领取的持久化结果。
+    with pytest.raises(ConversationQueueError):
+        async with queue.session_guard("s"):
+            pytest.fail("重启不能丢失持久化任务的重置保护")
+    entry = (await store.reclaim(count=1, min_idle_ms=0))[0] if claimed else (
+        await store.read_new(count=1, block_ms=1)
+    )[0]
+    await queue.process_entry(entry)
+    assert await queue.enqueue(job) == stream_id
+    async with queue.session_guard("s"):
+        pass
+    assert await store.dead_letter_length() == 0
+    processor.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reset_persistent_query_does_not_reject_recovering_result(queue_store, monkeypatch):
+    """查询持久状态期间旧结果仍可完成，不能先持独占锁把恢复任务误入死信。"""
+    identifier = "c" * 32
+    job = ConversationJob(
+        jobId=f"ai-job-{identifier}", requestId=f"ai-job-{identifier}",
+        createdAt=1_800_000_000, sessionId="s", botId="90001", scene="private",
+        userId="10001", prompt="旧后台任务", aiJobId=identifier,
+        aiJobReply={"text": "旧后台结果", "requestId": f"ai-job-{identifier}"},
+    )
+    await queue_store.enqueue(job)
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    processor = processor_mock()
+    processor.generate.return_value = text_result("旧后台结果")
+    processor.delivery_count.return_value = 1
+    queue = ConversationQueue(
+        store=queue_store, processor=processor,
+        policy=QueuePolicy(1, 2, 0.01, 0.01, 600), clock=lambda: 1_800_000_000,
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    query = queue_store.has_session_entries
+
+    async def held_query(session_id):
+        """暂停真实持久查询，检查它是否会提前独占会话。"""
+        entered.set()
+        await release.wait()
+        return await query(session_id)
+
+    async def reset():
+        """模拟重置取得准入许可后完成清理。"""
+        async with queue.session_guard("s"):
+            pass
+
+    monkeypatch.setattr(queue_store, "has_session_entries", held_query)
+    reset_task = asyncio.create_task(reset())
+    await entered.wait()
+    try:
+        await queue.process_entry(entry)
+    finally:
+        release.set()
+        await reset_task
+    processor.generate.assert_awaited_once_with(job)
+    processor.commit.assert_awaited_once()
+    assert await queue_store.dead_letter_length() == 0
 
 
 def text_result(text: str) -> ConversationResult:
@@ -884,10 +1125,10 @@ async def test_redis_invalid_result_is_dead_lettered_without_notification(
 
 
 @pytest.mark.asyncio
-async def test_same_session_entries_wait_for_previous_commit_and_ack(
+async def test_same_session_entries_generate_concurrently(
     queue_store,
 ) -> None:
-    """后续同会话生成必须等前一条提交及 Redis 确认完成。"""
+    """同会话有空闲额度时立即并发，历史按实际完成顺序提交。"""
 
     concurrent_store = RedisConversationQueueStore(
         queue_store._redis,
@@ -941,8 +1182,8 @@ async def test_same_session_entries_wait_for_previous_commit_and_ack(
     try:
         await asyncio.wait_for(first_entry_entered.wait(), timeout=1)
         await asyncio.sleep(0.02)
-        assert max_active == 1
-        assert processor.generate.await_count == 1
+        assert max_active == 2
+        assert processor.generate.await_count == 2
     finally:
         release.set()
         await queue.stop()
@@ -1046,10 +1287,10 @@ def test_nontext_result_rejects_reply_provenance(kind: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("same_session", [False, True])
-async def test_waiting_job_expiry_prevents_model_and_delivery(
+async def test_full_worker_rejects_new_job_and_running_job_still_expires(
     queue_store, same_session: bool,
 ) -> None:
-    """等待执行槽或会话锁后必须重新校验绝对截止时间。"""
+    """后续任务不等待，首项运行过程中仍须校验绝对截止时间。"""
 
     now = [1_800_000_000.0]
     for job in (
@@ -1087,7 +1328,8 @@ async def test_waiting_job_expiry_prevents_model_and_delivery(
 
     assert generated == ["blocking"]
     processor.deliver_part.assert_not_awaited()
-    processor.deliver_failure.assert_not_awaited()
+    processor.deliver_failure.assert_awaited_once()
+    assert isinstance(processor.deliver_failure.await_args.args[1], ChatBusyError)
     assert await queue_store.dead_letter_length() == 2
 
 
@@ -1130,8 +1372,8 @@ async def test_running_deadline_cancels_generation_and_releases_session(queue_st
 
 
 @pytest.mark.asyncio
-async def test_same_session_retry_does_not_allow_later_job_to_overtake(queue_store) -> None:
-    """首条重试退避期间保留会话顺序，并等待确认后才启动第二条。"""
+async def test_same_session_retry_does_not_block_later_job(queue_store) -> None:
+    """首条重试退避释放执行额度，同会话后续请求无需等待它恢复。"""
 
     for job_id in ("first", "second"):
         await queue_store.enqueue(text_job(job_id=job_id))
@@ -1140,7 +1382,7 @@ async def test_same_session_retry_does_not_allow_later_job_to_overtake(queue_sto
     processor = processor_mock()
 
     async def generate(job):
-        """首条第一次生成失败，使错误实现暴露乱序。"""
+        """首条第一次生成失败，暴露重试期间的会话阻塞。"""
 
         events.append(f"generate:{job.job_id}")
         if events == ["generate:first"]:
@@ -1148,7 +1390,7 @@ async def test_same_session_retry_does_not_allow_later_job_to_overtake(queue_sto
         return text_result("done")
 
     async def commit(job, _result):
-        """记录提交先于下一条生成的顺序。"""
+        """记录每条独立请求实际完成的提交顺序。"""
 
         events.append(f"commit:{job.job_id}")
 
@@ -1161,7 +1403,7 @@ async def test_same_session_retry_does_not_allow_later_job_to_overtake(queue_sto
     )
     await asyncio.gather(*(queue.process_entry(entry) for entry in entries))
     assert events == [
-        "generate:first", "generate:first", "commit:first", "generate:second", "commit:second",
+        "generate:first", "generate:second", "commit:second", "generate:first", "commit:first",
     ]
     assert await queue_store.source_length() == 0
 
@@ -1288,8 +1530,8 @@ async def test_reclaim_keeps_pending_younger_than_idle_threshold(queue_store) ->
 
 
 @pytest.mark.asyncio
-async def test_session_serialization_covers_ack_and_reset(queue_store, monkeypatch) -> None:
-    """Redis 确认未完成时，后续生成与同会话重置都必须继续等待。"""
+async def test_pending_ack_allows_generation_but_rejects_reset(queue_store, monkeypatch) -> None:
+    """确认未完成不阻塞后续生成，但重置必须立即拒绝而不能清掉活动轮次。"""
 
     for job_id in ("first", "second"):
         await queue_store.enqueue(text_job(job_id=job_id))
@@ -1300,7 +1542,7 @@ async def test_session_serialization_covers_ack_and_reset(queue_store, monkeypat
     complete = queue_store.complete
 
     async def held_complete(stream_id):
-        """暂停首条的最终确认，暴露过早释放会话锁的行为。"""
+        """暂停首条的最终确认，检查活动计数覆盖确认边界。"""
 
         if stream_id == first.stream_id:
             ack_entered.set()
@@ -1309,7 +1551,7 @@ async def test_session_serialization_covers_ack_and_reset(queue_store, monkeypat
         events.append(f"ack:{stream_id}")
 
     async def generate(job):
-        """记录后续生成有没有越过确认边界。"""
+        """记录确认未结束时后续生成仍能进行。"""
 
         events.append(f"generate:{job.job_id}")
         return text_result("done")
@@ -1331,17 +1573,20 @@ async def test_session_serialization_covers_ack_and_reset(queue_store, monkeypat
 
     first_task = asyncio.create_task(queue.process_entry(first))
     await asyncio.wait_for(ack_entered.wait(), 1)
-    reset_task = asyncio.create_task(reset_session())
     second_task = asyncio.create_task(queue.process_entry(second))
     try:
-        await asyncio.sleep(0.02)
-        assert events == ["generate:first"]
+        async with asyncio.timeout(0.1):
+            with pytest.raises(ConversationQueueError):
+                await reset_session()
+        await asyncio.wait_for(second_task, 1)
+        assert events == ["generate:first", "generate:second", f"ack:{second.stream_id}"]
     finally:
         release_ack.set()
-        await asyncio.gather(first_task, reset_task, second_task)
+        await asyncio.gather(first_task, second_task)
+    await reset_session()
     assert events == [
-        "generate:first", f"ack:{first.stream_id}", "reset",
-        "generate:second", f"ack:{second.stream_id}",
+        "generate:first", "generate:second", f"ack:{second.stream_id}",
+        f"ack:{first.stream_id}", "reset",
     ]
     assert queue._session_slots == {}
 
@@ -1383,17 +1628,18 @@ async def test_startup_drains_recovery_in_bounded_batches_before_new_jobs(queue_
 
 
 @pytest.mark.asyncio
-async def test_ready_session_within_prefetch_buffer_progresses(queue_store) -> None:
-    """有限窗口内阻塞会话的后续条目不占执行槽，其他会话仍可执行。"""
+async def test_full_prefetch_buffer_rejects_other_sessions_without_waiting(queue_store) -> None:
+    """同会话并发占用额度后，其他会话立即拒绝而不等待额度释放。"""
 
     queue_store._max_pending = 4
     for index in range(3):
         await queue_store.enqueue(text_job(job_id=f"busy-{index}"))
     await queue_store.enqueue(text_job(job_id="ready", session_id="ready"))
     ready = asyncio.Event()
+    rejected = asyncio.Event()
 
     async def generate(job):
-        """阻塞首个会话，等待独立会话取得第二个执行槽。"""
+        """保持两个执行槽活跃，独立会话只能立即取得忙碌结果。"""
 
         if job.job_id == "ready":
             ready.set()
@@ -1403,23 +1649,32 @@ async def test_ready_session_within_prefetch_buffer_progresses(queue_store) -> N
     processor = processor_mock()
     processor.generate.side_effect = generate
     processor.delivery_count.return_value = 1
+
+    async def failure(job, error):
+        """独立会话立即取得忙碌结果，不能被放入执行等待。"""
+        if job.job_id == "ready":
+            assert isinstance(error, ChatBusyError)
+            rejected.set()
+
+    processor.deliver_failure.side_effect = failure
     queue = ConversationQueue(
         store=queue_store, processor=processor,
         policy=QueuePolicy(2, 2, 0.01, 0.01, 600), clock=lambda: 1_800_000_000,
     )
     await queue.start()
     try:
-        await asyncio.wait_for(ready.wait(), 0.3)
+        await asyncio.wait_for(rejected.wait(), 0.3)
+        assert not ready.is_set()
     finally:
         await queue.stop()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("same_session", [False, True])
-async def test_waiting_deadline_expires_before_busy_job_releases(
+async def test_full_worker_rejects_before_busy_job_releases(
     queue_store, same_session,
 ) -> None:
-    """会话锁和执行槽的等待本身也受总时限约束，无需等待前项完成。"""
+    """不等截止时间或前项释放，立即结束超额任务。"""
 
     await queue_store.enqueue(text_job(job_id="busy"))
     waiting = text_job(
@@ -1431,7 +1686,7 @@ async def test_waiting_deadline_expires_before_busy_job_releases(
     generated: list[str] = []
 
     async def generate(job):
-        """首项保持活跃，等待项必须自己超时结束。"""
+        """首项保持活跃，超额任务不能进入模型执行。"""
 
         generated.append(job.job_id)
         busy.set()
@@ -1449,6 +1704,8 @@ async def test_waiting_deadline_expires_before_busy_job_releases(
         await asyncio.wait_for(queue.process_entry(second), 0.3)
         assert generated == ["busy"]
         assert await queue_store.dead_letter_length() == 1
+        processor.deliver_failure.assert_awaited_once()
+        assert isinstance(processor.deliver_failure.await_args.args[1], ChatBusyError)
     finally:
         await queue.stop()
     assert queue._session_slots == {}
@@ -1456,7 +1713,7 @@ async def test_waiting_deadline_expires_before_busy_job_releases(
 
 @pytest.mark.asyncio
 async def test_media_worker_limit_applies_across_independent_sessions(queue_store) -> None:
-    """独立会话的媒体请求也不能突破媒体并发上限。"""
+    """独立会话媒体请求超额时立即拒绝，不能等待当前媒体任务完成。"""
 
     for job_id in ("first", "second"):
         job = text_job(job_id=job_id, session_id=job_id).model_copy(
@@ -1493,7 +1750,9 @@ async def test_media_worker_limit_applies_across_independent_sessions(queue_stor
     finally:
         release.set()
         await asyncio.gather(first_task, second_task)
-    assert generated == ["first", "second"]
+    assert generated == ["first"]
+    processor.deliver_failure.assert_awaited_once()
+    assert isinstance(processor.deliver_failure.await_args.args[1], ChatBusyError)
 
 
 @pytest.mark.asyncio

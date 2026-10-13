@@ -62,6 +62,32 @@ async def test_complete_records_without_losing_result(catalog, ai_params, ai_dat
         await service.aclose()
 
 
+@pytest.mark.parametrize("operation", ["complete", "discovery"])
+async def test_active_conversations_exclude_discovery_and_release_on_cancel(
+    catalog, ai_params, ai_database, operation,
+):
+    """真实请求挂起时观察活动计数，模型发现不计为对话，取消后必须归还。"""
+    entered = asyncio.Event()
+
+    async def pause(req):
+        """停在隔离传输中等待取消，不发送任何外部请求。"""
+        entered.set()
+        await asyncio.Event().wait()
+
+    service = await make_service(catalog, ai_params, ai_database, pause)
+    pending = asyncio.create_task(service.complete(request()) if operation == "complete" else
+                                  service.upstream_models(1, 1))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        assert service.active_requests == (1 if operation == "complete" else 0)
+    finally:
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert service.active_requests == 0
+        await service.aclose()
+
+
 async def test_deadline_is_total_and_nested_budget_shrinks(catalog, ai_params, ai_database):
     async def slow(req):
         await asyncio.sleep(1)

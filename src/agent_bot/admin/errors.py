@@ -49,6 +49,7 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         "AGENT_MODEL_ROUTE_INVALID": "错误转发模型必须与聊天、图片理解模型不同",
         "AGENT_CONFIG_DISABLED": "Agent、Skill 或 MCP 配置已停用",
         "AGENT_TOOL_UNAUTHORIZED": "当前入口或 Agent 未授权这些工具",
+        "AGENT_TOOL_SESSION_EXPIRED": "QQ 工具会话已过期或撤销，请重新发起请求",
         "AGENT_TOOL_UNAVAILABLE": "预设工具不可用，请检查工具名称及 MCP 白名单",
         "AGENT_SEARCH_UNAVAILABLE": "请配置已启用的 search 分类 MCP 服务",
         "AGENT_SKILL_UNAVAILABLE": "关联 Skill 已停用或缺少已授权的工具依赖",

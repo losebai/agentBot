@@ -1239,8 +1239,9 @@ async def test_reply_generation_is_isolated_from_history_tools_web_and_media() -
 
 
 @pytest.mark.asyncio
-async def test_same_session_queued_generations_are_serialized() -> None:
-    first_entered = asyncio.Event()
+async def test_same_session_queued_generations_run_concurrently() -> None:
+    """排队生成共用历史快照，但有空闲额度时同时执行模型请求。"""
+    both_entered = asyncio.Event()
     release = asyncio.Event()
 
     class ConcurrentClient(FakeClient):
@@ -1253,7 +1254,8 @@ async def test_same_session_queued_generations_are_serialized() -> None:
             self.calls.append(kwargs)
             self.active += 1
             self.max_active = max(self.max_active, self.active)
-            first_entered.set()
+            if self.active == 2:
+                both_entered.set()
             await release.wait()
             self.active -= 1
             return f"answer-{kwargs['prompt']}"
@@ -1266,13 +1268,13 @@ async def test_same_session_queued_generations_are_serialized() -> None:
     )
 
     try:
-        await asyncio.wait_for(first_entered.wait(), timeout=1)
-        assert client.max_active == 1
-        assert len(client.calls) == 1
+        await asyncio.wait_for(both_entered.wait(), timeout=1)
+        assert client.max_active == 2
+        assert len(client.calls) == 2
     finally:
         release.set()
     assert await asyncio.gather(*tasks) == ["answer-first", "answer-second"]
-    assert client.max_active == 1
+    assert client.max_active == 2
 
 
 @pytest.mark.asyncio
@@ -1462,7 +1464,8 @@ async def test_service_enforces_cooldown_with_injected_clock() -> None:
 
 
 @pytest.mark.asyncio
-async def test_same_session_request_is_rejected_while_one_is_in_flight() -> None:
+async def test_same_session_requests_overlap_and_commit_in_completion_order() -> None:
+    """同会话请求并发，重置仍被拒绝，已完成轮次按完成顺序成对保留。"""
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
 
@@ -1486,26 +1489,27 @@ async def test_same_session_request_is_rejected_while_one_is_in_flight() -> None
                 first_entered.set()
                 await release_first.wait()
                 return "answer-first"
-            return "answer-second"
+            return f"answer-{prompt}"
 
     client = BlockingClient([])
     service = make_service(client)
 
     first_task = asyncio.create_task(service.ask("s", "first"))
     await first_entered.wait()
-    with pytest.raises(ChatBusyError):
-        await service.ask("s", "second")
+    assert await service.ask("s", "second") == "answer-second"
     with pytest.raises(ChatBusyError):
         await service.reset("s")
 
     release_first.set()
     assert await first_task == "answer-first"
-    assert await service.ask("s", "second") == "answer-second"
-    assert without_execution_refs(client.calls[1]["messages"]) == [
+    assert await service.ask("s", "third") == "answer-third"
+    assert without_execution_refs(client.calls[2]["messages"]) == [
         ChatMessage(role="system", content="你是莉莉丝，请保持简洁"),
+        ChatMessage(role="user", content="second"),
+        ChatMessage(role="assistant", content="answer-second"),
         ChatMessage(role="user", content="first"),
         ChatMessage(role="assistant", content="answer-first"),
-        ChatMessage(role="user", content="second"),
+        ChatMessage(role="user", content="third"),
     ]
 
 

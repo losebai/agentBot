@@ -19,6 +19,7 @@ from agent_bot.media_artifacts import ImageArtifact as WorkflowImageArtifact
 from agent_bot.memory_store import ChatMemoryStoreError
 from agent_bot.model_guard import model_configuration_error_code
 from agent_bot.models import ChatContext, ChatMediaResponse, ChatToolName, MediaOutputType
+from agent_bot.services.chat.errors import ChatBusyError, is_chat_busy_error
 from agent_bot.services.image_task_context import ImageTaskCancelled, active_image_task
 from agent_bot.services.image_tasks import ImageTaskManager
 from agent_bot.services.request_deadline import remaining_timeout, request_deadline
@@ -191,7 +192,7 @@ class ConversationJob(BaseModel):
 
 
 class ConversationResult(BaseModel):
-    """Persisted model result reused across OneBot delivery retries."""
+    """持久化生成结果和文件投递选择，OneBot 重试不重新生成或更改发送方式。"""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
 
@@ -204,6 +205,7 @@ class ConversationResult(BaseModel):
         default=None, alias="mentionTargetId", pattern=_QQ_ID_PATTERN,
     )
     reply: PersistedGeneratedReply | None = None
+    reply_as_file: bool = Field(default=False, alias="replyAsFile")
     delivery_parts: tuple[str, ...] = Field(
         default_factory=tuple,
         alias="deliveryParts",
@@ -226,6 +228,12 @@ class ConversationResult(BaseModel):
     @model_validator(mode="after")
     def validate_kind(self) -> ConversationResult:
         """只允许来源可验证且与持久化分段完全一致的文字结果。"""
+
+        if self.reply_as_file and (
+            self.kind not in {"TEXT", "TOOL_REPLY"} or self.reply is None
+            or self.delivery_parts != (self.reply.text,)
+        ):
+            raise ValueError("file reply must contain exactly one complete generated body")
 
         if sum(
             len(base64.b64decode(image.data, validate=True)) for image in self.tool_images
@@ -410,6 +418,16 @@ class ConversationQueueStore(Protocol):
 
         ...
 
+    async def contains_entry(self, stream_id: str) -> bool:
+        """区分仍待投递的源条目与已完成任务保留的去重回执。"""
+
+        ...
+
+    async def has_session_entries(self, session_id: str) -> bool:
+        """重启丢失内存活动记录后，仍能识别同会话尚未领取或确认的持久任务。"""
+
+        ...
+
     async def read_new(
         self,
         *,
@@ -496,14 +514,23 @@ class ConversationQueueStore(Protocol):
 
 @dataclass(slots=True)
 class _SessionSlot:
-    """跟踪会话锁及其持有者和等待者，空闲时及时回收。"""
+    """跟踪独占状态操作和并发请求，空闲时及时回收。"""
 
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     users: int = 0
+    active: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _ReservedSlot:
+    """关联已准入任务的额度与会话，领取前也不能重置其历史。"""
+
+    semaphore: asyncio.Semaphore
+    session_id: str
 
 
 class ConversationQueue:
-    """有界预取，分离文本和媒体额度，并保持同会话全生命周期顺序。"""
+    """有界预取与非等待执行准入，同会话并发但禁止运行中重置。"""
 
     def __init__(
         self,
@@ -514,7 +541,7 @@ class ConversationQueue:
         clock: Callable[[], float] = time.time,
         image_tasks: ImageTaskManager | None = None,
     ) -> None:
-        """创建单进程队列的执行槽、会话锁和生命周期状态。"""
+        """创建单进程队列的执行槽、独占状态锁和会话活动计数。"""
 
         self.store = store
         self.processor = processor
@@ -525,6 +552,8 @@ class ConversationQueue:
         self._media_semaphore = asyncio.Semaphore(policy.media_workers)
         self._prefetch_limit = (policy.workers + policy.media_workers) * 4
         self._session_slots: dict[str, _SessionSlot] = {}
+        self._reserved_slots: dict[str, _ReservedSlot] = {}
+        self._pending_deliveries: dict[str, str] = {}
         self._entry_tasks: set[asyncio.Task[None]] = set()
         self._capacity_changed = asyncio.Event()
         self._dispatcher_task: asyncio.Task[None] | None = None
@@ -561,28 +590,105 @@ class ConversationQueue:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._dispatcher_task = None
         self._entry_tasks.clear()
+        for reserved in self._reserved_slots.values():
+            reserved.semaphore.release()
+        self._reserved_slots.clear()
+        self._pending_deliveries.clear()
 
     async def enqueue(self, job: ConversationJob) -> str:
-        """将已验证任务写入持久化队列。"""
+        """已有额度用满时立即拒绝新请求，不把过载转化为等待。"""
 
-        return await self.store.enqueue(job)
+        if job.ai_job_id is not None:
+            # 已有模型结果只需投递；不能因模型额度满删除其持久化结果和回执。
+            async with self.session_activity(job.session_id):
+                stream_id = await self.store.enqueue(job)
+                # 入队 I/O 期间由活动租约保护，写入成功后才登记待投递状态；
+                # 无效的重复提交不能清掉另一次成功准入保留的活动记录。
+                self._pending_deliveries[job.job_id] = job.session_id
+                # 完成回执可能永久存在；只有仍有源条目的结果才保护待投递历史。
+                if not await self.store.contains_entry(stream_id):
+                    self._pending_deliveries.pop(job.job_id, None)
+                return stream_id
+        if not self.store.recovery_complete:
+            raise ChatBusyError("conversation queue is recovering")
+        slot = self._session_slots.get(job.session_id)
+        if slot is not None and slot.lock.locked():
+            raise ChatBusyError("conversation session has an exclusive operation")
+        semaphore = self._job_semaphore(job)
+        if semaphore.locked():
+            raise ChatBusyError("conversation concurrency limit reached")
+        # 后台绘图和 AI 投递有持久化去重回执，重复提交不一定产生新条目；
+        # 普通聊天在写入前预留额度，避免突发消息在调度器领取前形成等待队列。
+        if job.background_image or self.image_tasks is not None:
+            return await self.store.enqueue(job)
+        if job.job_id in self._reserved_slots:
+            raise ChatBusyError("conversation job is already admitted")
+        await semaphore.acquire()
+        self._reserved_slots[job.job_id] = _ReservedSlot(semaphore, job.session_id)
+        try:
+            return await self.store.enqueue(job)
+        except BaseException:
+            reserved = self._reserved_slots.pop(job.job_id, None)
+            if reserved is not None:
+                reserved.semaphore.release()
+            raise
+
+    def _job_semaphore(self, job: ConversationJob) -> asyncio.Semaphore:
+        """文本与后台图片、语音分别使用独立执行额度。"""
+        return self._media_semaphore if (
+            job.background_image or job.media_output == "AUDIO"
+        ) else self._semaphore
+
+    @asynccontextmanager
+    async def _execution_slot(self, job: ConversationJob) -> AsyncIterator[None]:
+        """领取空闲额度；检查与无等待领取之间不让出事件循环。"""
+        if job.ai_job_id is not None:
+            yield
+            return
+        reserved = self._reserved_slots.pop(job.job_id, None)
+        semaphore = reserved.semaphore if reserved is not None else self._job_semaphore(job)
+        if reserved is None:
+            if semaphore.locked():
+                raise ChatBusyError("conversation concurrency limit reached")
+            await semaphore.acquire()
+        try:
+            yield
+        finally:
+            semaphore.release()
+
+    @asynccontextmanager
+    async def session_activity(self, session_id: str) -> AsyncIterator[None]:
+        """记录完整任务生命周期；并发生成不互斥，重置仍不能越过确认边界。"""
+        slot = self._session_slots.setdefault(session_id, _SessionSlot())
+        if slot.lock.locked():
+            raise ChatBusyError("conversation session has an exclusive operation")
+        slot.users += 1
+        slot.active += 1
+        try:
+            yield
+        finally:
+            slot.active -= 1
+            slot.users -= 1
+            if slot.users == 0:
+                del self._session_slots[session_id]
 
     @asynccontextmanager
     async def session_guard(
         self, session_id: str, *, timeout: float | None = None, wait: bool = True,
     ) -> AsyncIterator[None]:
-        """任务共享 FIFO 锁；已持运行时租约的重置必须选择不等待模式。"""
+        """独占状态操作只在会话空闲时准入，参数保留兼容而不再排队等待。"""
 
         slot = self._session_slots.setdefault(session_id, _SessionSlot())
         slot.users += 1
         acquired = False
         try:
-            if not wait and slot.lock.locked():
-                raise ConversationSessionBusyError("conversation session is busy")
-            if not wait or timeout is None:
-                await slot.lock.acquire()
-            else:
-                await asyncio.wait_for(slot.lock.acquire(), timeout)
+            self._require_idle_session(session_id, slot)
+            # 查询期间让旧任务正常恢复；提前持有独占锁会把正在恢复的结果误入死信。
+            if await self.store.has_session_entries(session_id):
+                raise ConversationSessionBusyError("conversation session has pending entries")
+            # I/O 返回后重新检查活动状态，再在不让出事件循环的窗口取得空闲锁。
+            self._require_idle_session(session_id, slot)
+            await slot.lock.acquire()
             acquired = True
             yield
         finally:
@@ -591,6 +697,14 @@ class ConversationQueue:
             slot.users -= 1
             if slot.users == 0:
                 del self._session_slots[session_id]
+
+    def _require_idle_session(self, session_id: str, slot: _SessionSlot) -> None:
+        """独占准入前统一检查执行中、已准入未领取和待投递的会话活动。"""
+        pending = any(
+            reserved.session_id == session_id for reserved in self._reserved_slots.values()
+        ) or session_id in self._pending_deliveries.values()
+        if slot.active or pending or slot.lock.locked():
+            raise ConversationSessionBusyError("conversation session is busy")
 
     async def process_entry(self, entry: QueuedConversation) -> None:
         """为图片工作任务绑定可持久化取消的执行上下文。"""
@@ -617,13 +731,17 @@ class ConversationQueue:
                     await asyncio.sleep(1)
         finally:
             active_image_task.reset(token)
+            reserved = self._reserved_slots.pop(entry.job.job_id, None)
+            if reserved is not None:
+                reserved.semaphore.release()
+            self._pending_deliveries.pop(entry.job.job_id, None)
 
     async def _process_entry(self, entry: QueuedConversation) -> None:
-        """等待会话和执行资源均计入总时限，重试与最终确认始终保留会话顺序。"""
+        """同会话并发处理，总时限覆盖生成、重试和最终确认。"""
 
         try:
-            remaining = self._remaining_seconds(entry)
-            async with self.session_guard(entry.job.session_id, timeout=remaining):
+            self._remaining_seconds(entry)
+            async with self.session_activity(entry.job.session_id):
                 try:
                     remaining = self._remaining_seconds(entry)
                     with request_deadline(remaining):
@@ -632,6 +750,8 @@ class ConversationQueue:
                     await self._expire_entry(entry)
         except (asyncio.TimeoutError, ConversationJobExpiredError):
             await self._expire_entry(entry)
+        except ChatBusyError as exc:
+            await self._fail_and_notify(entry, await self.store.load_state(entry.stream_id), exc)
 
     def _remaining_seconds(self, entry: QueuedConversation) -> float:
         """按入队绝对时间计算剩余预算，重试不能刷新生命周期。"""
@@ -658,7 +778,7 @@ class ConversationQueue:
                 await asyncio.sleep(1)
 
     async def _process_with_recovery(self, entry: QueuedConversation) -> None:
-        """在同一会话锁及总预算内处理任务，恢复短暂 Redis 故障。"""
+        """在任务总预算内恢复短暂存储故障，不持有会话执行锁。"""
 
         while True:
             try:
@@ -692,9 +812,7 @@ class ConversationQueue:
                     if await execution.finished():
                         await self.store.complete(entry.stream_id)
                         return
-                media_job = entry.job.background_image or entry.job.media_output == "AUDIO"
-                semaphore = self._media_semaphore if media_job else self._semaphore
-                async with semaphore:
+                async with self._execution_slot(entry.job):
                     execution = active_image_task.get()
                     if execution is not None:
                         await execution.transition("running")
@@ -958,6 +1076,8 @@ class ConversationQueue:
     def _is_retryable(self, exc: Exception) -> bool:
         """判断业务、平台或存储异常是否允许按队列策略重试。"""
 
+        if is_chat_busy_error(exc):
+            return False
         if isinstance(exc, ChatMemoryStoreError):
             failure = DatabaseFailure.from_error(exc)
             return failure is not None and failure.transient

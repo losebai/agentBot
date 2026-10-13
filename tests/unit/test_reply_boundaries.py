@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parents[2]
-SOURCE_ROOT = PROJECT_ROOT / "src"
+# 包源码已迁入 agent_bot；从真实包根检查投递与回复来源边界。
+SOURCE_ROOT = PROJECT_ROOT / "src" / "agent_bot"
 USER_REPLY_PATHS = (
     Path("integrations/onebot"),
     Path("plugin/handlers.py"),

@@ -8,7 +8,7 @@ import re
 from collections.abc import Callable
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 from agent_bot.models import ChatContext
 from agent_bot.services.chat import ChatService
@@ -150,7 +150,7 @@ class ReplyIntent(BaseModel):
 
 
 class GeneratedReply(BaseModel):
-    """带有明确 LLM 来源证明且不含连续换行或空白行的不可变回复。"""
+    """模型来源回复；消息去除空白行，可信文件投递上下文保留原始格式。"""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
 
@@ -160,8 +160,10 @@ class GeneratedReply(BaseModel):
 
     @field_validator("text")
     @classmethod
-    def normalize_line_breaks(cls, value: str) -> str:
-        """统一换行并移除空白行，保留正文缩进及分段边界的单个换行。"""
+    def normalize_line_breaks(cls, value: str, info: ValidationInfo) -> str:
+        """文件中的空白行可能影响代码语义，只在普通消息中规范化换行。"""
+        if info.context and info.context.get("file_reply"):
+            return value
         normalized = value.replace("\r\n", "\n").replace("\r", "\n")
         return re.sub(r"\n(?:[^\S\n]*\n)+", "\n", normalized)
 

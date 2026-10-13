@@ -339,7 +339,12 @@ async def test_natural_queue_overload_finishes_without_composer(
             Mock(self_id="90001"), private_event(prompt), matcher=matcher,
             mention_handler=AsyncMock(return_value=None),
         )
-    matcher.send.assert_not_awaited()
+    if isinstance(error, ChatBusyError):
+        matcher.send.assert_awaited_once()
+        assert "并发" in str(matcher.send.await_args.args[0])
+        assert "private" not in str(matcher.send.await_args.args[0])
+    else:
+        matcher.send.assert_not_awaited()
     matcher.finish.assert_awaited_once_with()
     reply_chat.assert_not_awaited()
 

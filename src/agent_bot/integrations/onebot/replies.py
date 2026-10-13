@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn
@@ -14,6 +16,8 @@ from agent_bot.model_guard import MODEL_CONFIGURATION_ERROR_MESSAGE
 from agent_bot.services.replies import GeneratedReply, LlmReplyComposer, ReplyIntent
 from agent_bot.state import split_reply
 
+CHAT_BUSY_MESSAGE = "当前聊天并发已满或会话正在重置，本次请求未执行，请稍后重试。"
+
 
 @dataclass(frozen=True, slots=True)
 class ReplyDeliveryReceipt:
@@ -24,12 +28,26 @@ class ReplyDeliveryReceipt:
 
 
 class OneBotReplyGateway:
-    """统一消息投递；普通正文须来自模型，配置错误仅允许固定的受限通知。"""
+    """统一消息投递；模型正文与配置、忙碌状态的受限系统通知分别校验。"""
 
     def __init__(self, config_provider: Callable[[], RuntimeConfig]) -> None:
         """保存运行时配置提供器，以便普通回复使用最新分段限制。"""
 
         self._config_provider = config_provider
+
+    async def finish_busy_error(self, matcher: Matcher) -> NoReturn:
+        """额度满时直接拒绝，不调用模型生成解释或把请求加入等待。"""
+        await matcher.send(Message(CHAT_BUSY_MESSAGE))
+        await matcher.finish()
+        raise AssertionError("matcher.finish must stop execution")
+
+    async def send_busy_error(
+        self, bot: Bot, *, scene: Literal["private", "group"], target_id: str,
+    ) -> None:
+        """恢复任务遇到过载时，向原目标发送固定系统状态而非生成回复。"""
+        await self._send_bot_message(
+            bot, scene=scene, target_id=target_id, message=Message(CHAT_BUSY_MESSAGE),
+        )
 
     async def finish_configuration_error(
         self, matcher: Matcher, *, kind: Literal["model", "catalog", "agent"] = "model",
@@ -51,6 +69,33 @@ class OneBotReplyGateway:
         await self._send_bot_message(
             bot, scene=scene, target_id=target_id,
             message=Message(MODEL_CONFIGURATION_ERROR_MESSAGE),
+        )
+
+    async def send_reply_file(
+        self, bot: Bot, *, scene: Literal["private", "group"], target_id: str,
+        reply: GeneratedReply,
+    ) -> dict[str, Any]:
+        """完整模型正文编码为 UTF-8 文件，NapCat 解码并释放临时文件，无共享目录。"""
+        self._require_generated(reply)
+        encoded = base64.b64encode(reply.text.encode("utf-8")).decode("ascii")
+        name = "reply-" + hashlib.sha256(reply.request_id.encode("utf-8")).hexdigest()[:16]
+        # 文件名由请求摘要生成，模型内容和外部标识不能指定本地路径。
+        if scene == "group":
+            return await bot.call_api(
+                "upload_group_file", group_id=int(target_id), file=f"base64://{encoded}",
+                name=f"{name}.txt",
+            )
+        if scene == "private":
+            return await bot.call_api(
+                "upload_private_file", user_id=int(target_id), file=f"base64://{encoded}",
+                name=f"{name}.txt",
+            )
+        raise ValueError("unsupported OneBot scene")
+
+    async def send_file_mention(self, bot: Bot, *, target_id: str, member_id: str) -> None:
+        """文件上传确认后发送原生群提醒，队列独立记录进度，重试不重传已确认文件。"""
+        await self._send_bot_message(
+            bot, scene="group", target_id=target_id, message=Message(MessageSegment.at(member_id)),
         )
 
     async def send_matcher(

@@ -24,6 +24,62 @@ PROVIDERS = {
 }
 
 
+@pytest.mark.parametrize("protocol", ["openai-chat", "openai-responses"])
+@pytest.mark.parametrize("cached", [None, 0, 60])
+async def test_cached_input_usage_preserves_reported_zero_and_unknown(protocol, cached):
+    """真实 SDK 转换后保留缓存输入用量，未上报与明确零命中不能混淆。"""
+    body = response(protocol)
+    names = ("input_tokens", "output_tokens") if protocol == "openai-responses" else (
+        "prompt_tokens", "completion_tokens"
+    )
+    stats = {names[0]: 100, names[1]: 10, "total_tokens": 110}
+    if cached is not None:
+        stats[f"{names[0]}_details"] = {"cached_tokens": cached}
+    body["usage"] = stats
+    provider = PROVIDERS[protocol](ProviderTransport(httpx.MockTransport(
+        lambda req: httpx.Response(200, json=body)
+    )))
+    try:
+        result = await provider.complete(call(protocol))
+        assert result.usage.cached_tokens == cached
+        assert result.usage.total_tokens == 110
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.parametrize("protocol", ["openai-chat", "openai-responses"])
+async def test_streamed_cached_usage_is_kept_from_terminal_metadata(protocol):
+    """碎片化流在终态汇总缓存输入，优先服务层级也不能丢失缓存 Token。"""
+    stats = {"total_tokens": 110}
+    if protocol == "openai-chat":
+        stats.update(prompt_tokens=100, completion_tokens=10,
+                     prompt_tokens_details={"cached_tokens": 60})
+        terminal = {"choices": [], "model": "Qwen/X", "service_tier": "priority",
+                    "usage": stats}
+        raw = stream_body(protocol).replace(
+            b"data: [DONE]\n\n",
+            ("data: " + json.dumps(terminal) + "\n\ndata: [DONE]\n\n").encode(),
+        )
+    else:
+        stats.update(input_tokens=100, output_tokens=10,
+                     input_tokens_details={"cached_tokens": 60})
+        terminal = {"type": "response.completed", "response": {
+            **response(protocol), "usage": stats,
+        }}
+        raw = ("data: " + json.dumps({"type": "response.output_text.delta",
+                                      "delta": "你好\n\n世界"}) + "\n\n" +
+               "data: " + json.dumps(terminal) + "\n\n").encode()
+    provider = PROVIDERS[protocol](ProviderTransport(httpx.MockTransport(
+        lambda req: httpx.Response(200, stream=ByteStream(raw))
+    )))
+    try:
+        events = [event async for event in provider.stream(call(protocol))]
+        assert events[-1].usage.cached_tokens == 60
+        assert events[-1].usage.total_tokens == 110
+    finally:
+        await provider.aclose()
+
+
 def call(protocol, options=None):
     return ProviderCall(
         request=TextRequest(

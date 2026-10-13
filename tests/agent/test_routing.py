@@ -8,6 +8,25 @@ from agent_bot.ai.routing import RoutingAiClient
 from agent_bot.models import LlmRequestOptions
 
 
+@pytest.mark.parametrize("code", ["AGENT_TIMEOUT", "AI_TIMEOUT", "AGENT_TOOL_SESSION_EXPIRED"])
+async def test_qq_routes_interrupted_body_without_calling_another_model(code):
+    """超时已有正文直接返回 QQ 队列，不再次生成或解释错误。"""
+    plain, agent = AsyncMock(), AsyncMock()
+    error = AgentError(code, status_code=504)
+    error.partial_content = "已生成内容"
+    agent.complete.side_effect = error
+    client = RoutingAiClient(
+        plain, agent_service=agent, timeout_seconds=30,
+        default_options=LlmRequestOptions(), mcp_services=(),
+    )
+    assert await client.complete(
+        model="local", session_id="s", prompt="hi", messages=(), request_id="r",
+        use_agent=True, use_web_search=False,
+    ) == "已生成内容"
+    agent.complete.assert_awaited_once()
+    plain.complete.assert_not_awaited()
+
+
 async def test_python_failure_never_falls_back():
     plain, agent = AsyncMock(), AsyncMock()
     agent.complete.side_effect = AgentError("AGENT_TIMEOUT", status_code=504)

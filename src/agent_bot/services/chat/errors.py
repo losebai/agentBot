@@ -1,5 +1,7 @@
 """聊天领域异常。"""
 
+from agent_bot.ai.chat_errors import ChatAiError
+
 
 class ChatInputError(ValueError):
     """聊天输入错误基类。"""
@@ -25,3 +27,10 @@ class ChatRateLimitedError(RuntimeError):
 
 class ChatBusyError(RuntimeError):
     """当前会话或全局 AI 并发已经占满。"""
+
+
+def is_chat_busy_error(error: Exception) -> bool:
+    """本地额度满与上游429均是立即拒绝，不能当作暂时故障退避重试。"""
+    return isinstance(error, ChatBusyError) or (
+        isinstance(error, ChatAiError) and error.status_code == 429
+    )

@@ -30,6 +30,8 @@ variables:
       files: [uv.lock]
     paths: [.uv-cache/]
   before_script:
+    # 依赖安装会构建项目；先明确检查检出资源，避免到 Hatch 阶段才发现遗漏文件。
+    - python tools/ci/check_build_inputs.py
     - python -m pip install --no-cache-dir "uv==$UV_VERSION"
     - uv sync --locked --extra dev
 
@@ -59,7 +61,8 @@ frontend-check:
   script:
     - npm --prefix web ci --cache "$CI_PROJECT_DIR/.npm" --prefer-offline
     - npm --prefix web run typecheck
-    - npm --prefix web test -- --run
+    # 内网 Runner 与其他服务共享内存；只启动一个测试 worker，避免按 CPU 数并发耗尽资源。
+    - npm --prefix web test -- --run --maxWorkers=1
     - npm --prefix web run build
   artifacts:
     expire_in: 7 days

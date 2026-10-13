@@ -7,7 +7,7 @@ const provider: Provider = { id: 1, revision: 1, name: '本机', enabled: true,
   protocol: 'openai-chat', base_url: 'https://offline.invalid/v1', description: '',
   credential_set: false, credential_available: true };
 
-it('模型只需切换启用状态，提交当前版本且不覆盖媒体能力', async () => {
+it('切换模型启用状态时提交当前版本且不覆盖媒体能力', async () => {
   let model: AiModel = { id: 1, revision: 3, alias: 'local-qwen', upstream_model: 'Qwen/Qwen3.5-9B',
     provider_id: 1, enabled: false, media_initialized: true,
     media: { vision_enabled: true, image_api_profile: 'none', audio_chat_enabled: false } };
@@ -62,4 +62,41 @@ it('刷新获取全部模型，失败后保留已保存列表并显示错误', a
   fireEvent.click(screen.getByRole('button', { name: '刷新模型' }));
   expect(await screen.findByText(/上游服务不可用/)).toBeVisible();
   expect(screen.getByRole('switch', { name: '启用 existing' })).toBeChecked();
+});
+
+it('已有模型可去掉别名前缀，提交记录 ID 和版本而不改变上游名称或启用状态', async () => {
+  const model = { id: 42, revision: 3, alias: '1/glm', upstream_model: 'glm', provider_id: 1, enabled: true };
+  const writes: unknown[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+    if (init?.method === 'PATCH') {
+      expect(String(url)).toMatch(/ai\/models\/42$/);
+      writes.push(JSON.parse(String(init.body)));
+      return Response.json({ ...model, alias: 'glm', revision: 4 });
+    }
+    return Response.json({ items: [model], next_cursor: null });
+  }));
+  render(<Models token="offline" provider={provider} />);
+  fireEvent.click(await screen.findByRole('button', { name: '修改 1/glm 别名' }));
+  fireEvent.change(screen.getByLabelText('模型别名'), { target: { value: 'glm' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存别名' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  expect(writes).toEqual([{ expected_revision: 3, alias: 'glm' }]);
+  expect(screen.getByRole('switch', { name: '启用 glm' })).toBeChecked();
+});
+
+it('别名冲突时保留修改草稿与原模型状态', async () => {
+  const model = { id: 42, revision: 3, alias: '1/glm', upstream_model: 'glm', provider_id: 1, enabled: true };
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    if (init?.method === 'PATCH') {
+      return Response.json({ message: '模型别名已存在', code: 'CONFLICT' }, { status: 409 });
+    }
+    return Response.json({ items: [model], next_cursor: null });
+  }));
+  render(<Models token="offline" provider={provider} />);
+  fireEvent.click(await screen.findByRole('button', { name: '修改 1/glm 别名' }));
+  fireEvent.change(screen.getByLabelText('模型别名'), { target: { value: 'glm' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存别名' }));
+  await waitFor(() => expect(screen.getByText(/模型别名已存在/)).toBeVisible());
+  expect(screen.getByLabelText('模型别名')).toHaveValue('glm');
+  expect(screen.getByRole('switch', { name: '启用 1/glm' })).toBeChecked();
 });

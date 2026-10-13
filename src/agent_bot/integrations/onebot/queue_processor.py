@@ -14,6 +14,7 @@ from nonebot.adapters.onebot.v11 import Bot, MessageSegment
 from nonebot.adapters.onebot.v11.exception import ActionFailed, ApiNotAvailable, NetworkError
 
 from agent_bot.ai.chat_errors import (
+    ChatAiError,
     ChatAiProtocolError,
     ChatAiRejectedError,
     ChatAiUnavailableError,
@@ -211,14 +212,16 @@ class ConversationQueueProcessor:
                         )
                         answer = None
                     elif "local_workflow_generate_image" in job.chat_tools:
+                        # 只记录本地稳定错误码，不输出可能含凭据的异常正文。
                         logger.warning(
                             "本地工作流处理失败：stage=agent_generate job_id=%s "
-                            "request_id=%s session_id=%s collected_images=%s error=%s",
+                            "request_id=%s session_id=%s collected_images=%s error=%s code=%s",
                             job.job_id,
                             job.request_id,
                             job.session_id,
                             len(collector.images) if collector is not None else 0,
                             type(exc).__name__,
+                            exc.error_code if isinstance(exc, ChatAiError) else None,
                         )
                         if collector is not None and collector.images:
                             answer = None

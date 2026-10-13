@@ -119,6 +119,11 @@ class AiService:
             error_code=error_code,
             prompt=request.prompt,
             content=content,
+            request_context={
+                'model': request.model,
+                'messages': [message.model_dump() for message in request.messages],
+                'options': request.options.model_dump(exclude_none=True),
+            },
         )
         try:
             timeout = remaining_timeout(request.timeout_seconds)

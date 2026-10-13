@@ -13,6 +13,28 @@ const snapshot = {
 };
 
 describe('配置编辑', () => {
+  it.each([null, false, true])('可空布尔值 %s 能保留原值并显式清除为 null', async initial => {
+    let submitted: unknown;
+    const fields = [{ name: 'chat_llm_enable_thinking', description: '深度思考', kind: 'boolean',
+      value: initial, nullable: true, secret_is_set: false, restart_required: false }];
+    vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+      if (init?.method === 'PATCH') submitted = JSON.parse(init.body);
+      return Response.json({ ...snapshot, fields });
+    }));
+    render(<Settings token="offline-token" />);
+    const control = await screen.findByRole('combobox', { name: '深度思考' });
+    expect(control).toHaveValue(initial === null ? '' : String(initial));
+    fireEvent.change(control, { target: { value: 'false' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(submitted).toEqual({ expected_revision: 1,
+      values: { chat_llm_enable_thinking: false } }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled());
+    fireEvent.change(control, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(submitted).toEqual({ expected_revision: 1,
+      values: { chat_llm_enable_thinking: null } }));
+  });
+
   it('静态配置分组只读，不能修改启动端口或提交密钥', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...snapshot, fields: [
       ...snapshot.fields,

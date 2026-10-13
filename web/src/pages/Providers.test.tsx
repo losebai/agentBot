@@ -46,8 +46,8 @@ it.each([false, true])('保存供应商后自动同步，无需二次导入；�
     failDiscovery = false;
     fireEvent.click(screen.getByRole('button', { name: '刷新模型' }));
   }
-  expect(await screen.findByRole('switch', { name: '启用 2/same-model' })).not.toBeChecked();
-  expect(screen.getByRole('switch', { name: '启用 2/other-model' })).not.toBeChecked();
+  expect(await screen.findByRole('switch', { name: '启用 same-model' })).not.toBeChecked();
+  expect(screen.getByRole('switch', { name: '启用 other-model' })).not.toBeChecked();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /导入/ })).not.toBeInTheDocument();
   const requests = fetcher.mock.calls.filter(([url, options]) => options?.method === 'POST' && String(url).endsWith('/ai/providers'));

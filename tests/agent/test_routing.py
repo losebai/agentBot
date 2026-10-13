@@ -37,10 +37,11 @@ async def test_python_failure_never_falls_back():
     plain.aclose.assert_awaited_once()
 
 
-@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize("names", [(), ("memory",), ("memory", "local_workflow_generate_image")])
 async def test_qq_precheck_uses_same_route_and_agent_model(
-    agent_database, agent_params, seeded_model, mixed
+    agent_database, agent_params, seeded_model, names
 ):
+    """无工具聊天和工具聊天均预检并使用 Agent 模型，不依赖失效的聊天别名。"""
     from agent_bot.agent.contracts import AgentCreate
     from agent_bot.ai.routing import RoutedModelGuard
     from agent_bot.model_router import ContentModelRouter
@@ -69,7 +70,7 @@ async def test_qq_precheck_uses_same_route_and_agent_model(
         default_options=LlmRequestOptions(),
         mcp_services=(),
     )
-    guard = RoutedModelGuard(seeded_model[0])
+    guard = RoutedModelGuard(seeded_model[0], agent_catalog=agent.catalog, agent_code="helper")
     chat = ChatService(
         client=client,
         model_guard=guard,
@@ -84,20 +85,21 @@ async def test_qq_precheck_uses_same_route_and_agent_model(
         max_input_chars=100,
         cooldown_seconds=0,
         max_concurrent_requests=2,
-        agent_enabled=True,
         web_search_enabled=False,
     )
     try:
-        names = ("memory", "local_workflow_generate_image") if mixed else ("memory",)
-
         async def deliver(answer):
+            """模拟成功投递，不建立 QQ 连接。"""
             return answer
 
+        await chat.validate_queued("hello", chat_tools=names)
         answer = await chat.respond(
-            "session", "hello", delivery=deliver, chat_tools=names, tool_session_token="offline"
+            "session", "hello", delivery=deliver, chat_tools=names,
+            tool_session_token="offline" if names else None,
         )
         assert answer == "最终回答"
         assert agent.providers["openai-chat"].calls[0].resolved.model.alias == "local-model"
+        plain.complete.assert_not_awaited()
     finally:
         await chat.aclose()
         await client.aclose()

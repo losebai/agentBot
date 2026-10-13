@@ -21,15 +21,13 @@ it('自动同步全部模型超过单批上限，重复同步保留已有启用�
   const api = new AiApi('offline');
   expect(await api.syncModels(7, 3)).toEqual({ total: 206, added: 205 });
   expect(records.size).toBe(206);
-  expect(records.get('model-204')).toEqual({ alias: '7/model-204', enabled: false });
+  expect(records.get('model-204')).toEqual({ alias: 'model-204', enabled: false });
   expect(await api.syncModels(7, 3)).toEqual({ total: 206, added: 0 });
   expect(records.get('existing')).toEqual({ alias: 'custom-name', enabled: true });
   expect(batches).toEqual([100, 100, 6, 100, 100, 6]);
 });
 
-it('局域网 HTTP 页面也能保留完整长 ID 并生成不超限且不混用的别名', async () => {
-  // 普通 HTTP 局域网页面不提供 SubtleCrypto，但仍应能同步合法长模型 ID。
-  vi.stubGlobal('crypto', {});
+it('别名直接使用完整上游名称，不附加供应商编号或截断合法长名称', async () => {
   const names = ['a'.repeat(199) + '1', 'a'.repeat(199) + '2'];
   const aliases: string[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
@@ -43,7 +41,7 @@ it('局域网 HTTP 页面也能保留完整长 ID 并生成不超限且不混用
   await api.syncModels(1, 1);
   await api.syncModels(2, 1);
   expect(aliases.every(alias => alias.length <= 200)).toBe(true);
-  expect(new Set(aliases).size).toBe(4);
+  expect(aliases).toEqual([...names, ...names]);
 });
 
 it('取消同步后不再提交后续批次', async () => {

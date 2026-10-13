@@ -262,9 +262,7 @@ def build_runtime_state(
         max_rate_limit_entries=config.chat_max_sessions,
         model_guard=model_guard,
         model_router=model_router,
-        agent_enabled=config.chat_agent_enabled,
         web_search_enabled=config.chat_web_search_enabled,
-        mcp_services_enabled=bool(config.chat_mcp_services),
         memory_compression_max_tokens=config.chat_memory_compression_max_tokens,
         memory_compression_queue_capacity=config.chat_memory_compression_queue_capacity,
     )

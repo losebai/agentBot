@@ -111,6 +111,7 @@ def make_service(
     group_ids: set[str] | frozenset[str] = frozenset({"88888"}),
     trigger_mode: str = "interval",
     prompt: str = "生成一句自然的群聊开场白",
+    system_prompt: str = "你是群聊助手。",
     session_secret: str = "auto-speak-test-secret",
     initial_delay_seconds: float = 10,
     interval_seconds: float = 60,
@@ -120,7 +121,7 @@ def make_service(
     available_tools: Sequence[ChatToolName] = (),
     conversation_context_provider: FakeConversationContextProvider | None = None,
 ) -> AutoSpeakService:
-    """Construct group-only auto-speak with offline dependencies."""
+    """用离线依赖构造群聊自动发言，允许覆盖机器人人设。"""
 
     return AutoSpeakService(
         job_submitter=job_submitter,
@@ -136,7 +137,7 @@ def make_service(
         group_ids=group_ids,
         trigger_mode=trigger_mode,
         prompt=prompt,
-        system_prompt="你是群聊助手。",
+        system_prompt=system_prompt,
         laya_prompt="结合上下文判断是否应该主动发言。",
         session_secret=session_secret,
         initial_delay_seconds=initial_delay_seconds,
@@ -174,7 +175,9 @@ async def test_run_once_rechecks_bot_before_context_or_decision() -> None:
 
 
 @pytest.mark.asyncio
-async def test_interval_mode_loads_group_context_and_gates_generation() -> None:
+@pytest.mark.parametrize("system_prompt", ["你是群聊助手。", ""])
+async def test_interval_mode_loads_group_context_and_gates_generation(system_prompt: str) -> None:
+    """机器人提示词留空时仍可构建决策上下文并按决策结果提交任务。"""
     contexts = {"88888": "第一群最新消息", "99999": "第二群最新消息"}
     decision_client = FakeDecisionClient([decision(False), decision(True, 0.9)])
     context_store = FakeContextStore(contexts)
@@ -186,6 +189,7 @@ async def test_interval_mode_loads_group_context_and_gates_generation() -> None:
         context_store=context_store,
         bot_provider=lambda bot_id: bot,
         group_ids={"99999", "88888"},
+        system_prompt=system_prompt,
     )
 
     result = await service.run_once()

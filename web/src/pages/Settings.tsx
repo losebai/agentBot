@@ -4,17 +4,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import type { JsonValue, SettingField, SettingsSnapshot } from '../types';
 
-// Agent 运行入口及工具授权集中展示；聊天、媒体和启动字段不按描述关键词猜测归属。
+// 同一配置快照按页签展示；Agent 字段以明确名称归类，避免按描述猜测。
 const agentSettingNames = new Set([
-  'chat_agent_enabled', 'chat_python_agent_code', 'chat_agent_max_steps',
+  'chat_python_agent_code', 'chat_agent_max_steps',
   'chat_mcp_services', 'chat_python_search_mcp_code', 'chat_web_search_enabled',
   'chat_web_search_max_steps', 'chat_mention_tool_enabled',
 ]);
 
 function initialValue(field: SettingField): string | boolean {
-  // 密钥只显示是否已设置，不从快照构造掩码或实际值。
-  if (field.kind === 'boolean') return field.value === true;
+  // 空布尔值表示不传该参数，不能折叠为 false；密钥不回填实际内容。
   if (field.value === null) return '';
+  if (field.kind === 'boolean') return field.value === true;
   return field.kind === 'json' ? JSON.stringify(field.value, null, 2) : String(field.value);
 }
 
@@ -30,8 +30,8 @@ function patchValue(field: SettingField, value: string | boolean): JsonValue {
   return String(value);
 }
 
-/** 机器人和 Agent 共用字段编辑及版本校验，每个页面只展示和提交所属配置。 */
-export function Settings({ token, category = 'bot' }: { token: string; category?: 'bot' | 'agent' }) {
+/** 统一管理机器人和 Agent 运行配置，跨页签保留草稿并共用版本校验。 */
+export function Settings({ token }: { token: string }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [snapshot, setSnapshot] = useState<SettingsSnapshot>();
   const [draft, setDraft] = useState<Record<string, string | boolean>>({});
@@ -49,20 +49,20 @@ export function Settings({ token, category = 'bot' }: { token: string; category?
   }, [api]);
   useEffect(() => { void load(); }, [load]);
 
-  /** 静态配置始终在机器人页面只读展示；Agent 页面只管理明确列出的运行字段。 */
-  function belongsToCategory(field: SettingField): boolean {
-    const agentField = field.scope !== 'static' && agentSettingNames.has(field.name);
-    return category === 'agent' ? agentField : !agentField;
+  /** 启动字段始终只读，其余字段分为常规运行和 Agent 运行页签。 */
+  function fieldTab(field: SettingField): string {
+    if (field.scope === 'static') return 'static';
+    return agentSettingNames.has(field.name) ? 'agent' : 'runtime';
   }
 
   async function save() {
-    // 限定本页字段并排除静态参数，两个页面仍共享服务器的配置版本边界。
+    // 保存所有页签中的修改；静态参数始终排除，仍使用同一数据库版本。
     if (!snapshot || saving) return;
     setError(''); setSaved(false); setSaving(true);
     try {
       const values: Record<string, JsonValue> = {};
       for (const field of snapshot.fields) {
-        if (belongsToCategory(field) && !field.read_only && field.scope !== 'static' && Object.hasOwn(draft, field.name)) {
+        if (!field.read_only && field.scope !== 'static' && Object.hasOwn(draft, field.name)) {
           values[field.name] = patchValue(field, draft[field.name]);
         }
       }
@@ -72,12 +72,12 @@ export function Settings({ token, category = 'bot' }: { token: string; category?
     finally { setSaving(false); }
   }
 
-  const fields = snapshot?.fields.filter(field => belongsToCategory(field) && (field.scope || 'runtime') === scope
+  const fields = snapshot?.fields.filter(field => fieldTab(field) === scope
     && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase())) || [];
   return <div className="page-content">
     <div className="page-heading"><div><p className="eyebrow">CONFIGURATION</p>
-      <h1>{category === 'agent' ? 'Agent 运行配置' : '机器人配置'}</h1>
-      <p>{category === 'agent' ? '设置 QQ 对话使用的 Agent、工具轮次和工具授权。' : '调整聊天行为、模型和接入设置。'}</p></div>
+      <h1>机器人配置</h1>
+      <p>{scope === 'agent' ? 'QQ 日常聊天统一使用 Agent；在此设置预设、工具轮次和工具授权。' : '调整聊天行为、模型和接入设置。'}</p></div>
       <div className="heading-actions"><Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading} disabled={saving}>
         {Object.keys(draft).length ? '放弃修改并重新加载' : '重新加载'}</Button>
         <Button type="primary" icon={<SaveOutlined aria-hidden />} loading={saving} disabled={!Object.keys(draft).length || loading} onClick={() => void save()}>保存修改</Button></div>
@@ -87,9 +87,10 @@ export function Settings({ token, category = 'bot' }: { token: string; category?
     {snapshot && <div className="version-strip"><span>数据库版本 {snapshot.database_revision} · 运行时版本 {snapshot.applied_revision}</span>
       <Tag color={snapshot.database_revision === snapshot.applied_revision && !snapshot.restart_required_fields.length ? 'green' : 'gold'}>
         {snapshot.restart_required_fields.length ? `需要重启：${snapshot.restart_required_fields.join(', ')}` : snapshot.database_revision !== snapshot.applied_revision ? '等待热刷新' : '已应用'}</Tag></div>}
-    {category === 'bot' && <Tabs activeKey={scope} onChange={setScope} items={[
-      { key: 'runtime', label: '运行配置' }, { key: 'static', label: '静态配置' },
-    ]} />}
+    <Tabs activeKey={scope} onChange={setScope} items={[
+      { key: 'runtime', label: '运行配置' }, { key: 'agent', label: 'Agent 运行配置' },
+      { key: 'static', label: '静态配置' },
+    ]} />
     {scope === 'static' && <Alert message="静态配置只读，请修改启动文件或环境变量后重启服务。" type="info" showIcon className="notice" />}
     <Input prefix={<SearchOutlined />} placeholder="搜索设置名称或描述" aria-label="搜索配置" value={filter} onChange={event => setFilter(event.target.value)} className="settings-search" />
     {loading ? <div className="loading"><Spin /></div> : <div className="settings-card">
@@ -104,7 +105,11 @@ export function Settings({ token, category = 'bot' }: { token: string; category?
         return <div className="setting-row" key={field.name}>
           <div className="setting-description"><label htmlFor={id}>{field.description}</label>{field.restart_required && <Tag>重启生效</Tag>}<code>{field.name}</code></div>
           <div className="setting-control">
-            {field.kind === 'boolean' ? <Switch id={id} disabled={readOnly} checked={value === true} onChange={change} />
+            {field.kind === 'boolean' && field.nullable ? <select id={id} disabled={readOnly}
+              value={String(value)} onChange={event => change(event.target.value === '' ? '' : event.target.value === 'true')}>
+              <option value="">未设置（不传此参数）</option><option value="true">启用</option><option value="false">禁用</option>
+            </select>
+              : field.kind === 'boolean' ? <Switch id={id} disabled={readOnly} checked={value === true} onChange={change} />
               : field.kind === 'secret' ? <Input.Password id={id} disabled={readOnly} value={String(value)} placeholder={field.secret_is_set ? readOnly ? '已设置' : '已设置 · 留空保持原值' : '未设置'} autoComplete="new-password" onChange={event => change(event.target.value)} />
               : field.kind === 'json' || (field.kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
               : <Input id={id} disabled={readOnly} type={field.kind === 'number' ? 'number' : 'text'} step="any" value={String(value)} onChange={event => change(event.target.value)} />}

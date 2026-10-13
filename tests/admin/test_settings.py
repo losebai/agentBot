@@ -44,6 +44,15 @@ def test_optional_secret_can_be_explicitly_cleared(admin_store, admin_runtime):
     assert admin_store.load().config.chat_naraka_default_role_id is None
 
 
+def test_robot_system_prompt_can_be_explicitly_cleared(admin_store, admin_runtime):
+    """管理页保存空提示词后，读取仍返回空值而不是初始默认文本。"""
+    manager = service(admin_store, admin_runtime)
+    manager.update(update(1, chat_system_prompt=""))
+    assert admin_store.load().config.chat_system_prompt == ""
+    field = next(item for item in manager.read().fields if item.name == "chat_system_prompt")
+    assert field.value == ""
+
+
 def test_conflicting_revision_preserves_saved_configuration(admin_store, admin_runtime):
     from agent_bot.settings import SettingsRevisionConflictError
 

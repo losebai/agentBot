@@ -1,5 +1,5 @@
 import { Alert, Button, ConfigProvider, Input, Spin } from 'antd';
-import { DashboardOutlined, LogoutOutlined, MessageOutlined, SettingOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { DashboardOutlined, LogoutOutlined, MessageOutlined, SettingOutlined, ApiOutlined, RobotOutlined, AppstoreOutlined, HistoryOutlined, ToolOutlined } from '@ant-design/icons';
 import { useEffect, useState } from 'react';
 import { ApiClient, errorMessage } from './api';
 import { Overview } from './pages/Overview';
@@ -10,6 +10,27 @@ import { Sessions } from './pages/Sessions';
 import { Agents } from './pages/Agents';
 import { Skills } from './pages/Skills';
 import { McpServers } from './pages/McpServers';
+
+// 组件库与页面采用同一套中性色；告警仍保留语义颜色，按钮不使用装饰性阴影。
+const workspaceTheme = {
+  token: {
+    colorPrimary: '#303030', colorInfo: '#666666', colorSuccess: '#52735b',
+    colorWarning: '#9b702f', colorError: '#b94b4b',
+    colorSuccessBg: '#f5f8f5', colorSuccessBorder: '#dce7de',
+    colorWarningBg: '#fcf9f1', colorWarningBorder: '#ece1c8',
+    colorErrorBg: '#fcf5f5', colorErrorBorder: '#eddcdc',
+    colorInfoBg: '#f7f7f7', colorInfoBorder: '#e4e4e4',
+    colorText: '#242424', colorTextSecondary: '#707070',
+    colorBorder: '#dedede', colorBgLayout: '#f7f7f7',
+    borderRadius: 6, fontSize: 13, controlHeight: 32,
+    fontFamily: 'Inter, Segoe UI, Microsoft YaHei, sans-serif',
+  },
+  components: {
+    Button: { primaryShadow: 'none', defaultShadow: 'none', dangerShadow: 'none' },
+    Tabs: { inkBarColor: '#303030', itemSelectedColor: '#242424', itemHoverColor: '#555555' },
+    Modal: { borderRadiusLG: 10 },
+  },
+};
 
 const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理', skills:'Skill 管理', mcps:'MCP 服务'};
 
@@ -51,21 +72,29 @@ export function App() {
     finally { setConnecting(false); }
   }
   function navigate(next: string) { setPage(next); setVisited(previous => [...new Set([...previous, next])]); }
-  return <ConfigProvider theme={{ token: { colorPrimary: '#16766c', borderRadius: 8, fontFamily: 'Inter, Segoe UI, Microsoft YaHei, sans-serif' } }}>
+  return <ConfigProvider theme={workspaceTheme}>
     {access !== 'ready' ? <main className="page-content">{access === 'loading' ? <Spin tip="正在连接管理服务"><div className="loading" /></Spin> : <Alert message={error} type="error" showIcon />}</main>
-      : token === null ? <main className="login-screen"><div className="login-identity"><div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot</span></div><h1>你的机器人，<br />一个工作台。</h1><p>配置、连接与对话测试，集中管理。</p><div className="login-decoration"><i /><i /><i /></div></div>
-      <form className="login-form" onSubmit={event => { event.preventDefault(); void connect(); }}><SafetyCertificateOutlined className="login-icon" /><p className="eyebrow">MANAGEMENT ACCESS</p><h2>登录管理系统</h2><p>输入你设置的管理员密码。</p>{error && <Alert message={error} type="error" showIcon className="notice" />}<label htmlFor="admin-password">管理员密码</label><Input.Password id="admin-password" value={candidate} autoComplete="off" size="large" placeholder="输入管理员密码" onChange={event => setCandidate(event.target.value)} /><Button block type="primary" size="large" htmlType="submit" loading={connecting} disabled={!candidate.trim()}>登录</Button><span className="login-note">密码只保留在本次浏览器会话中。</span></form></main>
-      : <div className="workspace"><aside className="sidebar"><div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot<small>机器人工作台</small></span></div><p className="nav-label">工作空间</p><nav aria-label="主导航">{[
+      : token === null ? <main className="login-screen">
+      <form className="login-form" onSubmit={event => { event.preventDefault(); void connect(); }}>
+        <div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot</span></div>
+        <h1>登录工作台</h1><p>输入管理员密码，管理你的机器人。</p>
+        {error && <Alert message={error} type="error" showIcon className="notice" />}
+        <label htmlFor="admin-password">管理员密码</label>
+        <Input.Password id="admin-password" value={candidate} autoComplete="off" size="large" placeholder="输入管理员密码" onChange={event => setCandidate(event.target.value)} />
+        <Button block type="primary" size="large" htmlType="submit" loading={connecting} disabled={!candidate.trim()}>登录</Button>
+        <span className="login-note">密码只保留在本次浏览器会话中。</span>
+      </form></main>
+      : <div className="workspace"><aside className="sidebar"><div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot</span></div><p className="nav-label">工作空间</p><nav aria-label="主导航">{[
         { key: 'overview', label: '运行概览', icon: <DashboardOutlined /> },
         { key: 'settings', label: '机器人配置', icon: <SettingOutlined /> },
         { key: 'chat', label: '对话测试', icon: <MessageOutlined /> },
-        { key: 'providers', label: '供应商与模型', icon: <SettingOutlined /> },
-        { key: 'sessions', label: '会话记录', icon: <MessageOutlined /> },
-        { key: 'agents', label: 'Agent 管理', icon: <DashboardOutlined /> },
-        { key: 'skills', label: 'Skill 管理', icon: <SettingOutlined /> },
-        { key: 'mcps', label: 'MCP 服务', icon: <SettingOutlined /> },
+        { key: 'providers', label: '供应商与模型', icon: <ApiOutlined /> },
+        { key: 'sessions', label: '会话记录', icon: <HistoryOutlined /> },
+        { key: 'agents', label: 'Agent 管理', icon: <RobotOutlined /> },
+        { key: 'skills', label: 'Skill 管理', icon: <AppstoreOutlined /> },
+        { key: 'mcps', label: 'MCP 服务', icon: <ToolOutlined /> },
       ].map(item => <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
-        <main className="main-area"><header className="topbar"><span>工作空间 / {titles[page]}</span><span className="workspace-label">AgentBot · 第四阶段</span></header>
+        <main className="main-area"><header className="topbar"><span className="topbar-title">{titles[page]}</span><span className="workspace-label">AgentBot</span></header>
           <section hidden={page !== 'overview'}>{visited.includes('overview') && <Overview token={token} />}</section>
           <section hidden={page !== 'settings'}>{visited.includes('settings') && <Settings token={token} />}</section>
           <section hidden={page !== 'chat'}>{page === 'chat' && <Chat token={token} />}</section>

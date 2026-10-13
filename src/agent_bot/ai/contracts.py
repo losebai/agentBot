@@ -304,4 +304,6 @@ class SessionDetail(SessionSummary):
 
 
 class SessionWrite(SessionDetail):
-    pass
+    """写入统一记录的请求快照，旧会话表仍使用原列集合。"""
+
+    request_context: dict | None = None

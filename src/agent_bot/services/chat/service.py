@@ -55,9 +55,7 @@ class ChatService:
         clock: Callable[[], float] = time.monotonic,
         model_guard: RoutedModelGuard | None = None,
         model_router: ContentModelRouter,
-        agent_enabled: bool = True,
         web_search_enabled: bool = True,
-        mcp_services_enabled: bool = False,
         memory_compression_max_tokens: int = 512,
         memory_compression_queue_capacity: int = 64,
     ) -> None:
@@ -75,9 +73,7 @@ class ChatService:
         self._store = store
         self._model_guard = model_guard
         self._model_router = model_router
-        self._agent_enabled = agent_enabled
         self._web_search_enabled = web_search_enabled
-        self._mcp_services_enabled = mcp_services_enabled
         self._route_selector = ChatRouteSelector()
         self._image_start_semaphore = asyncio.Semaphore(max_concurrent_requests)
         self._prompt_builder = ChatPromptBuilder(
@@ -152,11 +148,9 @@ class ChatService:
         image_urls: Sequence[str] = (),
         video_urls: Sequence[str] = (),
     ) -> str:
-        """执行共享限流下的单次请求，不读取或写入普通聊天历史。"""
+        """专用指令可使用空机器人提示词，不读取或写入普通聊天历史。"""
 
         normalized_system_prompt = system_prompt.strip()
-        if not normalized_system_prompt:
-            raise ValueError("system prompt cannot be empty")
         return await self._run(
             session_id,
             prompt,
@@ -166,7 +160,10 @@ class ChatService:
             chat_context=chat_context,
             image_urls=image_urls,
             video_urls=video_urls,
-            system_messages=(ChatMessage(role="system", content=normalized_system_prompt),),
+            system_messages=(
+                (ChatMessage(role="system", content=normalized_system_prompt),)
+                if normalized_system_prompt else ()
+            ),
             persist_history=False,
             use_agent=False,
             use_web_search=False,
@@ -212,22 +209,15 @@ class ChatService:
         self, prompt: str, *, image_urls: Sequence[str] = (), video_urls: Sequence[str] = (),
         chat_tools: Sequence[ChatToolName] = (),
     ) -> None:
-        """入队前只读校验实际模型，不消费冷却额度、不调用模型或写入会话历史。"""
+        """自然聊天统一预检 Agent 模型，不消费额度或写入会话历史。"""
         if self._model_guard is None:
             return
-        route = self._route_selector.select(
-            prompt, web_search_enabled=self._web_search_enabled,
-        )
-        effective_agent = self._agent_enabled and (route.use_agent or self._mcp_services_enabled)
-        # 这里只选择待检查模型，完整的协议与工具能力约束仍由生成入口校验。
-        capability = "agent" if effective_agent or chat_tools else (
-            "media" if image_urls or video_urls else "ordinary-text"
-        )
+        # 无工具时也由 Agent 回答，预设模型必须与实际执行保持一致。
         category = ContentCategory.IMAGE_UNDERSTANDING if image_urls or video_urls else (
             ContentCategory.TEXT
         )
         await self._model_guard.ensure_enabled(
-            self._model_router.model_for(category), capability=capability,
+            self._model_router.model_for(category), capability="agent",
         )
 
     def accept_immediate(self, session_id: str, prompt: str) -> str:
@@ -533,7 +523,7 @@ class ChatService:
         reply_composition: bool = False,
         laya_decision: bool = False,
     ) -> str:
-        """普通请求经过聊天准入；仅 Composer 专用入口使用其独立并发边界。"""
+        """自然聊天默认进入 Agent；专用指令及内部正文生成显式关闭工具能力。"""
 
         normalized = self._prompt_builder.normalize(prompt)
         current_prompt = (
@@ -549,11 +539,7 @@ class ChatService:
             available_tools=chat_tools,
             web_search_enabled=self._web_search_enabled,
         )
-        effective_agent = (
-            self._agent_enabled and (route.use_agent or self._mcp_services_enabled)
-            if use_agent is None
-            else use_agent
-        )
+        effective_agent = True if use_agent is None else use_agent
         effective_web = route.web_search if use_web_search is None else use_web_search
 
         admission = (

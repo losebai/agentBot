@@ -41,7 +41,6 @@ EXPECTED_RUNTIME_FIELDS = {
     "chat_llm_stop",
     "chat_llm_enable_thinking",
     "chat_llm_forward_user_name",
-    "chat_agent_enabled",
     "chat_agent_max_steps",
     "chat_mcp_services",
     "chat_web_search_enabled",
@@ -191,7 +190,6 @@ def runtime_config() -> RuntimeConfig:
         "chat_llm_stop": ["private-stop-marker"],
         "chat_llm_enable_thinking": True,
         "chat_llm_forward_user_name": True,
-        "chat_agent_enabled": False,
         "chat_agent_max_steps": 4,
         "chat_mcp_services": ["windows-mcp"],
         "chat_web_search_enabled": True,
@@ -342,6 +340,20 @@ def test_round_trips_all_runtime_settings(
         assert getattr(loaded.config, field_name) == getattr(runtime_config, field_name)
 
 
+def test_empty_system_prompt_persists_without_default_fallback(
+    database_params: DatabaseParams, fake_mysql: FakeMySQL, runtime_config: RuntimeConfig,
+) -> None:
+    """保存空字符串后数据库仍是权威值，重新加载不能恢复默认提示词。"""
+    store = _make_store(database_params)
+    original = store.initialize(runtime_config)
+    saved = store.save(
+        runtime_config.model_copy(update={"chat_system_prompt": ""}),
+        expected_revision=original.revision,
+    )
+    assert saved.config.chat_system_prompt == ""
+    assert store.load().config.chat_system_prompt == ""
+
+
 def test_existing_snapshot_without_chat_agent_steps_keeps_default_behavior(
     database_params: DatabaseParams, fake_mysql: FakeMySQL, runtime_config: RuntimeConfig,
 ) -> None:
@@ -445,7 +457,7 @@ def test_load_rejects_raw_text_fallback_for_non_string_setting(
     store = _make_store(database_params)
     store.initialize(runtime_config)
     for row in fake_mysql.table:
-        if row["config_key"] == "chat_agent_enabled":
+        if row["config_key"] == "chat_web_search_enabled":
             row["config_value"] = "yes"
             break
 
@@ -566,10 +578,16 @@ def test_invalid_candidate_does_not_overwrite_previous_revision(
     assert store.load() == original
 
 
+@pytest.mark.parametrize("legacy_key, legacy_value", [
+    ("chat_ai_base_url", '"stale-value"'),
+    ("chat_agent_enabled", "false"),
+])
 def test_load_drops_legacy_keys_removed_from_model(
     database_params: DatabaseParams,
     fake_mysql: FakeMySQL,
     runtime_config: RuntimeConfig,
+    legacy_key: str,
+    legacy_value: str,
 ) -> None:
     """数据库快照中残留已删除字段时，load() 必须丢弃而非拒绝，与 extra="ignore" 一致。"""
 
@@ -579,8 +597,8 @@ def test_load_drops_legacy_keys_removed_from_model(
     # 模拟历史版本写入、当前模型已移除的字段。
     fake_mysql.table.append(
         {
-            "config_key": "chat_ai_base_url",
-            "config_value": '"stale-value"',
+            "config_key": legacy_key,
+            "config_value": legacy_value,
             "description": "",
         }
     )
@@ -588,10 +606,10 @@ def test_load_drops_legacy_keys_removed_from_model(
     loaded = store.load()
     assert loaded == original
     plain = runtime_config_to_plain_values(loaded.config)
-    assert "chat_ai_base_url" not in plain
+    assert legacy_key not in plain
     saved = store.save(loaded.config, expected_revision=loaded.revision)
     assert saved.revision == 2
-    assert all(row["config_key"] != "chat_ai_base_url" for row in fake_mysql.table)
+    assert all(row["config_key"] != legacy_key for row in fake_mysql.table)
 
 
 def test_load_rejects_missing_schema_tables(

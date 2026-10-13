@@ -19,12 +19,6 @@ class ChatRoute:
     chat_tools: tuple[ChatToolName, ...]
     web_search: bool
 
-    @property
-    def use_agent(self) -> bool:
-        """仅有实际工具能力时需要 Agent。"""
-
-        return bool(self.chat_tools or self.web_search)
-
 
 class ChatRouteSelector:
     """保留已授权的本地工具，联网能力仅由配置开关控制。"""

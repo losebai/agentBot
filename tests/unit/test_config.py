@@ -28,6 +28,13 @@ def make_enabled_auto_speak_config(**overrides: object) -> PluginConfig:
     return make_config(**values)
 
 
+@pytest.mark.parametrize("prompt", ["", "  \n  "])
+def test_robot_system_prompt_may_be_empty(prompt: str) -> None:
+    """机器人可只使用 Agent 提示词，普通与自动发言配置均允许清空人设。"""
+    assert make_config(chat_system_prompt=prompt).chat_system_prompt == ""
+    assert make_enabled_auto_speak_config(chat_system_prompt=prompt).chat_system_prompt == ""
+
+
 def test_config_has_safe_operational_defaults() -> None:
     config = make_config()
 
@@ -73,7 +80,7 @@ def test_config_has_safe_operational_defaults() -> None:
     assert config.chat_llm_stop is None
     assert config.chat_llm_enable_thinking is None
     assert config.chat_llm_forward_user_name is False
-    assert config.chat_agent_enabled is True
+    assert "chat_agent_enabled" not in config.model_dump()
     assert config.chat_agent_max_steps is None
     assert config.chat_mcp_services == []
     assert config.chat_web_search_enabled is True
@@ -767,7 +774,6 @@ def test_runtime_config_accepts_large_persistent_memory_windows() -> None:
         ("chat_naraka_max_concurrent_requests", 0),
         ("chat_config_refresh_interval_seconds", 0.5),
         ("chat_config_refresh_interval_seconds", 301),
-        ("chat_system_prompt", ""),
         ("chat_system_prompt", "x" * 20_001),
         ("chat_vision_model", ""),
         ("chat_vision_model", "x" * 256),

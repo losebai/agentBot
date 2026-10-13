@@ -231,17 +231,27 @@ async def test_service_routes_image_and_audio_generation_to_distinct_models() ->
     assert [call["model"] for call in client.media_calls] == ["image-model", "audio-model"]
 
 
-def test_service_requires_non_empty_system_prompt() -> None:
-    with pytest.raises(ValueError, match="system prompt"):
-        ChatService(
-            client=FakeClient([]),
-            store=ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60),
-            system_prompt="   ",
-            max_input_chars=20,
-            cooldown_seconds=0,
-            max_concurrent_requests=2,
-            model_router=model_router(),
-        )
+async def test_service_omits_empty_robot_system_prompt() -> None:
+    """清空机器人提示词后仍可聊天，不发送空系统消息或补入默认人设。"""
+    client = FakeClient(["回答", "总结"])
+    service = ChatService(
+        client=client,
+        store=ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60),
+        system_prompt="   ",
+        max_input_chars=20,
+        cooldown_seconds=0,
+        max_concurrent_requests=2,
+        model_router=model_router(),
+    )
+    try:
+        assert await service.ask("s", "你好") == "回答"
+        assert client.calls[0]["messages"] == [ChatMessage(role="user", content="你好")]
+        assert client.calls[0]["use_agent"] is True
+        assert await service.ask_once("summary", "总结原文", system_prompt="") == "总结"
+        assert client.calls[1]["messages"] == [ChatMessage(role="user", content="总结原文")]
+        assert client.calls[1]["use_agent"] is False
+    finally:
+        await service.aclose()
 
 
 @pytest.mark.asyncio
@@ -513,7 +523,6 @@ async def test_service_keeps_recent_group_context_within_upstream_message_limit(
         cooldown_seconds=0,
         max_concurrent_requests=2,
         model_router=model_router(),
-        agent_enabled=False,
     )
 
     async def deliver(answer: str) -> str:
@@ -528,7 +537,7 @@ async def test_service_keeps_recent_group_context_within_upstream_message_limit(
 
     messages = client.calls[0]["messages"]
     assert len(messages) == 100
-    assert client.calls[0]["use_agent"] is False
+    assert client.calls[0]["use_agent"] is True
     assert messages[3] == ChatMessage(role="user", content="问题26")
     assert messages[-1] == ChatMessage(role="user", content="当前问题")
 
@@ -708,6 +717,7 @@ async def test_service_forwards_current_images_without_persisting_their_urls() -
 
 @pytest.mark.asyncio
 async def test_service_selects_model_guard_by_current_message_materials() -> None:
+    """聊天模型与图片模型仍按材料选择，其可用性由 Agent 快照统一检查。"""
     class FakeModelGuard:
         def __init__(self) -> None:
             self.calls: list[str] = []
@@ -726,7 +736,6 @@ async def test_service_selects_model_guard_by_current_message_materials() -> Non
         max_concurrent_requests=2,
         model_router=model_router(),
         model_guard=guard,  # type: ignore[arg-type]
-        agent_enabled=False,
         web_search_enabled=False,
     )
 
@@ -737,7 +746,8 @@ async def test_service_selects_model_guard_by_current_message_materials() -> Non
         image_urls=("https://gchat.qpic.cn/image.jpg",),
     )
 
-    assert guard.calls == ["chat-model"]
+    assert guard.calls == []
+    assert all(call["use_agent"] is True for call in client.calls)
     assert [call["model"] for call in client.calls] == ["chat-model", "vision-model"]
 
 
@@ -965,18 +975,20 @@ async def test_service_keeps_bounded_fallback_memory_when_compression_fails() ->
 
 @pytest.mark.asyncio
 async def test_service_disables_web_search_for_ordinary_chat_from_config() -> None:
+    """关闭搜索只取消联网授权，不改变自然聊天的 Agent 执行入口。"""
     client = FakeClient(["普通回答"])
     service = make_service(client, web_search_enabled=False)
 
     answer = await service.ask("qq-session", "普通问题")
 
     assert answer == "普通回答"
-    assert client.calls[0]["use_agent"] is False
+    assert client.calls[0]["use_agent"] is True
     assert client.calls[0]["use_web_search"] is False
 
 
 @pytest.mark.asyncio
-async def test_service_uses_chat_one_when_agent_is_disabled() -> None:
+async def test_service_uses_plain_model_for_explicit_command() -> None:
+    """专用指令入口显式关闭 Agent 和搜索，不受默认聊天行为影响。"""
     client = FakeClient(["普通回答"])
     service = ChatService(
         client=client,
@@ -986,11 +998,12 @@ async def test_service_uses_chat_one_when_agent_is_disabled() -> None:
         cooldown_seconds=0,
         max_concurrent_requests=2,
         model_router=model_router(),
-        agent_enabled=False,
         web_search_enabled=True,
     )
 
-    assert await service.ask("qq-session", "普通问题") == "普通回答"
+    assert await service.ask_once(
+        "qq-session", "总结原文", system_prompt="仅总结原文",
+    ) == "普通回答"
     assert client.calls[0]["use_agent"] is False
     assert client.calls[0]["use_web_search"] is False
 

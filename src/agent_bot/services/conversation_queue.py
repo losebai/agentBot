@@ -13,6 +13,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agent_bot.ai.chat_errors import ChatAiError
 from agent_bot.database_errors import DatabaseFailure
 from agent_bot.media_artifacts import ImageArtifact as WorkflowImageArtifact
 from agent_bot.memory_store import ChatMemoryStoreError
@@ -832,7 +833,7 @@ class ConversationQueue:
         state: QueueState,
         error: Exception,
     ) -> None:
-        """配置拒绝清理任务并报错；执行故障进入死信，仅通知尚未投递的请求。"""
+        """配置拒绝清理任务；执行故障进入死信，日志仅保留稳定错误码。"""
 
         execution = active_image_task.get()
         if execution is not None:
@@ -852,8 +853,10 @@ class ConversationQueue:
                     entry, reason=type(error).__name__, attempt=state.attempt,
                 )
             logger.warning(
-                "对话队列任务失败并进入死信：job_id=%s attempt=%s error=%s database=%s",
+                "对话队列任务失败并进入死信：job_id=%s attempt=%s error=%s "
+                "code=%s database=%s",
                 entry.job.job_id, state.attempt, type(error).__name__,
+                error.error_code if isinstance(error, ChatAiError) else None,
                 DatabaseFailure.from_error(error),
             )
         if (

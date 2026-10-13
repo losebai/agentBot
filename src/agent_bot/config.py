@@ -63,7 +63,6 @@ class PluginConfig(BaseModel):
     )
     chat_system_prompt: str = Field(
         default="请直接、友好地回应用户。",
-        min_length=1,
         max_length=20_000,
         repr=False,
     )
@@ -108,8 +107,6 @@ class PluginConfig(BaseModel):
     chat_llm_stop: list[str] | None = None
     chat_llm_enable_thinking: bool | None = None
     chat_llm_forward_user_name: bool = False
-    # 普通 QQ 对话的 Agent 开关；关闭时使用普通文本服务。
-    chat_agent_enabled: bool = True
     # 显式设置时统一工具推理轮次；未设置时保留联网与画图的原有预算。
     chat_agent_max_steps: int | None = Field(default=None, ge=1, le=5)
     # 仅保存本项目已登记的通用 MCP 服务 code，不接受端点或凭据。
@@ -751,7 +748,7 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_model": "聊天模型名称",
     "chat_vision_model": "图片理解模型名称",
     "chat_image_model": "图片生成模型名称",
-    "chat_system_prompt": "系统提示词",
+    "chat_system_prompt": "系统提示词(可留空)",
     "chat_llm_max_tokens": "LLM 最大生成 Token 数",
     "chat_llm_temperature": "LLM Temperature 采样参数",
     "chat_llm_top_p": "LLM Top P 采样参数",
@@ -763,7 +760,6 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_llm_stop": "LLM 停止序列",
     "chat_llm_enable_thinking": "是否启用模型深度思考",
     "chat_llm_forward_user_name": "是否额外发送当前 QQ 昵称元数据",
-    "chat_agent_enabled": "是否为普通 QQ 对话启用 Agent 模式",
     "chat_agent_max_steps": "普通聊天 Agent 最大工具推理轮次 (1-5，空值沿用原预算)",
     "chat_mcp_services": "普通聊天可使用的通用 MCP 服务 code 列表",
     "chat_web_search_enabled": "是否为普通 QQ 对话启用受限搜索和网页读取",

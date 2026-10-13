@@ -47,7 +47,8 @@ async def test_complete_records_without_losing_result(catalog, ai_params, ai_dat
         ai_params,
         ai_database,
         lambda req: httpx.Response(
-            200, json={"model": "exact/model", "message": {"content": "已生成的回复"}, "done": True}
+            200, json={"model": "exact/model",
+                       "message": {"role": "assistant", "content": "已生成的回复"}, "done": True}
         ),
     )
     try:

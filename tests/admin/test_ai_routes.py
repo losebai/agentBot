@@ -134,7 +134,12 @@ async def python_api(admin_store, admin_runtime):
                             if __import__("json").loads(req.content)["stream"]
                             else httpx.Response(
                                 200,
-                                json={"message": {"content": "真实 mock 协议回复"}, "done": True},
+                                json={
+                                    "message": {
+                                        "role": "assistant", "content": "真实 mock 协议回复",
+                                    },
+                                    "done": True,
+                                },
                             )
                         )
                     )
@@ -167,8 +172,11 @@ async def test_ai_crud_auth_cas_and_safe_errors(python_api):
     assert conflict.status_code == 409 and conflict.json()["code"] == "AI_CONFIG_CONFLICT"
 
 
-async def test_sync_stream_and_record_queries(python_api):
-    api, _, _runtime = python_api
+@pytest.mark.parametrize("system_prompt", ["测试提示", ""])
+async def test_sync_stream_and_record_queries(python_api, system_prompt: str):
+    """管理对话的同步、流式和记录功能兼容空机器人提示词。"""
+    api, _, runtime = python_api
+    runtime.config = runtime.config.model_copy(update={"chat_system_prompt": system_prompt})
     body = {"prompt": "hello", "session_id": "test", "messages": [], "model": "local"}
     response = await api.post("/api/v1/chat", headers=HEADERS, json=body)
     assert response.status_code == 200

@@ -210,13 +210,12 @@ async def test_missing_model_reports_error_before_queue_or_model_call(
 async def test_native_mention_preflight_uses_final_tools_and_chat_model(
     monkeypatch, chat_plugin, reply_chat,
 ) -> None:
-    """原生 At 移除提醒工具后，关闭联网时必须预检普通聊天模型。"""
+    """原生 At 移除提醒工具后，关闭联网仍按 Agent 预检模型。"""
     from agent_bot.content_classifier import ContentCategory
 
     guard = Mock(ensure_enabled=AsyncMock())
     monkeypatch.setattr(chat_plugin.chat_service, "_model_guard", guard)
     monkeypatch.setattr(chat_plugin.chat_service, "_web_search_enabled", False)
-    monkeypatch.setattr(chat_plugin.chat_service, "_mcp_services_enabled", False)
     monkeypatch.setattr(chat_plugin._conversation_handler, "_available_tools_provider",
                         lambda _event: ("mention_member",))
     matcher = Mock(send=AsyncMock(), finish=AsyncMock(side_effect=FinishedException))
@@ -230,7 +229,7 @@ async def test_native_mention_preflight_uses_final_tools_and_chat_model(
 
     guard.ensure_enabled.assert_awaited_once_with(
         chat_plugin.chat_service.model_router.model_for(ContentCategory.TEXT),
-        capability="ordinary-text",
+        capability="agent",
     )
     assert chat_plugin.conversation_queue.enqueue.await_args.args[0].chat_tools == ()
     reply_chat.assert_not_awaited()

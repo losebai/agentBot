@@ -378,7 +378,9 @@ class RunDetail(RunSummary):
 
 
 class RunStart(RunDetail):
-    pass
+    """执行开始时固定无凭据请求快照，仅保存到统一记录表。"""
+
+    request_context: dict | None = None
 
 
 class RunFinish(AiModel):

@@ -24,6 +24,12 @@ dependencies = [
   "pillow>=11.0,<13.0",
   "pymysql>=1.1,<2.0",
   "redis>=5.2,<7.0",
+  "langchain>=1,<2",
+  "langchain-core>=1,<2",
+  "langchain-openai>=1,<2",
+  "langchain-ollama>=1,<2",
+  "langgraph>=1,<2",
+  "langsmith>=0.14,<1",
 ]
 
 [project.scripts]
@@ -69,6 +75,8 @@ dev-mode-dirs = ["."]
 path = "tools/build_hook.py"
 
 [tool.hatch.build.targets.wheel.force-include]
+"sql/2026-10-13-unified-call-records.sql" = "agent_bot/resources/2026-10-13-unified-call-records.sql"
+"sql/2026-10-13-unified-call-records.sqlite.sql" = "agent_bot/resources/2026-10-13-unified-call-records.sqlite.sql"
 "sql/agent_bot_init.sql" = "agent_bot/resources/agent_bot_init.sql"
 "sql/agent_bot_init.sqlite.sql" = "agent_bot/resources/agent_bot_init.sqlite.sql"
 "sql/2026-10-13-chat-index-names.sql" = "agent_bot/resources/2026-10-13-chat-index-names.sql"

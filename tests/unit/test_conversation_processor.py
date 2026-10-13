@@ -713,7 +713,9 @@ async def test_workflow_agent_rejection_is_silent_without_second_model(
         logging.WARNING,
         logger="agent_bot.integrations.onebot.queue_processor",
     )
-    generate = AsyncMock(side_effect=ChatAiRejectedError("private upstream response"))
+    generate = AsyncMock(side_effect=ChatAiRejectedError(
+        "private upstream response", error_code="AGENT_TOOL_UNAUTHORIZED", status_code=403,
+    ))
     composer = RecordingComposer()
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
     monkeypatch.setattr(chat_plugin, "_reply_composer", composer)
@@ -752,6 +754,7 @@ async def test_workflow_agent_rejection_is_silent_without_second_model(
     assert "request_id=qq-job-agent-1" in diagnostic
     assert "collected_images=0" in diagnostic
     assert "error=ChatAiRejectedError" in diagnostic
+    assert "code=AGENT_TOOL_UNAUTHORIZED" in diagnostic
     assert "private upstream response" not in diagnostic
 
 

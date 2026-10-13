@@ -4,6 +4,7 @@ import sqlite3
 import threading
 from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
 
 import pymysql
 
@@ -88,6 +89,10 @@ class FakeDatabase:
             configured_model TEXT, model TEXT, status TEXT, duration_ms INTEGER,
             usage TEXT, created_at TEXT, error_code TEXT, prompt TEXT, content TEXT);
         """)
+        # 统一记录参与原存储事务，替身同样安装真实增量结构。
+        self.connection.executescript(
+            Path('sql/2026-10-13-unified-call-records.sqlite.sql').read_text(encoding='utf-8')
+        )
 
     def connect(self, **kwargs):
         return Connection(self)

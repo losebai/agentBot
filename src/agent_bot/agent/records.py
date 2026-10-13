@@ -7,6 +7,7 @@ from datetime import datetime
 
 from agent_bot.agent.contracts import RunDetail, RunSummary, StepView
 from agent_bot.agent.errors import AgentError
+from agent_bot.ai.call_records import insert_record, python_record
 from agent_bot.ai.contracts import Page
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
@@ -30,7 +31,7 @@ class AgentRunStore(AiDatabase):
 
     async def _insert(self, table, record):
         """引用内部列名写入记录，附件属于独立元数据表，不进入旧执行或步骤列。"""
-        values = record.model_dump(exclude={"attachments"})
+        values = record.model_dump(exclude={"attachments", "request_context"})
         for field in ("usage", "revisions"):
             if field in values:
                 values[field] = json.dumps(values[field])
@@ -43,6 +44,8 @@ class AgentRunStore(AiDatabase):
                     f"({','.join(['%s'] * len(values))})",
                     tuple(values.values()),
                 )
+            if table == 'agent_bot_agent_run':
+                insert_record(connection, python_record(values, 'agent', record.request_context))
 
         await self.run(write, write=True)
 
@@ -76,6 +79,25 @@ class AgentRunStore(AiDatabase):
                     + " WHERE execution_id=%s AND status='running'",
                     (*values.values(), run.execution_id),
                 )
+            # 原始运行和统一记录在一个事务内完成，不允许只更新其中一份。
+            old = query(connection,
+                        'SELECT * FROM agent_bot_agent_run WHERE execution_id=%s',
+                        (run.execution_id,), one=True)
+            unified = query(connection,
+                            'SELECT * FROM agent_bot_call_record WHERE source=%s AND source_id=%s',
+                            ('python:agent_bot_agent_run', run.execution_id), one=True)
+            if unified is None:
+                insert_record(connection, python_record(old, 'agent'))
+            else:
+                updated = python_record(old, 'agent')
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        'UPDATE agent_bot_call_record SET replay_context=%s,model=%s,duration=%s,'
+                        'status=%s,data=%s WHERE id=%s',
+                        (updated['replay_context'], updated['model'], updated['duration'],
+                         updated['status'], json.dumps(updated['data'], ensure_ascii=False),
+                         unified['id']),
+                    )
 
         await self.run(write, write=True)
 

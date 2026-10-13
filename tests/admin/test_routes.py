@@ -146,7 +146,7 @@ async def test_chat_only_calls_plain_ai_and_returns_real_reply(
 ):
     """管理入口仅调用本地普通服务，系统提示和模型目标均由服务端决定。"""
     service = await make_service(catalog, ai_params, ai_database, lambda req: httpx.Response(
-        200, json={"message": {"content": "actual reply"}, "done": True},
+        200, json={"message": {"role": "assistant", "content": "actual reply"}, "done": True},
     ))
     admin_runtime.ai_service = service
     admin_runtime.config = admin_runtime.config.model_copy(update={"chat_model": "local"})

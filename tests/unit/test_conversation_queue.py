@@ -510,6 +510,31 @@ async def test_missing_model_in_existing_queue_reports_error_without_dead_letter
 
 
 @pytest.mark.asyncio
+async def test_agent_rejection_logs_code_without_private_error_text(queue_store, caplog) -> None:
+    """死信日志保留本地稳定错误码，不能泄露上游响应或凭据正文。"""
+    await queue_store.enqueue(text_job())
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    processor = processor_mock()
+    error = ChatAiRejectedError(
+        "private-upstream-response", error_code="AGENT_TOOL_UNAUTHORIZED", status_code=403,
+    )
+    processor.generate.side_effect = error
+    queue = ConversationQueue(
+        store=queue_store, processor=processor,
+        policy=QueuePolicy(
+            workers=1, max_attempts=2, job_ttl_seconds=600,
+            retry_initial_seconds=0.01, retry_max_seconds=0.01,
+        ),
+        clock=lambda: 1_800_000_000,
+    )
+    await queue.process_entry(entry)
+    processor.generate.assert_awaited_once()
+    assert await queue_store.dead_letter_length() == 1
+    assert "AGENT_TOOL_UNAUTHORIZED" in caplog.text
+    assert "private-upstream-response" not in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["generate", "commit"])
 async def test_memory_disconnect_retries_without_duplicate_delivery(
     queue_store, caplog, stage: str,

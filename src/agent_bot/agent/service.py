@@ -202,6 +202,18 @@ class AgentService:
                             model=prepared.snapshot.resolved.model.upstream_model,
                             prompt=request.prompt,
                             revisions=prepared.snapshot.revisions,
+                            request_context={
+                                'agent_code': request.agent_code,
+                                'model': prepared.call.resolved.model.upstream_model,
+                                'messages': [
+                                    {'role': message.role, 'content': message.text}
+                                    for message in prepared.call.messages
+                                ],
+                                'options': prepared.call.options.model_dump(exclude_none=True),
+                                'tools': list(prepared.authority.allowed_tools),
+                                'mcp_services': list(prepared.authority.allowed_mcp_services),
+                                'max_steps': prepared.max_steps,
+                            },
                             created_at=datetime.now(timezone.utc).replace(tzinfo=None),
                         ),
                     )

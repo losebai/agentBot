@@ -4,6 +4,7 @@ import base64
 import json
 from datetime import datetime
 
+from agent_bot.ai.call_records import insert_record, python_record
 from agent_bot.ai.contracts import Page, SessionDetail, SessionSummary, SessionWrite
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
@@ -23,7 +24,7 @@ class AiSessionStore(AiDatabase):
 
     async def save(self, record: SessionWrite) -> None:
         """参数化保存记录值，并引用 usage 等可能与保留字冲突的列名。"""
-        values = record.model_dump()
+        values = record.model_dump(exclude={'request_context'})
         values["usage"] = record.usage.model_dump_json()
 
         def write(connection):
@@ -37,6 +38,7 @@ class AiSessionStore(AiDatabase):
                     + ")",
                     tuple(values.values()),
                 )
+            insert_record(connection, python_record(values, 'ordinary', record.request_context))
 
         await self.run(write, write=True)
 

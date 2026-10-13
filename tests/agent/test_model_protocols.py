@@ -71,8 +71,18 @@ def streamed(protocol, value):
     if protocol == "openai-responses":
         events = [
             {"type": "response.output_text.delta", "delta": "先查一下"},
-            {"type": "response.completed", "response": value},
         ]
+        for index, item in enumerate(value["output"]):
+            if item["type"] == "function_call":
+                item = {**item, "id": "fc_1", "status": "completed"}
+                events.extend([
+                    {"type": "response.output_item.added", "output_index": index,
+                     "item": {**item, "arguments": "", "status": "in_progress"}},
+                    {"type": "response.function_call_arguments.delta", "output_index": index,
+                     "item_id": "fc_1", "delta": item["arguments"]},
+                    {"type": "response.output_item.done", "output_index": index, "item": item},
+                ])
+        events.append({"type": "response.completed", "response": value})
     else:
         message = value["choices"][0]["message"]
         events = [
@@ -144,6 +154,8 @@ async def test_model_tool_roundtrip(protocol):
         assert final.content == "已查询到结果" and len(sent) == 2
         assert "sunny" in json.dumps(sent[1])
         assert "private-thought" not in turn.model_dump_json()
+        if protocol == "ollama":
+            assert sent[1]["messages"][1]["thinking"] == "private-thought"
     finally:
         await provider.aclose()
 

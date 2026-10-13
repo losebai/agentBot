@@ -73,13 +73,12 @@ class AutoSpeakService:
         sleep: Sleep = asyncio.sleep,
         on_error: ErrorReporter | None = None,
     ) -> None:
-        """保存群目标、决策依赖与普通会话队列入口。"""
+        """保存群目标与决策依赖，机器人人设可留空，主动发言指令仍需提供。"""
 
         if (
             not bot_id
             or not group_ids
             or not prompt.strip()
-            or not system_prompt.strip()
             or not laya_prompt.strip()
             or not session_secret
         ):

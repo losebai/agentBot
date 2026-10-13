@@ -21,7 +21,8 @@ export class AgentApi extends ApiClient {
   createSkill(body: SkillDraft) { return this.request<Skill>('skills','POST',body); }
   updateSkill(id: number, revision: number, body: Partial<SkillDraft>) { return this.request<Skill>(`skills/${id}`,'PATCH',{expected_revision:revision,...body}); }
   deleteSkill(id: number, revision: number) { return this.request<void>(`skills/${id}`,'DELETE',{expected_revision:revision}); }
-  listMcps(cursor?: string) { return this.request<Page<McpServer>>(`mcp-servers${query(cursor)}`); }
+  /** 编辑弹窗关闭时取消目录读取，避免继续加载无用分页。 */
+  listMcps(cursor?: string, signal?: AbortSignal) { return this.request<Page<McpServer>>(`mcp-servers${query(cursor)}`, 'GET', undefined, signal); }
   getMcp(id: number) { return this.request<McpServer>(`mcp-servers/${id}`); }
   createMcp(body: McpDraft) { return this.request<McpServer>('mcp-servers','POST',body); }
   updateMcp(id: number, revision: number, body: Partial<McpDraft>) { return this.request<McpServer>(`mcp-servers/${id}`,'PATCH',{expected_revision:revision,...body}); }

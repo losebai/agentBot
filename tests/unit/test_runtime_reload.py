@@ -204,7 +204,6 @@ def test_effective_runtime_config_hot_reloads_chat_but_keeps_startup_fields(
             "chat_llm_temperature": 0.4,
             "chat_llm_enable_thinking": True,
             "chat_llm_forward_user_name": True,
-            "chat_agent_enabled": False,
             "chat_agent_max_steps": 2,
             "chat_mcp_services": ["windows-mcp"],
             "chat_web_search_enabled": True,
@@ -239,7 +238,6 @@ def test_effective_runtime_config_hot_reloads_chat_but_keeps_startup_fields(
     assert effective.chat_llm_temperature == 0.4
     assert effective.chat_llm_enable_thinking is True
     assert effective.chat_llm_forward_user_name is True
-    assert effective.chat_agent_enabled is False
     assert effective.chat_agent_max_steps == 2
     assert effective.chat_mcp_services == ["windows-mcp"]
     assert effective.chat_web_search_enabled is True
@@ -404,7 +402,8 @@ async def test_runtime_state_uses_only_database_configured_system_prompt(
     try:
         service_options = service_factory.call_args.kwargs
         assert service_options["system_prompt"] == "数据库中的唯一提示词"
-        assert service_options["agent_enabled"] is False
+        # 数据库中的旧开关不再进入运行装配，不能把自然聊天切回普通模型。
+        assert "agent_enabled" not in service_options
     finally:
         await chat_plugin._close_runtime_state(replacement)
 

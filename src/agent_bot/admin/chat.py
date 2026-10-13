@@ -15,18 +15,22 @@ class ChatProbe:
         self.runtime = runtime
 
     async def complete(self, request: ChatRequest, request_id: str) -> ChatResponse:
-        """构造受信任系统提示，通过 Python 模型目录完成一次普通对话。"""
+        """按可选的机器人提示词构造消息，通过模型目录完成普通对话。"""
         async with self.runtime.lease():
-            config = self.runtime.config
-            messages = [ChatMessage(role="system", content=config.chat_system_prompt)]
-            messages.extend(item for item in request.messages if item.role != "system")
-            messages.append(ChatMessage(role="user", content=request.prompt))
             result = await self.runtime.ai_service.complete(
-                self.text_request(request, request_id, messages)
+                self.text_request(request, request_id, self.build_messages(request))
             )
             return ChatResponse(
                 content=result.content, request_id=request_id, metadata=result.metadata()
             )
+
+    def build_messages(self, request: ChatRequest) -> list[ChatMessage]:
+        """只注入非空的服务端系统提示，不接纳客户端历史中的系统指令。"""
+        prompt = self.runtime.config.chat_system_prompt.strip()
+        messages = [ChatMessage(role="system", content=prompt)] if prompt else []
+        messages.extend(item for item in request.messages if item.role != "system")
+        messages.append(ChatMessage(role="user", content=request.prompt))
+        return messages
 
     def text_request(self, request: ChatRequest, request_id: str, messages) -> TextRequest:
         """只允许模型别名和有界历史，由服务端配置生成协议参数。"""
@@ -50,11 +54,7 @@ class ChatProbe:
     async def stream(self, request: ChatRequest, request_id: str):
         """整个流式响应持有同一运行时，断开时关闭模型输出迭代器。"""
         async with self.runtime.lease():
-            messages = [
-                ChatMessage(role="system", content=self.runtime.config.chat_system_prompt),
-                *(item for item in request.messages if item.role != "system"),
-                ChatMessage(role="user", content=request.prompt),
-            ]
+            messages = self.build_messages(request)
             async with aclosing(
                 self.runtime.ai_service.stream(self.text_request(request, request_id, messages))
             ) as events:

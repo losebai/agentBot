@@ -37,16 +37,15 @@ class ChatPromptBuilder:
         system_prompt: str,
         max_input_chars: int,
     ) -> None:
-        """初始化提示构建器及默认系统消息。"""
+        """初始化提示构建器；机器人提示词留空时不注入系统消息。"""
 
         if max_input_chars <= 0:
             raise ValueError("max input characters must be positive")
         normalized_system_prompt = system_prompt.strip()
-        if not normalized_system_prompt:
-            raise ValueError("system prompt cannot be empty")
         self._max_input_chars = max_input_chars
         self._system_messages = (
-            ChatMessage(role="system", content=normalized_system_prompt),
+            (ChatMessage(role="system", content=normalized_system_prompt),)
+            if normalized_system_prompt else ()
         )
 
     def normalize(self, prompt: str) -> str:

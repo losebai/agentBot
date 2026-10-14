@@ -596,7 +596,7 @@ class ConversationQueue:
         self._pending_deliveries.clear()
 
     async def enqueue(self, job: ConversationJob) -> str:
-        """已有额度用满时立即拒绝新请求，不把过载转化为等待。"""
+        """绘图持久化排队，普通聊天仍在额度用满时立即拒绝，容量由存储统一限制。"""
 
         if job.ai_job_id is not None:
             # 已有模型结果只需投递；不能因模型额度满删除其持久化结果和回执。
@@ -609,15 +609,16 @@ class ConversationQueue:
                 if not await self.store.contains_entry(stream_id):
                     self._pending_deliveries.pop(job.job_id, None)
                 return stream_id
-        if not self.store.recovery_complete:
+        if not self.store.recovery_complete and not job.background_image:
             raise ChatBusyError("conversation queue is recovering")
         slot = self._session_slots.get(job.session_id)
         if slot is not None and slot.lock.locked():
             raise ChatBusyError("conversation session has an exclusive operation")
         semaphore = self._job_semaphore(job)
-        if semaphore.locked():
+        if semaphore.locked() and not job.background_image:
             raise ChatBusyError("conversation concurrency limit reached")
-        # 后台绘图和 AI 投递有持久化去重回执，重复提交不一定产生新条目；
+        # 后台绘图即使工作名额已满也可排队，恢复扫描仍先处理旧条目；
+        # 持久化去重回执保证重复提交不一定产生新条目。
         # 普通聊天在写入前预留额度，避免突发消息在调度器领取前形成等待队列。
         if job.background_image or self.image_tasks is not None:
             return await self.store.enqueue(job)
@@ -641,14 +642,18 @@ class ConversationQueue:
 
     @asynccontextmanager
     async def _execution_slot(self, job: ConversationJob) -> AsyncIterator[None]:
-        """领取空闲额度；检查与无等待领取之间不让出事件循环。"""
+        """绘图等待可取消的执行名额，普通聊天按既有准入预留额度执行。"""
         if job.ai_job_id is not None:
             yield
             return
         reserved = self._reserved_slots.pop(job.job_id, None)
         semaphore = reserved.semaphore if reserved is not None else self._job_semaphore(job)
+        if job.background_image and (execution := active_image_task.get()) is not None:
+            async with execution.execution_slot(semaphore):
+                yield
+            return
         if reserved is None:
-            if semaphore.locked():
+            if semaphore.locked() and not job.background_image:
                 raise ChatBusyError("conversation concurrency limit reached")
             await semaphore.acquire()
         try:

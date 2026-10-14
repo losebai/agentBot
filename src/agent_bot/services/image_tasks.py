@@ -111,6 +111,7 @@ class ImageTaskManager:
         self.store = store
         self.queue_store = queue_store
         self._locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+        self._cancel_signals: WeakValueDictionary[str, asyncio.Event] = WeakValueDictionary()
 
     def lock(self, task_id: str) -> asyncio.Lock:
         """复用活动锁，结束后自动释放无引用的锁。"""
@@ -130,6 +131,10 @@ class ImageTaskManager:
         requested = await self.store.request_cancel(owner, task_id)
         if not requested.cancellation_requested:
             return ImageTaskCancellation(task=requested.public())
+        # 先持久化并验证归属，再唤醒当前进程等待名额的任务；不取消其他用户的执行。
+        signal = self._cancel_signals.get(task_id)
+        if signal is not None:
+            signal.set()
         async with self.lock(task_id):
             record = await self.store.get(task_id)
             if record is None:
@@ -201,6 +206,45 @@ class _ImageTaskExecution:
         """每个不可逆阶段之前读取持久化取消标志。"""
         if (await self._record()).cancellation_requested:
             raise ImageTaskCancelled()
+
+    @asynccontextmanager
+    async def execution_slot(self, semaphore: asyncio.Semaphore) -> AsyncIterator[None]:
+        """等待绘图额度时响应持久化取消，任何退出路径都回收子任务和已领取额度。"""
+        signal = self.manager._cancel_signals.get(self.task_id)
+        if signal is None:
+            signal = asyncio.Event()
+            self.manager._cancel_signals[self.task_id] = signal
+        # 先登记唤醒信号再读取状态，覆盖等待注册期间发生的取消与重启前的取消。
+        await self.check_cancelled()
+        acquire = asyncio.create_task(semaphore.acquire())
+        cancelled = asyncio.create_task(signal.wait())
+        try:
+            completed, _ = await asyncio.wait(
+                (acquire, cancelled), return_when=asyncio.FIRST_COMPLETED,
+            )
+            if cancelled in completed:
+                raise ImageTaskCancelled()
+            await acquire
+            await self.check_cancelled()
+            yield
+        finally:
+            if not acquire.done():
+                acquire.cancel()
+            cancelled.cancel()
+            cleanup = asyncio.gather(acquire, cancelled, return_exceptions=True)
+            interrupted = False
+            # 超时与停机可能连续取消；先收拢子任务，防止清理被打断后永久占用名额。
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    interrupted = True
+            acquired, _ = cleanup.result()
+            # 名额领取和取消同时完成时也必须归还；被取消的领取没有取得名额。
+            if acquired is True:
+                semaphore.release()
+            if interrupted:
+                raise asyncio.CancelledError()
 
     async def finished(self) -> bool:
         """已经固化终态的任务只能清理，不能再次生成或发送。"""

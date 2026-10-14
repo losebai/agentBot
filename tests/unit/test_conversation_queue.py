@@ -1712,8 +1712,8 @@ async def test_full_worker_rejects_before_busy_job_releases(
 
 
 @pytest.mark.asyncio
-async def test_media_worker_limit_applies_across_independent_sessions(queue_store) -> None:
-    """独立会话媒体请求超额时立即拒绝，不能等待当前媒体任务完成。"""
+async def test_image_worker_limit_queues_independent_sessions(queue_store) -> None:
+    """绘图名额只约束同时执行数量，后续任务等待前一项完成再生成。"""
 
     for job_id in ("first", "second"):
         job = text_job(job_id=job_id, session_id=job_id).model_copy(
@@ -1750,9 +1750,47 @@ async def test_media_worker_limit_applies_across_independent_sessions(queue_stor
     finally:
         release.set()
         await asyncio.gather(first_task, second_task)
-    assert generated == ["first"]
-    processor.deliver_failure.assert_awaited_once()
-    assert isinstance(processor.deliver_failure.await_args.args[1], ChatBusyError)
+    assert generated == ["first", "second"]
+    processor.deliver_failure.assert_not_awaited()
+    assert await queue_store.dead_letter_length() == 0
+    assert queue._media_semaphore._value == 1
+
+
+@pytest.mark.parametrize("backend", ["redis", "sqlite"])
+@pytest.mark.parametrize("recovering", [False, True])
+async def test_image_admission_can_queue_while_worker_is_busy(
+    queue_store, tmp_path, backend, recovering,
+) -> None:
+    """两种后端在绘图忙碌或恢复期间仍可持久化入队，队列容量继续严格限制。"""
+    store = queue_store
+    if backend == "sqlite":
+        store = SqliteConversationQueueStore(
+            str(tmp_path / "image-queue.sqlite3"), key_prefix="images", max_pending=2,
+            result_ttl_seconds=60,
+        )
+        await store.initialize()
+    if not recovering:
+        await store.reclaim(count=2, min_idle_ms=0)
+    queue = ConversationQueue(
+        store=store, processor=processor_mock(),
+        policy=QueuePolicy(1, 2, 0.01, 0.01, 600, media_workers=1),
+    )
+    await queue._media_semaphore.acquire()
+    try:
+        for index in range(3):
+            job = text_job(job_id=f"image-{index}").model_copy(update={
+                "chat_tools": (), "media_output": "IMAGE", "background_image": True,
+            })
+            if index < 2:
+                await queue.enqueue(job)
+            else:
+                with pytest.raises(ConversationQueueFullError):
+                    await queue.enqueue(job)
+        assert queue._reserved_slots == {}
+        assert queue._media_semaphore.locked()
+    finally:
+        queue._media_semaphore.release()
+        await queue.stop()
 
 
 @pytest.mark.asyncio

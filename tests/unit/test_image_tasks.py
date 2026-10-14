@@ -90,6 +90,66 @@ async def test_cancel_preloaded_frees_capacity(image_queue):
     assert env.processor.deliver_failure.await_count == 0
 
 
+async def test_cancel_waiting_image_releases_prefetch_and_session_immediately(
+    image_queue, monkeypatch,
+):
+    """取消等待绘图名额的任务后，即使名额仍占用，也应立即退出并允许会话重置。"""
+    env = image_queue
+    await env.queue.enqueue(image_job())
+    entry = (await env.queue.store.read_new(count=1, block_ms=1))[0]
+    await env.queue._media_semaphore.acquire()
+    entered = asyncio.Event()
+    acquire = env.queue._media_semaphore.acquire
+
+    async def wait_for_slot():
+        """暴露实际进入名额等待的时刻，避免依赖轮询或固定延时。"""
+        entered.set()
+        return await acquire()
+
+    monkeypatch.setattr(env.queue._media_semaphore, "acquire", wait_for_slot)
+    env.queue._schedule(entry)
+    task = next(iter(env.queue._entry_tasks))
+    try:
+        # 等到任务确实进入 Semaphore 等待，防止只测试尚未开始执行的取消。
+        await asyncio.wait_for(entered.wait(), 1)
+        result = await env.manager.cancel(owner(), "image-1")
+        assert result.task.status == "cancelled"
+        await asyncio.wait_for(asyncio.shield(task), 0.5)
+        await asyncio.sleep(0)
+        assert env.queue._entry_tasks == set()
+        assert env.queue._media_semaphore.locked()
+        async with env.queue.session_guard("group-1"):
+            pass
+        env.processor.generate.assert_not_awaited()
+        env.processor.deliver_failure.assert_not_awaited()
+    finally:
+        env.queue._media_semaphore.release()
+        await env.queue.stop()
+
+
+async def test_repeated_execution_cancellation_returns_image_slot(image_queue):
+    """超时与停机连续取消同一任务时，清理仍需归还绘图名额。"""
+    env = image_queue
+    await env.queue.enqueue(image_job())
+    semaphore = asyncio.Semaphore(1)
+    entered = asyncio.Event()
+
+    async def run():
+        """领取名额后等待取消，暴露清理期间的第二次取消。"""
+        async with env.manager.execution("image-1").execution_slot(semaphore):
+            entered.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(run())
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    asyncio.get_running_loop().call_soon(task.cancel)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 1)
+    assert not semaphore.locked()
+    assert semaphore._value == 1
+
+
 async def test_cancel_during_submission(image_queue, monkeypatch):
     """POST 期间取消不会丢失返回的 prompt，必须向原服务执行定点取消。"""
     env = image_queue

@@ -25,6 +25,8 @@ _OUTPUT_NODE_TYPES = frozenset({"PreviewImage", "SaveImage", "SaveImageAdvanced"
 _CONTROL_AFTER_GENERATE_VALUES = frozenset(
     {"fixed", "increment", "decrement", "randomize"}
 )
+# 两种采样协议的噪声字段不同，必须写入真正参与执行的字段而非新增无效 seed。
+_SAMPLER_SEED_FIELDS = {"KSampler": "seed", "SamplerCustom": "noise_seed"}
 
 WorkflowNode: TypeAlias = dict[str, Any]
 ApiWorkflow: TypeAlias = dict[str, WorkflowNode]
@@ -389,7 +391,7 @@ class _UiWorkflowConverter:
         return cast(list[dict[str, Any]], value)
 
     def _widget_values(self, node: dict[str, Any], expected: int) -> list[Any]:
-        """校验控件值数量，并移除 KSampler 的前端随机策略字段。"""
+        """校验控件值数量，按采样协议移除仅供前端使用的随机策略字段。"""
 
         value = node.get("widgets_values", [])
         if not isinstance(value, list):
@@ -397,13 +399,15 @@ class _UiWorkflowConverter:
         values = list(value)
         if node["type"] == "LoadImage" and len(values) == expected + 1 and values[-1] == "image":
             values.pop()
+        control_index = {"KSampler": 1, "SamplerCustom": 2}.get(node["type"])
         if (
-            node["type"] == "KSampler"
+            control_index is not None
             and len(values) == expected + 1
-            and len(values) > 1
-            and values[1] in _CONTROL_AFTER_GENERATE_VALUES
+            and len(values) > control_index
+            and isinstance(values[control_index], str)
+            and values[control_index] in _CONTROL_AFTER_GENERATE_VALUES
         ):
-            values.pop(1)
+            values.pop(control_index)
         if len(values) != expected:
             raise WorkflowValidationError("UI workflow widget values are ambiguous")
         return values
@@ -560,7 +564,7 @@ def prepare_workflow_prompt(
     seed: int,
     input_image: WorkflowInputImage | None = None,
 ) -> ApiWorkflow:
-    """从数据库 API JSON 深复制并只修改已绑定的正负提示词和种子。"""
+    """深复制数据库模板，仅修改提示词、对应采样协议的噪声种子和用户图引用。"""
 
     if not definition.executable or definition.api_json is None:
         raise WorkflowValidationError("workflow is not executable")
@@ -588,7 +592,9 @@ def prepare_workflow_prompt(
     try:
         workflow[definition.positive_node_id]["inputs"][definition.positive_input_name] = positive
         workflow[definition.negative_node_id]["inputs"][definition.negative_input_name] = negative
-        workflow[definition.seed_node_id]["inputs"]["seed"] = seed
+        sampler = workflow[definition.seed_node_id]
+        seed_field = _SAMPLER_SEED_FIELDS[sampler["class_type"]]
+        sampler["inputs"][seed_field] = seed
         if input_image is not None:
             assert definition.input_image_node_id is not None
             workflow[definition.input_image_node_id]["inputs"]["image"] = input_image.comfy_path
@@ -598,7 +604,7 @@ def prepare_workflow_prompt(
 
 
 def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
-    """校验完整编辑链；固定底图兼容已迁入的旧目录，仍只允许摘要文件名。"""
+    """校验单采样编辑链；固定底图只允许受控摘要文件，两种采样协议不能混用。"""
     if not definition.executable:
         raise WorkflowValidationError("workflow bindings are incomplete")
     if definition.workflow_type == "text_to_image":
@@ -646,11 +652,11 @@ def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
             raise WorkflowValidationError("fixed reference path is invalid")
         if workflow[definition.output_node_id]["class_type"] not in _OUTPUT_NODE_TYPES:
             raise WorkflowValidationError("image workflow output is invalid")
-        for class_type, expected in (
-            ("LoadImage", definition.input_image_node_id),
-            ("KSampler", definition.seed_node_id),
+        for class_types, expected in (
+            ({"LoadImage"}, definition.input_image_node_id),
+            (set(_SAMPLER_SEED_FIELDS), definition.seed_node_id),
         ):
-            if [key for key, node in workflow.items() if node["class_type"] == class_type] != [
+            if [key for key, node in workflow.items() if node["class_type"] in class_types] != [
                 expected,
             ]:
                 raise WorkflowValidationError("image workflow nodes are ambiguous")

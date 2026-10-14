@@ -219,6 +219,8 @@ Job 默认关闭，启用后作为 QQ 专属工具执行。管理 Agent 不接�
 
 ComfyUI 工作流需要配置 `chat_local_workflow_*` 并启用本地工作流；GPT-SoVITS 需要配置 `chat_tts_*` 并启用 TTS。Agent 还需授权对应工具。
 
+QQ 绘图任务允许持久化排队：当前绘图名额用满或队列正在恢复时，后续请求仍可保存到所选 SQLite 或 Redis 队列，等待空闲名额后执行。`chat_queue_media_workers` 只限制同时执行数量，队列容量、取消和任务有效期仍按原规则执行；普通聊天并发满额仍立即拒绝。
+
 同步工作流目录并查看已登记工作流：
 
 ```powershell

@@ -543,6 +543,21 @@ def test_save_uses_optimistic_revision_locking(
     assert store.load() == updated
 
 
+def test_save_returns_committed_snapshot_without_a_second_database_read(
+    database_params: DatabaseParams,
+    fake_mysql: FakeMySQL,
+    runtime_config: RuntimeConfig,
+    monkeypatch,
+) -> None:
+    """提交成功后不能因验证性重读失败而误报失败并触发启动文件回滚。"""
+    store = _make_store(database_params)
+    store.initialize(runtime_config)
+    candidate = runtime_config.model_copy(update={"chat_model": "committed-model"})
+    monkeypatch.setattr(store, "load", Mock(side_effect=SettingsError("post-commit read failed")))
+    assert store.save(candidate, expected_revision=1) == VersionedSettings(candidate, revision=2)
+    assert store.load_revision() == 2
+
+
 def test_load_revision_reads_only_current_version(
     database_params: DatabaseParams,
     fake_mysql: FakeMySQL,

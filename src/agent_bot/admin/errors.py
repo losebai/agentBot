@@ -6,6 +6,10 @@ from agent_bot.ai.errors import AiError
 def classify_api_error(error: AiError) -> tuple[int, str, str]:
     """稳定中文错误文案不回显上游响应、文件路径或凭据。"""
     messages = {
+        "WORKFLOW_NOT_READY": "工作流存储尚未就绪，请检查服务状态",
+        "WORKFLOW_TOO_LARGE": "工作流文件超过 1 MiB 大小限制",
+        "WORKFLOW_DIRECTORY_MISSING": "未配置工作流同步目录，请在启动配置中设置后重启服务",
+        "WORKFLOW_DIRECTORY_UNAVAILABLE": "工作流目录不可读取，请检查路径和服务文件权限",
         "AI_CAPABILITY_UNSUPPORTED": "当前请求包含尚未实现的能力，请移除视频或相关工具",
         "MEDIA_NOT_INITIALIZED": "媒体数据表尚未初始化，请导入 agent_bot_init.sql 后重启服务",
         "MEDIA_STORAGE_UNAVAILABLE": "媒体目录不可用，请修复后重启服务",

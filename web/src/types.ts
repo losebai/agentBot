@@ -8,7 +8,7 @@ export interface SettingField {
   nullable: boolean;
   secret_is_set: boolean;
   restart_required: boolean;
-  /** 静态字段由启动文件提供，前端只展示，服务端独立拒绝修改。 */
+  /** 静态字段由启动文件提供，只有服务端明确允许的字段可保存；环境覆盖时只读。 */
   read_only?: boolean;
   scope?: 'static' | 'runtime';
 }
@@ -17,6 +17,8 @@ export interface SettingsSnapshot {
   database_revision: number;
   applied_revision: number;
   restart_required_fields: string[];
+  /** 启动文件并发校验版本，实际修改任何静态字段时提交，不能取代数据库版本。 */
+  startup_revision: string | null;
   fields: SettingField[];
 }
 

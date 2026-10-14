@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Callable, Sequence
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 import pymysql
 from pymysql.err import DatabaseError, InterfaceError, OperationalError
 
 from agent_bot.database import database_connector
-from agent_bot.services.workflows import WorkflowDefinition
+from agent_bot.services.workflows import (
+    WorkflowDefinition,
+    WorkflowMetadataPatch,
+    validate_workflow_bindings,
+)
 from agent_bot.settings import DatabaseParams
 
 DEFAULT_WORKFLOW_TABLE = "chat_workflow"
@@ -85,7 +91,17 @@ class WorkflowStoreError(RuntimeError):
 
 
 class WorkflowNotFoundError(WorkflowStoreError):
-    """请求的可执行工作流不存在或已禁用。"""
+    """请求的工作流不存在，或执行入口要求的工作流已禁用。"""
+
+
+class WorkflowRevisionConflictError(WorkflowStoreError):
+    """工作流在管理窗口读取后被编辑或重新同步。"""
+
+
+def workflow_revision(definition: WorkflowDefinition) -> str:
+    """对完整记录取摘要，技术同步和业务编辑均使旧窗口版本失效。"""
+    content = json.dumps(asdict(definition), ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 class WorkflowStore:
@@ -429,7 +445,7 @@ class WorkflowStore:
         return tuple(_row_to_definition(row) for row in rows)
 
     def list_all(self, *, limit: int = 100) -> tuple[WorkflowDefinition, ...]:
-        """供管理员离线命令列出所有工作流元数据。"""
+        """供管理员命令和管理页面列出启用、停用及不可执行的工作流。"""
 
         if not 1 <= limit <= 100:
             raise ValueError("workflow list limit is invalid")
@@ -446,6 +462,81 @@ class WorkflowStore:
         except (InterfaceError, OperationalError, DatabaseError) as exc:
             raise WorkflowStoreError("workflow database operation failed") from exc
         return tuple(_row_to_definition(row) for row in rows)
+
+    def get(self, workflow_key: str) -> WorkflowDefinition:
+        """管理读取不按启用状态过滤，允许查看和修复停用记录。"""
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,127}", workflow_key):
+            raise WorkflowNotFoundError("workflow is unavailable")
+        try:
+            with closing(self._open()) as connection:
+                self._validate_schema(connection)
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"SELECT {_SELECT_COLUMNS} FROM `{self._table}` WHERE workflow_key = %s",
+                        (workflow_key,),
+                    )
+                    row = cursor.fetchone()
+        except (InterfaceError, OperationalError, DatabaseError) as exc:
+            raise WorkflowStoreError("workflow database operation failed") from exc
+        if row is None:
+            raise WorkflowNotFoundError("workflow is unavailable")
+        return _row_to_definition(row)
+
+    def list_page(
+        self, *, after: str | None = None, limit: int = 100,
+    ) -> tuple[tuple[WorkflowDefinition, ...], str | None]:
+        """按稳定键分页管理全部记录，多取一条只用于判断是否存在下一页。"""
+        if not 1 <= limit <= 100:
+            raise ValueError("workflow page limit is invalid")
+        try:
+            with closing(self._open()) as connection:
+                self._validate_schema(connection)
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"SELECT {_SELECT_COLUMNS} FROM `{self._table}` "
+                        "WHERE workflow_key > %s ORDER BY workflow_key LIMIT %s",
+                        (after or "", limit + 1),
+                    )
+                    rows = cursor.fetchall()
+        except (InterfaceError, OperationalError, DatabaseError) as exc:
+            raise WorkflowStoreError("workflow database operation failed") from exc
+        definitions = tuple(_row_to_definition(row) for row in rows[:limit])
+        next_cursor = definitions[-1].workflow_key if len(rows) > limit else None
+        return definitions, next_cursor
+
+    def update_metadata(
+        self, workflow_key: str, *, expected_revision: str, values: WorkflowMetadataPatch,
+    ) -> WorkflowDefinition:
+        """持有行锁比较完整版本，仅写业务列；同步与其他窗口不能穿过版本校验。"""
+        try:
+            with closing(self._open()) as connection:
+                self._validate_schema(connection)
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f"SELECT {_SELECT_COLUMNS} FROM `{self._table}` "
+                        "WHERE workflow_key = %s FOR UPDATE", (workflow_key,),
+                    )
+                    row = cursor.fetchone()
+                    if row is None:
+                        raise WorkflowNotFoundError("workflow is unavailable")
+                    current = _row_to_definition(row)
+                    if workflow_revision(current) != expected_revision:
+                        raise WorkflowRevisionConflictError("workflow revision conflict")
+                    candidate = replace(current, **values.model_dump(exclude_unset=True))
+                    if values.enabled is True:
+                        validate_workflow_bindings(candidate)
+                    cursor.execute(
+                        f"UPDATE `{self._table}` SET display_name = %s, description = %s, "
+                        "additional_positive_prompt = %s, additional_negative_prompt = %s, "
+                        "enabled = %s WHERE workflow_key = %s",
+                        (candidate.display_name, candidate.description,
+                         candidate.additional_positive_prompt, candidate.additional_negative_prompt,
+                         int(candidate.enabled), workflow_key),
+                    )
+                connection.commit()
+                return candidate
+        except (InterfaceError, OperationalError, DatabaseError) as exc:
+            raise WorkflowStoreError("workflow database operation failed") from exc
 
     def get_executable(self, workflow_key: str) -> WorkflowDefinition:
         """读取单个已启用的可执行工作流。"""

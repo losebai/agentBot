@@ -3,14 +3,18 @@
 import nonebot
 
 from agent_bot.admin.models import BotInfo
+from agent_bot.startup_settings import StartupSettingsStore
 
 
 class PluginRuntimeProvider:
     """始终解析当前运行时，避免保留热刷新前的服务快照。"""
 
-    def __init__(self, plugin) -> None:
-        """Use the already loaded plugin, avoiding a second lifecycle owner."""
+    def __init__(
+        self, plugin, *, startup_settings_store: StartupSettingsStore | None = None,
+    ) -> None:
+        """复用已装配插件，应用入口在环境清理前注入启动文件能力。"""
         self.plugin = plugin
+        self.startup_settings_store = startup_settings_store
 
     @property
     def config(self):
@@ -60,6 +64,11 @@ class PluginRuntimeProvider:
     def media_store(self):
         """管理 API 访问进程所有的文件存储。"""
         return self.media_resources.store
+
+    @property
+    def workflow_store(self):
+        """工作流目录跨热刷新共享，只复用进程已装配的存储。"""
+        return self.plugin._workflow_store
 
     async def is_ready(self) -> bool:
         """检查所选持久队列与消费者，不要求 QQ 或可选 Redis 已连接。"""

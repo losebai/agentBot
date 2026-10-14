@@ -24,6 +24,35 @@ from agent_bot.settings import (
 from agent_bot.state import AccessPolicy
 
 
+@pytest.mark.asyncio
+async def test_failed_runtime_publish_restores_previous_auto_speak(chat_plugin, monkeypatch):
+    """发布业务快照失败时清理替换资源并恢复旧自动发言，不依赖 Token 热重连。"""
+    original = chat_plugin._runtime_state
+    monkeypatch.setattr(
+        chat_plugin, "_activate_runtime_state", Mock(side_effect=RuntimeError("publish failed")),
+    )
+    monkeypatch.setattr(chat_plugin, "stop_auto_speak", AsyncMock())
+    monkeypatch.setattr(chat_plugin, "start_auto_speak", AsyncMock())
+    monkeypatch.setattr(chat_plugin, "_close_runtime_state", AsyncMock())
+    monkeypatch.setattr(
+        chat_plugin, "_build_runtime_state",
+        lambda config, previous: replace(original, config=config),
+    )
+    values = runtime_config_to_plain_values(original.config)
+    values["chat_system_prompt"] = "a changed runtime prompt"
+    changed = RuntimeConfig.model_validate(values)
+    try:
+        with pytest.raises(RuntimeError, match="publish failed"):
+            await chat_plugin._apply_runtime_settings(VersionedSettings(config=changed, revision=2))
+        assert chat_plugin._runtime_state is original
+        # 新快照未发布时，旧自动发言任务仍属于当前运行时，必须恢复它的生命周期。
+        chat_plugin.start_auto_speak.assert_awaited_once()
+        chat_plugin._close_runtime_state.assert_awaited_once()
+    finally:
+        chat_plugin._runtime_state = original
+        chat_plugin._publish_runtime_state(original)
+
+
 def runtime_config(*, model: str = "model-v1") -> RuntimeConfig:
     return RuntimeConfig(
         onebot_v11_access_token="runtime-reload-onebot-token-with-enough-entropy",

@@ -72,6 +72,7 @@ def run(
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """登记离线初始化、显式迁移和受保护的动态配置修改命令。"""
     parser = argparse.ArgumentParser(prog="chat settings")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("import-env")
@@ -106,7 +107,7 @@ def _import_env(
 
 
 def _initialize_defaults(env_file: str | tuple[str, ...] | None) -> int:
-    """新安装只写入默认运行值，静态参数与秘密必须由用户显式提供。"""
+    """只初始化动态默认值，协议 Token 与会话密钥均来自静态启动配置。"""
     bootstrap = load_bootstrap_config(env_file=env_file)
     static = load_static_config(env_file=env_file)
     store = SettingsStore(database_params(bootstrap), static_config=static)

@@ -17,6 +17,31 @@ param([string]$BaseUrl = 'https://public.loserbai.cn/agentbot')
         $release.sha256 -notmatch '^[a-fA-F0-9]{64}$') {
         throw 'Invalid AgentBot release manifest.'
     }
+    $availableVersion = [version]$release.version
+    Write-Host "Available AgentBot version: $availableVersion"
+    # 固定 AppId 对应当前用户的安装登记；只读 DisplayVersion，不创建版本标记或改写注册表。
+    $installationKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
+        '{379D6B51-BAED-48B4-A39D-FB1E5A424042}_is1'
+    if (Test-Path -LiteralPath $installationKey) {
+        $installedText = (Get-ItemProperty -LiteralPath $installationKey).DisplayVersion
+        if ($installedText -notmatch '^\d+\.\d+\.\d+$') {
+            throw 'Invalid installed AgentBot version. Check the Windows installation entry.'
+        }
+        $installedVersion = [version]$installedText
+        Write-Host "Installed AgentBot version: $installedVersion"
+        # 按数字分段比较，避免 0.5.10 被字符串排序判为比 0.5.9 更旧；跳过时不下载安装器。
+        if ($installedVersion -eq $availableVersion) {
+            Write-Host "AgentBot $installedVersion is already up to date."
+            return
+        }
+        if ($installedVersion -gt $availableVersion) {
+            Write-Host "Keeping installed version $installedVersion; available version is older."
+            return
+        }
+        Write-Host "Updating AgentBot $installedVersion -> $availableVersion"
+    } else {
+        Write-Host "Installing AgentBot $availableVersion for the first time."
+    }
     $temporary = Join-Path $env:TEMP ("agentbot-install-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $temporary | Out-Null
     $installer = Join-Path $temporary $release.filename
@@ -35,7 +60,8 @@ param([string]$BaseUrl = 'https://public.loserbai.cn/agentbot')
         if ($process.ExitCode -ne 0) {
             throw "AgentBot installer failed with exit code $($process.ExitCode)."
         }
-        Write-Host 'AgentBot installed. Open AgentBot from the desktop or Start menu.'
+        # 安装成功后由原生安装器更新 DisplayVersion，失败时脚本不提前修改本机版本。
+        Write-Host "AgentBot $availableVersion installed. Open AgentBot from the desktop or Start menu."
         Write-Host 'Microsoft Edge WebView2 Runtime is required to open the desktop window.'
     } finally {
         # 只删除本次创建的下载文件与空目录，不递归清理安装目录或其他任务的临时资源。

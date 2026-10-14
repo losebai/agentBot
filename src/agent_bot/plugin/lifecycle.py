@@ -162,6 +162,11 @@ async def apply_runtime_settings(
                 await state_closer(replacement_state)
             except Exception as exc:
                 logger.warning("未发布配置资源清理失败：{}", type(exc).__name__)
+            # 未发布新快照时恢复旧快照的后台任务，热刷新失败不能永久停掉自动发言。
+            try:
+                await start_auto_speak()
+            except Exception as exc:
+                logger.warning("恢复旧配置自动发言失败：{}", type(exc).__name__)
 
     try:
         await state_closer(current_state)

@@ -12,7 +12,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from agent_bot.services.workflow_inputs import WorkflowInputImage
 
@@ -39,6 +39,28 @@ class WorkflowError(RuntimeError):
 
 class WorkflowValidationError(WorkflowError):
     """工作流或提示词未通过受控校验。"""
+
+
+class WorkflowMetadataPatch(BaseModel):
+    """只允许管理员修改业务信息，技术 JSON 与绑定由导入器维护。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    display_name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=MAX_PROMPT_CHARS)
+    additional_positive_prompt: str | None = Field(default=None, max_length=MAX_PROMPT_CHARS)
+    additional_negative_prompt: str | None = Field(default=None, max_length=MAX_PROMPT_CHARS)
+    enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def require_present_values(self) -> WorkflowMetadataPatch:
+        """空补丁和显式 null 不表示有效修改，防止写入不可空业务列。"""
+        if not self.model_fields_set or any(
+            getattr(self, name) is None for name in self.model_fields_set
+        ):
+            raise ValueError("workflow metadata values are required")
+        if self.display_name is not None and not self.display_name.strip():
+            raise ValueError("workflow display name is required")
+        return self
 
 
 class _ImageWorkflowBindings(BaseModel):
@@ -462,8 +484,27 @@ class WorkflowCatalogImporter:
             records.append(record)
         return tuple(records)
 
+    def parse_json(self, filename: str, content: str) -> WorkflowDefinition:
+        """解析上传的单个 JSON，不把客户端文件名当服务器路径或读取伴随文件。"""
+        if (
+            not filename or len(filename) > 255 or any(char in filename for char in "/\\:\x00")
+            or not filename.casefold().endswith(".json")
+            or filename.casefold().endswith(".meta.json")
+        ):
+            raise WorkflowValidationError("workflow filename is invalid")
+        try:
+            size = len(content.encode("utf-8"))
+            if not 0 < size <= MAX_WORKFLOW_FILE_BYTES:
+                raise WorkflowValidationError("workflow file size is invalid")
+            payload = json.loads(content)
+        except (UnicodeEncodeError, json.JSONDecodeError) as exc:
+            raise WorkflowValidationError("workflow JSON is invalid") from exc
+        if not isinstance(payload, dict):
+            raise WorkflowValidationError("workflow JSON must be an object")
+        return self._from_payload(Path(filename), payload)
+
     def _read_file(self, path: Path) -> WorkflowDefinition:
-        """校验单个 UTF-8 JSON 对象并识别 UI/API 格式。"""
+        """校验磁盘 JSON 与显式的 UI/API 配对，单文件转换和上传共用实现。"""
 
         try:
             raw = path.read_text(encoding="utf-8")
@@ -498,6 +539,13 @@ class WorkflowCatalogImporter:
                 )
                 validate_workflow_bindings(definition)
                 return definition
+        return self._from_payload(path, payload)
+
+    def _from_payload(self, path: Path, payload: dict[str, Any]) -> WorkflowDefinition:
+        """转换已解析的单文件内容，原始 JSON 和生成 API 均保留到数据库。"""
+        canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        workflow_key = _workflow_key(path.stem, digest)
         if _is_ui_workflow(payload):
             api_json = None
             bindings = (None, None, None, None)

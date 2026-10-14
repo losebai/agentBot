@@ -26,6 +26,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 @pytest.fixture(scope="session", autouse=True)
 async def after_nonebot_init(after_nonebot_init: None) -> None:
+    """离线生命周期使用标准 OneBot 适配器，协议网络仍由测试替身负责。"""
     import nonebot
     from nonebot.adapters.onebot.v11 import Adapter
 

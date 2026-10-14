@@ -37,6 +37,7 @@ def test_persist_only_dynamic_settings_and_ignore_legacy_static_rows(tmp_path: P
             assert "chat_model" in names
             assert "port" not in names
             assert "onebot_v11_access_token" not in names
+            assert "chat_session_secret" not in names
             cursor.execute(
                 "INSERT INTO chat_setting (config_key,config_value) VALUES (%s,%s)",
                 ("port", "9999"),
@@ -51,6 +52,8 @@ def test_static_api_update_is_rejected_before_persistence() -> None:
     """仅界面只读不足以保护启动参数，API 必须拒绝静态字段。"""
     with pytest.raises(ValidationError):
         SettingsUpdate(expected_revision=1, values={"port": 9999})
+    with pytest.raises(ValidationError):
+        SettingsUpdate(expected_revision=1, values={"chat_session_secret": "replacement"})
     with pytest.raises(ValidationError):
         SettingsUpdate(expected_revision=1, values={"onebot_v11_access_token": "replacement"})
 
@@ -207,7 +210,7 @@ def test_export_static_is_explicit_secret_safe_and_refuses_overwrite(
         with db.cursor() as cursor:
             cursor.execute(
                 "INSERT INTO chat_setting (config_key,config_value) VALUES (%s,%s)",
-                ("onebot_v11_access_token", json.dumps("old-secret-do-not-print")),
+                ("chat_session_secret", json.dumps("old-secret-do-not-print")),
             )
         db.commit()
     env = tmp_path / "bootstrap.env"
@@ -266,6 +269,7 @@ def test_export_roundtrip_preserves_backslashes_and_literal_secret(
     assert loaded.superusers == {"${REVIEW_LITERAL}"}
     assert loaded.onebot_v11_secret is None
     # 显式旧环境导入也必须使用静态秘密字面值，不能在整体验证前改写它。
+    monkeypatch.setenv("ONEBOT_V11_ACCESS_TOKEN", values["onebot_v11_access_token"])
     imported = load_legacy_runtime_config(env_file=str(target))
     assert imported.chat_session_secret.get_secret_value() == secret
     assert secret not in capsys.readouterr().out

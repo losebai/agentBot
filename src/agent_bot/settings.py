@@ -297,10 +297,8 @@ class SettingsStore:
                     connection.commit()
                 finally:
                     _release_lock(cursor)
-        loaded = self.load()
-        if loaded.revision != expected_revision + 1:
-            raise SettingsError("settings verification failed")
-        return loaded
+        # 提交成功后返回锁内验证的快照，不能因提交后重读失败误报失败并回滚启动文件。
+        return VersionedSettings(config=validated, revision=current_revision + 1)
 
     def _open(self) -> Any:
         return self._connect(

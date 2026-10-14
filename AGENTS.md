@@ -58,9 +58,13 @@ uv run pytest -m "not e2e" -k "not database_onebot_token_reaches_adapter_without
 
 ## 安全与配置
 
-桌面壳允许通过原生“服务”菜单修改启动文件中的 `PORT` 并重启本窗口的后端；
-端口须验证范围与占用，保留其他配置和密钥。管理 HTTP API 仍不可写静态配置，网页不持有进程控制能力。
+桌面壳允许通过原生“服务”菜单编辑启动文件中的 `PORT`，端口须验证范围与占用，
+保存后重启本窗口的后端，保留其他配置和密钥。OneBot Token 在网页“机器人配置 → QQ”编辑，
+保存到启动文件后不切换当前连接，由用户手动使用已有“服务 → 重启后端”生效。
+管理 HTTP API 允许保存严格授权、页面提供且启动文件可写的静态字段，保存不切换当前连接、
+监听地址或数据库后端，由用户手动重启生效；环境变量覆盖的字段只读，修改文件不能覆盖启动环境。
+网页不持有进程控制能力，不新增 Token 原生菜单。
 
-静态配置（数据库后端及连接、Redis、管理员凭据、NoneBot/OneBot 启动字段、会话密钥、目录及固定资源参数）保留在 `.env` 或环境变量中，修改后重启，管理 API 只读。运行配置及模型供应商、MCP 的 URL、密钥通过管理页面保存到所选 MySQL 或 SQLite，不从环境变量读取或覆盖。首次初始化后，所选数据库是运行配置的权威来源。`CHAT_DB_BACKEND` 未指定时默认 SQLite，MySQL 部署必须显式指定 `mysql`；SQLite 文件由 `CHAT_DB_SQLITE_PATH` 指定。首次无配置且无已有数据时允许自动生成独立随机密钥、默认配置与 SQLite 数据库；已有部署不得重建数据库或覆盖密钥。队列默认 `CHAT_QUEUE_BACKEND=sqlite`，由 `CHAT_QUEUE_SQLITE_PATH` 指定本地库；Redis 仅在显式选择 `redis` 时使用，失败不得自动切换后端。不得提交凭据或数据库文件。历史 SQL 必须逐项审查：`sql/legacy/dispatch_chat_setting.sql` 含删除表操作。使用独立数据库和 Redis 键前缀。
+静态配置（数据库后端及连接、Redis、管理员凭据、NoneBot/OneBot 启动字段、会话密钥、目录及固定资源参数）保留在 `.env` 或环境变量中；管理 API 仅允许写入已明确授权的静态字段，修改后手动重启。静态修改使用 `startup_revision` 校验启动文件版本，不能写入运行配置数据库，不回填密钥，不写回未编辑的陈旧值；静态密钥留空保留，可空密钥需显式清除为 null，提交失败须回滚文件与数据库修改。`ONEBOT_V11_ACCESS_TOKEN` 和 `CHAT_SESSION_SECRET` 须为至少 32 字符的不同随机值。会话密钥修改并重启后使用新的 HMAC 会话和标签记忆身份命名空间，旧历史与记忆数据保留，供应商/MCP 密钥不受影响。运行配置及模型供应商、MCP 的 URL、密钥通过管理页面保存到所选 MySQL 或 SQLite，不从环境变量读取或覆盖。首次初始化后，所选数据库是运行配置的权威来源。`CHAT_DB_BACKEND` 未指定时默认 SQLite，MySQL 部署必须显式指定 `mysql`；SQLite 文件由 `CHAT_DB_SQLITE_PATH` 指定。首次无配置且无已有数据时允许自动生成独立随机密钥、默认配置与 SQLite 数据库；OneBot Token 与会话密钥均写入 `.env`。已有部署不得重建数据库或覆盖密钥。队列默认 `CHAT_QUEUE_BACKEND=sqlite`，由 `CHAT_QUEUE_SQLITE_PATH` 指定本地库；Redis 仅在显式选择 `redis` 时使用，失败不得自动切换后端。不得提交凭据或数据库文件。历史 SQL 必须逐项审查：`sql/legacy/dispatch_chat_setting.sql` 含删除表操作。使用独立数据库和 Redis 键前缀。
 
 媒体文件目录由 `AGENT_BOT_MEDIA_DIRECTORY` 启动配置指定，默认 `data/media`；禁止把上传文件、TTS 输出和验收数据打包。媒体 SQL 随首次全新本地配置初始化，或通过明确初始化命令及手动执行；已有部署普通启动不执行升级；保留 0.3.0 wheel 用于隔离回退验证。

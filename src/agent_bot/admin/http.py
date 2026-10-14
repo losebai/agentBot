@@ -7,20 +7,22 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from agent_bot.admin.models import ApiError
+from agent_bot.admin.workflow_models import WorkflowManagementError
 from agent_bot.media.errors import MediaError
+from agent_bot.services.workflows import MAX_WORKFLOW_FILE_BYTES
 
 logger = logging.getLogger(__name__)
 
 
 class ManagementMiddleware:
-    """管理请求限制大小；准确匹配上传入口时在鉴权后流式计数。"""
+    """管理请求限制大小；媒体与工作流上传入口在鉴权后流式计数。"""
 
     def __init__(self, app: ASGIApp) -> None:
         """Wrap the application without altering non-management requests."""
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """普通管理正文上限六十四千字节，仅精确匹配的上传允许十兆流式输入。"""
+        """普通管理正文上限 64KiB，上传独立限额防止大 JSON 占用无界内存。"""
         if scope["type"] != "http" or not scope["path"].startswith("/api/"):
             await self.app(scope, receive, send)
             return
@@ -41,15 +43,24 @@ class ManagementMiddleware:
             await send(message)
 
         is_upload = scope["method"] == "POST" and scope["path"] == "/api/v1/media/uploads"
-        if is_upload:
+        is_workflow_import = (
+            scope["method"] == "POST" and scope["path"] == "/api/v1/workflows/import"
+        )
+        if is_upload or is_workflow_import:
             stream_size = 0
 
             async def replay() -> Message:
-                """认证后才读取上传正文，按实际分块累计硬上限。"""
+                """工作流 JSON 字符串可能转义为六倍大小，解码后再检查真实 UTF-8 限额。"""
                 nonlocal stream_size
                 message = await receive()
                 stream_size += len(message.get("body", b""))
-                if stream_size > 10 * 1024 * 1024:
+                limit = (
+                    6 * MAX_WORKFLOW_FILE_BYTES + 8192
+                    if is_workflow_import else 10 * 1024 * 1024
+                )
+                if stream_size > limit:
+                    if is_workflow_import:
+                        raise WorkflowManagementError("WORKFLOW_TOO_LARGE", status_code=413)
                     raise MediaError("MEDIA_TOO_LARGE", status_code=413)
                 return message
         else:

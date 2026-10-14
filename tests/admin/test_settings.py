@@ -28,6 +28,21 @@ def test_read_never_discloses_secrets(admin_store, admin_runtime):
     assert snapshot.database_revision == snapshot.applied_revision == 1
 
 
+def test_structured_values_use_json_kind_without_confusing_generic_element_types(
+    admin_store, admin_runtime,
+):
+    """dict[str, str] 和包含标量输入类型的群列表仍须以对象或数组展示。"""
+    fields = {item.name: item for item in service(admin_store, admin_runtime).read().fields}
+    for name in ("chat_keyword_at_replies", "onebot_v11_api_roots", "chat_auto_speak_groups"):
+        assert isinstance(fields[name].value, (dict, list))
+        assert fields[name].kind == "json", name
+    for field in fields.values():
+        if isinstance(field.value, (dict, list)):
+            assert field.kind == "json", field.name
+    assert fields["chat_llm_enable_thinking"].kind == "boolean"
+    assert fields["chat_llm_temperature"].kind == "number"
+
+
 def test_partial_update_preserves_omitted_secret(admin_store, admin_runtime):
     result = service(admin_store, admin_runtime).update(
         update(1, chat_llm_temperature=0.4)

@@ -102,9 +102,9 @@ def test_application_import_does_not_initialize_plugin_or_open_database():
 
 
 async def test_application_assembles_management_and_preserves_existing_routes(
-    monkeypatch, admin_store, admin_runtime
+    monkeypatch, admin_store, admin_runtime, tmp_path,
 ):
-    """Exercise successful assembly against a real FastAPI app and isolated dependencies."""
+    """真实装配使用临时启动文件，管理快照不能读取开发者或正在运行服务的配置。"""
     from types import SimpleNamespace
 
     import httpx
@@ -116,6 +116,12 @@ async def test_application_assembles_management_and_preserves_existing_routes(
     from agent_bot.plugin import application as plugin
     from agent_bot.settings import VersionedSettings
 
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        f"ONEBOT_V11_ACCESS_TOKEN={admin_runtime.config.onebot_v11_access_token.get_secret_value()}\n"
+        f"CHAT_SESSION_SECRET={admin_runtime.config.chat_session_secret.get_secret_value()}\n",
+        encoding="utf-8",
+    )
     app = FastAPI()
 
     @app.get("/existing-route")

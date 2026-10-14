@@ -48,6 +48,11 @@ def test_first_run_creates_valid_local_settings_and_preserves_changes(tmp_path: 
         static_config=load_static_config(env_file=str(env_file)),
     )
     loaded = store.load()
+    token = loaded.config.onebot_v11_access_token.get_secret_value()
+    assert token == values["ONEBOT_V11_ACCESS_TOKEN"]
+    with closing(sqlite3.connect(store.params.sqlite_path)) as connection:
+        names = {row[0] for row in connection.execute("SELECT config_key FROM chat_setting")}
+    assert "onebot_v11_access_token" not in names
     assert loaded.revision == 1
     assert loaded.config.driver == "~fastapi+~websockets"
     assert str(loaded.config.host) == "127.0.0.1"

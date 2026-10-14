@@ -7,11 +7,15 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, create_model, mode
 from agent_bot.agent.contracts import AgentReadiness
 from agent_bot.ai.call_records import CallStatistics
 from agent_bot.ai.contracts import CatalogReadiness, CompletionMetadata
+from agent_bot.bootstrap import BootstrapConfig
 from agent_bot.config import RuntimeConfig
 from agent_bot.media.contracts import MediaReadiness
 from agent_bot.models import ChatMessage
 from agent_bot.settings import SECRET_SETTING_NAMES
-from agent_bot.static_config import DYNAMIC_SETTING_NAMES
+from agent_bot.static_config import STATIC_SETTING_NAMES
+
+BOOTSTRAP_SETTING_NAMES = frozenset(field.alias for field in BootstrapConfig.model_fields.values())
+STARTUP_SETTING_NAMES = STATIC_SETTING_NAMES | BOOTSTRAP_SETTING_NAMES
 
 
 class ApiModel(BaseModel):
@@ -25,10 +29,10 @@ class PatchBase(ApiModel):
 
     @model_validator(mode="after")
     def validate_patch(self) -> "PatchBase":
-        """Reject empty updates and secret display masks rather than persisting them."""
+        """拒绝空更新与秘密展示掩码，数据库密码也不能将星号占位当作新凭据。"""
         if not self.model_fields_set:
             raise ValueError("configuration update must contain a field")
-        for name in self.model_fields_set & SECRET_SETTING_NAMES:
+        for name in self.model_fields_set & (SECRET_SETTING_NAMES | {"chat_db_password"}):
             value = getattr(self, name)
             plain = value.get_secret_value() if hasattr(value, "get_secret_value") else value
             if isinstance(plain, str) and len(plain) >= 3 and set(plain) == {"*"}:
@@ -39,16 +43,25 @@ class PatchBase(ApiModel):
 RuntimeConfigPatch = create_model(
     "RuntimeConfigPatch",
     __base__=PatchBase,
-    **{name: (field.annotation | None, None) for name, field in RuntimeConfig.model_fields.items()
-       if name in DYNAMIC_SETTING_NAMES},
+    **{name: (field.annotation | None, None) for name, field in RuntimeConfig.model_fields.items()},
+    **{field.alias: (field.annotation | None, None)
+       for field in BootstrapConfig.model_fields.values()},
 )
 
 
 class SettingsUpdate(ApiModel):
-    """Update only explicitly supplied fields against one known database revision."""
+    """动态字段校验数据库版本，启动字段还必须提交独立文件版本。"""
 
     expected_revision: int = Field(ge=1)
+    startup_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     values: RuntimeConfigPatch
+
+    @model_validator(mode="after")
+    def require_startup_revision(self) -> "SettingsUpdate":
+        """启动写入不得绕过文件版本锁，其他字段仍复用一次数据库版本校验。"""
+        if self.values.model_fields_set & STARTUP_SETTING_NAMES and self.startup_revision is None:
+            raise ValueError("startup settings revision is required")
+        return self
 
 
 class SettingField(ApiModel):
@@ -70,6 +83,7 @@ class SettingsSnapshot(ApiModel):
 
     database_revision: int
     applied_revision: int
+    startup_revision: str | None = None
     restart_required_fields: list[str]
     fields: list[SettingField]
 

@@ -1,16 +1,13 @@
-"""桌面壳专用启动端口读写与原生弹窗，不向网页开放文件或进程控制。"""
+"""桌面壳专用启动端口读写与原生弹窗，不向网页开放进程控制。"""
 
 from __future__ import annotations
 
-import io
 import os
 import socket
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from dotenv import dotenv_values
-from dotenv.parser import parse_stream
 
 
 def connection_settings(directory: Path, port_override: int | None = None) -> tuple[str, int]:
@@ -49,29 +46,19 @@ def check_port_available(host: str, port: int) -> None:
 
 
 def save_port(directory: Path, port: int) -> None:
-    """仅修改最高优先级启动文件中的 PORT，原子替换且不改变其他秘密。"""
+    """原生端口与网页静态保存共用文件锁，避免并发替换时覆盖其他配置或秘密。"""
+    from agent_bot.startup_settings import StartupSettingsError, StartupSettingsStore
+
     validate_port(port)
     if any(name.casefold() == "port" for name in os.environ):
         raise ValueError("PORT 由启动环境变量指定，请先移除该环境变量再通过弹窗修改。")
-    target = directory / (".env.prod" if (directory / ".env.prod").exists() else ".env")
-    if not target.is_file():
-        raise ValueError("启动配置尚未生成，请先完成首次启动或恢复原配置文件。")
-    original = target.read_text(encoding="utf-8")
-    lines = []
-    for binding in parse_stream(io.StringIO(original)):
-        # 使用 dotenv 解析器，避免误改多行密钥内恰好以 PORT= 开头的文本。
-        if binding.key is None or binding.key.casefold() != "port":
-            lines.append(binding.original.string)
-    content = "".join(lines)
-    content += ("" if not content or content.endswith("\n") else "\n") + f"PORT={port}\n"
-    descriptor, temporary = tempfile.mkstemp(prefix=".port-", dir=directory)
+    store = StartupSettingsStore(directory, {"port"})
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
-            stream.write(content)
-        os.chmod(temporary, target.stat().st_mode)
-        os.replace(temporary, target)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
+        state = store.read()
+        with store.edit({"port": port}, expected_revision=state.revision):
+            pass
+    except StartupSettingsError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def port_dialog(window: Any, current: int) -> int | None:
@@ -127,7 +114,7 @@ def port_dialog(window: Any, current: int) -> int | None:
 
 
 def show_error(window: Any, message: str) -> None:
-    """原生错误提示保留当前管理页面，不回显底层异常或配置内容。"""
+    """原生提示保留当前管理页面，不回显底层异常或配置内容。"""
     from System import Func, Object
     from System.Windows.Forms import MessageBox
 

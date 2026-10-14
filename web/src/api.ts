@@ -29,8 +29,10 @@ export class ApiClient {
   status() { return this.request<ServiceStatus>('status'); }
   bots() { return this.request<BotInfo[]>('bots'); }
   settings() { return this.request<SettingsSnapshot>('settings'); }
-  updateSettings(expected_revision: number, values: Record<string, JsonValue>) {
-    return this.request<SettingsSnapshot>('settings', 'PATCH', { expected_revision, values });
+  /** 运行草稿使用数据库版本；包含静态修改时另传启动文件版本防止覆盖外部编辑。 */
+  updateSettings(expected_revision: number, values: Record<string, JsonValue>, startup_revision?: string | null) {
+    return this.request<SettingsSnapshot>('settings', 'PATCH', { expected_revision, values,
+      ...(startup_revision === undefined ? {} : { startup_revision }) });
   }
   chat(prompt: string, session_id: string, messages: ChatMessage[], model?: string, signal?: AbortSignal) {
     return this.request<ChatResponse>('chat', 'POST', { prompt, session_id, messages, ...(model ? {model} : {}) }, signal);

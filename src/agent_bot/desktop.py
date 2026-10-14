@@ -291,7 +291,11 @@ def main() -> int:
     import webview
     from webview.menu import Menu, MenuAction
 
-    from agent_bot.desktop_settings import connection_settings, port_dialog, show_error
+    from agent_bot.desktop_settings import (
+        connection_settings,
+        port_dialog,
+        show_error,
+    )
 
     directory = prepare_directory()
     command = (
@@ -341,7 +345,9 @@ def main() -> int:
     try:
         # 明确使用现代内核，避免退回不支持 React 管理页面的旧 IE 内核。
         webview.start(restart, gui="edgechromium", private_mode=True, menu=[
-            Menu("服务", [MenuAction("重启后端", restart), MenuAction("修改端口…", change_port)]),
+            Menu("服务", [
+                MenuAction("重启后端", restart), MenuAction("修改端口…", change_port),
+            ]),
         ])
     finally:
         controller.stop()

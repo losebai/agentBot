@@ -14,20 +14,25 @@ const agentFields: SettingField[] = [
   { ...common, name: 'chat_web_search_max_steps', description: '联网推理轮次', kind: 'number', value: 3 },
   { ...common, name: 'chat_mention_tool_enabled', description: '群成员提及工具授权', kind: 'boolean', value: false },
 ];
-const snapshot: SettingsSnapshot = { database_revision: 4, applied_revision: 4, restart_required_fields: [], fields: [
+const snapshot: SettingsSnapshot = { database_revision: 4, applied_revision: 4, restart_required_fields: [], startup_revision: null, fields: [
   ...agentFields,
   { ...common, name: 'chat_model', description: '聊天模型', kind: 'string', value: 'local-model' },
   { ...common, name: 'port', description: '监听端口', kind: 'number', value: 8080, scope: 'static', read_only: true },
 ] };
 
-it('机器人配置按页签展示常规、Agent 和只读静态配置', async () => {
+it('机器人配置将模型和 Agent 归入 LLM，提及授权归入 QQ，端口在基础设置只读', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(snapshot)));
   render(<Settings token="offline" />);
-  expect(await screen.findByLabelText('聊天模型')).toBeVisible();
+  expect(await screen.findByLabelText('监听端口')).toBeDisabled();
   for (const field of agentFields) expect(screen.queryByLabelText(field.description)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('tab', { name: 'Agent 运行配置' }));
-  for (const field of agentFields) expect(screen.getByLabelText(field.description)).toBeVisible();
-  fireEvent.click(screen.getByRole('tab', { name: '静态配置' }));
+  fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
+  expect(screen.getByLabelText('聊天模型')).toBeVisible();
+  for (const field of agentFields.filter(field => field.name !== 'chat_mention_tool_enabled')) {
+    expect(screen.getByLabelText(field.description)).toBeVisible();
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+  expect(screen.getByLabelText('群成员提及工具授权')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: '基础设置' }));
   expect(await screen.findByLabelText('监听端口')).toBeDisabled();
 });
 
@@ -44,12 +49,13 @@ it('在机器人配置修改 Agent 运行字段，保存保留原有版本边界
     return Response.json({ items: [], next_cursor: null });
   }));
   render(<Settings token="offline" />);
-  fireEvent.click(screen.getByRole('tab', { name: 'Agent 运行配置' }));
+  fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
   expect(await screen.findByLabelText('默认 Agent 预设')).toBeVisible();
   expect(screen.queryByLabelText('启用 QQ Agent')).not.toBeInTheDocument();
-  expect(screen.getByText(/QQ 日常聊天统一使用 Agent/)).toBeVisible();
-  for (const field of agentFields) expect(screen.getByLabelText(field.description)).toBeVisible();
-  expect(screen.queryByLabelText('聊天模型')).not.toBeInTheDocument();
+  for (const field of agentFields.filter(field => field.name !== 'chat_mention_tool_enabled')) {
+    expect(screen.getByLabelText(field.description)).toBeVisible();
+  }
+  expect(screen.getByLabelText('聊天模型')).toBeVisible();
   fireEvent.change(screen.getByLabelText('默认 Agent 预设'), { target: { value: '' } });
   fireEvent.change(screen.getByLabelText('Agent 工具轮次'), { target: { value: '5' } });
   fireEvent.change(screen.getByLabelText('通用 MCP 服务'), { target: { value: '["memory", "tools"]' } });
@@ -62,7 +68,7 @@ it('在机器人配置修改 Agent 运行字段，保存保留原有版本边界
   expect(screen.getByText('等待热刷新')).toBeVisible();
 });
 
-it('切换机器人配置页签保留 Agent 草稿，保存冲突仍保留输入', async () => {
+it('切换机器人配置分类保留 Agent 草稿，保存冲突仍保留输入', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
     if (String(url).endsWith('/settings')) return init?.method === 'PATCH'
       ? Response.json({ code: 'SETTINGS_CONFLICT', message: '配置已被修改，请重新加载' }, { status: 409 })
@@ -70,11 +76,11 @@ it('切换机器人配置页签保留 Agent 草稿，保存冲突仍保留输入
     return Response.json({ items: [], next_cursor: null });
   }));
   render(<Settings token="offline" />);
-  fireEvent.click(screen.getByRole('tab', { name: 'Agent 运行配置' }));
+  fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
   fireEvent.change(await screen.findByLabelText('默认 Agent 预设'), { target: { value: 'unsaved-agent' } });
-  fireEvent.click(screen.getByRole('tab', { name: '运行配置' }));
-  expect(screen.getByLabelText('聊天模型')).toBeVisible();
-  fireEvent.click(screen.getByRole('tab', { name: 'Agent 运行配置' }));
+  fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+  expect(screen.getByLabelText('群成员提及工具授权')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
   expect(screen.getByLabelText('默认 Agent 预设')).toHaveValue('unsaved-agent');
   fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
   expect(await screen.findByText('配置已被修改，请重新加载')).toBeVisible();

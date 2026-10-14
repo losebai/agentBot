@@ -1,4 +1,4 @@
-"""为平铺源码布局提供标准 editable 包映射，普通 wheel 沿用发布路径配置。"""
+"""为源码及外置资源提供标准 editable 包映射，普通 wheel 沿用发布路径配置。"""
 
 from pathlib import Path
 from typing import Any
@@ -8,20 +8,27 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
 class CustomBuildHook(BuildHookInterface):
-    """仅在开发安装时将 agent_bot 映射到 src，避免移动源码或复制运行模块。"""
+    """开发入口保留已安装资源路径，业务子模块仍直接从源码目录导入。"""
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         """生成标准导入映射并随 editable wheel 发布所需依赖。"""
         if version != "editable":
             return
         project = EditableProject(self.metadata.core.name, self.root)
-        project.map("agent_bot", "src/agent_bot")
+        # 标准包入口位于安装目录，资源读取与正式 wheel 一致；__path__ 只重定向业务源码。
+        project.add_to_subpackage("agent_bot", "src/agent_bot")
+        source_init = str(Path(self.root) / "src/agent_bot/__init__.py")
         self._editable_paths: list[Path] = []
         for filename, content in project.files():
-            if filename.endswith(".py"):
-                # SQL 强制打包会形成同名命名空间目录，源码映射必须先于该目录解析。
-                content += "\nimport sys\nsys.meta_path.remove(F)\nsys.meta_path.insert(0, F)\n"
-            path = Path(self.directory) / filename
+            # 执行原入口保留实时版本等包属性，不复制业务模块或增加仓库资源回退路径。
+            content += (
+                "\nfrom pathlib import Path as _Path\n"
+                f"_source_init = _Path({source_init!r})\n"
+                "exec(compile(_source_init.read_text(encoding='utf-8'), "
+                "str(_source_init), 'exec'))\n"
+                "del _Path, _source_init\n"
+            )
+            path = Path(self.directory) / filename.replace("/", "_")
             path.write_text(content, encoding="utf-8")
             build_data["force_include"][str(path)] = filename
             self._editable_paths.append(path)

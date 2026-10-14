@@ -91,6 +91,32 @@ h1 { font-size: 21px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .version-strip .ant-tag { white-space: normal; }
 .settings-search { max-width: 380px; margin-bottom: 8px; }
 .settings-card { border: 0; border-radius: 0; }
+/* 配置页内部按用途导航，独立于应用主侧栏；内容与草稿由同一页面维护。 */
+.settings-layout { display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: 26px; }
+.settings-navigation { display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--border); padding-right: 16px; align-self: start; }
+.settings-navigation button { border: 0; border-radius: 6px; padding: 11px 12px; background: transparent; color: var(--text-secondary); text-align: left; font-size: 13px; }
+.settings-navigation button:hover { background: var(--surface-subtle); color: var(--text); }
+.settings-navigation button.active { background: var(--surface-selected); color: var(--text); font-weight: 500; }
+.settings-category { min-width: 0; }
+.settings-category-heading { margin-bottom: 18px; }
+.settings-category-heading h2 { margin: 0 0 7px; font-size: 15px; font-weight: 600; }
+.settings-category-heading p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+/* 工作流目录以可换行的列表呈现，文件路径和节点映射不进入普通管理表单。 */
+.workflow-note { color: var(--text-secondary); font-size: 12px; line-height: 1.8; margin: 0 0 16px; }
+.workflow-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 18px; }
+.workflow-toolbar .ant-input { flex: 1 1 180px; width: auto; }
+.workflow-toolbar select { border: 1px solid #dedede; border-radius: 6px; height: 32px; padding: 0 8px; background: var(--surface); }
+.workflow-item { padding: 20px 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.workflow-info { min-width: 0; overflow-wrap: anywhere; }
+.workflow-info h3 { font-size: 14px; margin: 0 0 8px; font-weight: 500; }
+.workflow-info p { color: var(--text-secondary); font-size: 12px; line-height: 1.8; margin: 8px 0 0; white-space: pre-wrap; }
+.workflow-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.workflow-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; flex-shrink: 0; max-width: 100%; }
+.workflow-actions > span { color: var(--text-secondary); font-size: 12px; }
+.workflow-json { font-family: 'Cascadia Code', Consolas, monospace; margin-bottom: 16px; }
+.workflow-pagination-info { display: flex; flex-wrap: wrap; gap: 12px; color: var(--text-secondary); font-size: 12px; margin-bottom: 6px; }
+.workflow-pagination { margin-top: 16px; }
+.setting-control small { display: block; margin-top: 8px; color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
 .setting-row { padding: 20px 0; display: grid; grid-template-columns: 1fr minmax(260px, 42%); gap: 24px; border-bottom: 1px solid var(--border); }
 .setting-row:last-child { border-bottom: 0; }
 .setting-description label { font-size: 13px; font-weight: 500; display: inline-block; margin-bottom: 7px; margin-right: 8px; }
@@ -211,6 +237,7 @@ h1 { font-size: 21px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 
 /* 窄屏导航改为可滚动的一行，减少占用内容高度，所有入口仍可触达。 */
 @media (max-width: 1100px) {
+  .workflow-item { align-items: flex-start; flex-direction: column; gap: 14px; }
   .overview-grid { grid-template-columns: 1fr; }
   .page-content { padding: 26px 24px; }
   .topbar { padding: 0 24px; }
@@ -230,6 +257,10 @@ h1 { font-size: 21px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
   .metric:nth-child(n+3) { border-top: 1px solid var(--border); }
 }
 @media (max-width: 700px) {
+  /* 窄屏分类按钮置顶并分行，较长的业务分类名称仍能完整显示。 */
+  .settings-layout { grid-template-columns: 1fr; gap: 18px; }
+  .settings-navigation { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 12px; }
+  .settings-navigation button { text-align: center; padding: 10px 4px; white-space: nowrap; font-size: 12px; }
   .workspace { flex-direction: column; }
   .sidebar { width: 100%; position: static; padding: 14px 16px 10px; border-right: 0; border-bottom: 1px solid var(--border); }
   .sidebar .brand-lockup { padding: 0; font-size: 15px; }

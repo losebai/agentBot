@@ -571,8 +571,12 @@ class PluginConfig(BaseModel):
     @field_validator("onebot_v11_access_token")
     @classmethod
     def validate_onebot_access_token(cls, value: SecretStr) -> SecretStr:
-        if len(value.get_secret_value()) < 32:
+        """认证头不能包含控制或代理字符，校验错误不披露 Token 内容。"""
+        plain = value.get_secret_value()
+        if len(plain) < 32:
             raise ValueError("onebot_v11_access_token must contain at least 32 characters")
+        if any(unicodedata.category(character) in {"Cc", "Cs"} for character in plain):
+            raise ValueError("onebot_v11_access_token contains invalid control characters")
         return value
 
     @field_validator(

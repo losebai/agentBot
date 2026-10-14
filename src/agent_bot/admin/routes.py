@@ -32,10 +32,17 @@ from agent_bot.admin.models import (
 )
 from agent_bot.admin.settings import SettingsService
 from agent_bot.admin.streaming import ManagedStreamingResponse
+from agent_bot.admin.workflow_routes import install_workflow_routes
 from agent_bot.ai.call_records import CallRecordStore
 from agent_bot.ai.chat_errors import ChatAiError, ChatAiUnavailableError
 from agent_bot.ai.errors import AiError
+from agent_bot.integrations.workflow_store import (
+    WorkflowNotFoundError,
+    WorkflowRevisionConflictError,
+    WorkflowStoreError,
+)
 from agent_bot.model_guard import ModelGuardUnavailableError, ModelNotAvailableError
+from agent_bot.services.workflows import WorkflowValidationError
 from agent_bot.settings import (
     SettingsError,
     SettingsNotInitializedError,
@@ -46,7 +53,9 @@ from agent_bot.settings import (
 
 def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
     """复用现有运行时装配管理端点，不创建第二个机器人实例。"""
-    manager = SettingsService(store, runtime)
+    manager = SettingsService(
+        store, runtime, startup_settings_store=getattr(runtime, "startup_settings_store", None),
+    )
     chat = ChatProbe(runtime)
 
     async def authorize(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -84,7 +93,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
 
     @router.patch("/settings", response_model=SettingsSnapshot)
     async def update_settings(update: SettingsUpdate) -> SettingsSnapshot:
-        """Persist a validated partial update and report saved/applied versions separately."""
+        """动态值保存数据库、启动值保存文件；进程与连接只能由用户手动重启切换。"""
         return await asyncio.to_thread(manager.update, update)
 
     @router.get("/bots", response_model=list[BotInfo])
@@ -167,6 +176,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
     install_ai_routes(router, runtime)
     install_agent_routes(router, runtime)
     install_media_routes(router, runtime)
+    install_workflow_routes(router, runtime, manager)
 
     app.include_router(router)
     app.add_middleware(ManagementMiddleware)
@@ -189,6 +199,20 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
             )
         elif isinstance(error, SettingsRevisionConflictError):
             status_code, code, message = 409, "SETTINGS_CONFLICT", "配置已被修改，请重新加载"
+        elif isinstance(error, WorkflowRevisionConflictError):
+            status_code, code, message = (
+                409, "WORKFLOW_CONFLICT", "工作流已有更新，请重新加载后操作",
+            )
+        elif isinstance(error, WorkflowNotFoundError):
+            status_code, code, message = 404, "WORKFLOW_NOT_FOUND", "工作流不存在"
+        elif isinstance(error, WorkflowValidationError):
+            status_code, code, message = (
+                422, "WORKFLOW_INVALID", "工作流文件、节点绑定或执行状态不符合要求",
+            )
+        elif isinstance(error, WorkflowStoreError):
+            status_code, code, message = (
+                503, "WORKFLOW_UNAVAILABLE", "工作流数据库不可用，请检查连接及初始化结构",
+            )
         elif isinstance(error, SettingsNotInitializedError):
             status_code, code, message = 503, "SETTINGS_NOT_INITIALIZED", "配置数据库尚未初始化"
         elif isinstance(error, (ValidationError, RequestValidationError, SettingsValidationError)):
@@ -214,5 +238,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         ChatAiError,
         ModelNotAvailableError,
         AiError,
+        WorkflowStoreError,
+        WorkflowValidationError,
     ):
         app.add_exception_handler(exception_type, error_response)

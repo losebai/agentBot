@@ -68,8 +68,10 @@ Runner 标签变量 `DEPLOY_RUNNER_TAG` 和 `WINDOWS_RUNNER_TAG` 应使用全环
 
 1. 管理员创建 `/opt/agentbot` 并授予部署用户写权限，将本目录 `runtime.env.example`
    复制到服务器的 `/opt/agentbot/runtime.env`，权限设为 `600`。
-2. 替换管理员密码、OneBot Token 和会话密钥。两个协议密钥分别随机生成至少 32 字符，
-   可分别运行 `openssl rand -hex 48`。密钥及配置仅保存在服务器，CI 不上传或覆盖它们。
+2. 替换管理员密码、OneBot Token 和会话密钥。分别运行 `openssl rand -hex 48`
+   为 `ONEBOT_V11_ACCESS_TOKEN`、`CHAT_SESSION_SECRET` 生成至少 32 字符的不同随机值，
+   两者均写入服务器环境文件，修改后重启服务；容器通过环境变量注入 Token 时页面只读。
+   密钥及配置仅保存在服务器，CI 不上传或覆盖它们。
 3. 默认业务库与队列为 SQLite，无需外部 MySQL/Redis。只有明确选用它们时才设置对应后端
    与容器可达连接地址；不要复制模板覆盖已有服务器配置。
 4. 全新数据库在成功构建镜像后由管理员显式初始化，使用以下命令。已有部署按版本说明
@@ -84,8 +86,15 @@ docker compose --project-name agentbot -f compose.yaml run --rm --no-deps agentb
 ```
 
 首次初始化后，数据库是运行配置的权威来源；供应商/MCP 的 URL 与密钥在管理页面保存。
+OneBot Token 与会话密钥始终来自服务器环境文件，修改后重启服务；NapCat Token
+须与 `ONEBOT_V11_ACCESS_TOKEN` 一致。管理 HTTP API 可修改页面提供且严格授权的静态字段，
+保存到可写启动文件后需手动重启；环境变量覆盖的字段只读。本容器部署通过环境变量注入
+启动配置，修改服务器环境文件后重启服务。动态运行字段仍写数据库并热刷新。
 `HOST=0.0.0.0`、`PORT=8080` 等静态启动参数始终来自服务器环境文件。
 固定 `agentbot-data` 卷保存 SQLite、队列、媒体和 TTS 数据，容器以 UID/GID 10001 运行。
+会话密钥修改并重启后改变会话与身份命名空间，旧历史和记忆数据保留，供应商与 MCP
+密钥不受影响；数据库连接配置修改也只在重启后切换，不迁移数据。
+
 
 ## 添加 Windows Runner
 
@@ -133,6 +142,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_windows.ps1 -Bui
 公网命令见 [Windows 桌面版说明](../WINDOWS_README.md)。
 
 每次 Windows 安装器构建都会在 `dist/windows/installer/` 生成发布所需文件。
+版本采用 `主版本.次版本.修订号`，发布新程序时同步更新 `pyproject.toml` 和
+`src/agent_bot/__init__.py` 中的版本再构建；安装器的 `AppVersion`、文件名和
+`latest.json` 使用同一发布版本。当前已发布的 Windows 程序为 `0.5.0`。
+安装脚本读取当前用户的安装登记，只有服务器版本更高时升级；相同版本跳过下载，
+本机版本更高时保留现有安装。升级成功后由安装器更新登记版本，脚本不提前改写。
+
 先上传版本化的安装器和校验文件，再上传脚本，最后替换 `latest.json`，
 确保新清单引用的安装器已完整可用。示例在 Windows PowerShell 执行：
 
@@ -144,7 +159,8 @@ scp dist/windows/installer/latest.json root@192.168.1.5:/www/public/agentbot/lat
 ssh root@192.168.1.5 'chmod 644 /www/public/agentbot/latest.json.upload && mv /www/public/agentbot/latest.json.upload /www/public/agentbot/latest.json'
 ```
 
-保留旧版本安装器，回滚下载版本时仅替换为对应旧清单；客户端已有数据仍保留。
+保留旧版本安装器用于手动回退；切换到旧清单只影响首次安装或更旧的客户端，
+已有更高版本不会自动降级。回退安装程序时保留客户端已有数据。
 发布后通过公网检查两种脚本、`latest.json` 和安装器均可下载，核对安装器 SHA256。
 下载脚本的离线测试：`uv run pytest tests/unit/test_windows_install.py --no-cov`。
 

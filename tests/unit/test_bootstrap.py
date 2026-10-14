@@ -268,7 +268,7 @@ def test_example_secrets_must_be_replaced_before_import() -> None:
 
 
 def test_example_imports_after_replacing_required_credentials(tmp_path: Path) -> None:
-    """真实示例的受约束 JSON 列表、空白可选文本和秒数必须可直接导入。"""
+    """静态示例替换独立密钥后，列表、空白可选文本和秒数必须可直接导入。"""
     from datetime import timedelta
 
     example = (Path(__file__).parents[2] / ".env.example").read_text("utf-8")

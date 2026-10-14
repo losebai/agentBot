@@ -11,6 +11,38 @@ from ai.conftest import catalog as catalog
 from ai.test_service import make_service
 
 TOKEN = "offline-admin-token-longer-than-thirty-two-characters"
+
+
+async def test_static_onebot_token_patch_is_rejected_without_database_changes(
+    api, admin_store, admin_runtime,
+):
+    """网页不可写启动 Token，拒绝后配置版本和运行认证均保持原样。"""
+    token = "management-onebot-token-with-at-least-32-characters"
+    original = admin_store.load_values()
+    running = admin_runtime.config.onebot_v11_access_token
+    response = await api.patch("/api/v1/settings", headers=HEADERS, json={
+        "expected_revision": 1, "values": {"onebot_v11_access_token": token},
+    })
+    assert response.status_code == 422
+    assert response.json()["code"] == "INVALID_REQUEST" and token not in response.text
+    assert admin_store.load_values() == original
+    assert admin_runtime.config.onebot_v11_access_token == running
+
+
+async def test_static_onebot_token_snapshot_is_readonly_and_redacted(
+    api, admin_store, admin_runtime,
+):
+    """静态 Token 只公开已设置状态及重启要求，不回显启动凭据。"""
+    response = await api.get("/api/v1/settings", headers=HEADERS)
+    assert response.status_code == 200
+    field = next(
+        row for row in response.json()["fields"] if row["name"] == "onebot_v11_access_token"
+    )
+    assert field["scope"] == "static" and field["read_only"] and field["restart_required"]
+    assert field["value"] is None and field["secret_is_set"]
+    assert admin_runtime.config.onebot_v11_access_token.get_secret_value() not in response.text
+
+
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 

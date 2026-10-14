@@ -108,6 +108,8 @@ windows-installer:
   script:
     - '$ErrorActionPreference = "Stop"'
     - '& uv --version; if ($LASTEXITCODE -ne 0) { throw "Windows Runner 未安装 uv" }'
+    # Windows 专属脚本测试只替代下载与安装进程，不安装软件、不访问真实服务。
+    - '& uv run --locked --extra dev --extra desktop pytest tests/unit/test_windows_install.py --no-cov; if ($LASTEXITCODE -ne 0) { throw "一键安装脚本测试失败" }'
     - '& powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_windows.ps1 -BuildInstaller; if ($LASTEXITCODE -ne 0) { throw "Windows 安装包构建失败" }'
     # 无需交互桌面，通过临时 SQLite 验收打包后的真实后端。
     - '& uv run --locked --extra dev --extra desktop python tools/check_windows.py dist/windows/AgentBot --first-run; if ($LASTEXITCODE -ne 0) { throw "Windows 包首次启动验收失败" }'
@@ -118,6 +120,9 @@ windows-installer:
       - dist/windows/AgentBot/
       - dist/windows/installer/*-Setup.exe
       - dist/windows/installer/SHA256SUMS.txt
+      - dist/windows/installer/latest.json
+      - dist/windows/installer/install.ps1
+      - dist/windows/installer/install.bat
 
 container-image:
   stage: image

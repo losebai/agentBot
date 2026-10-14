@@ -50,7 +50,7 @@ class ToolRuntime:
 
     @asynccontextmanager
     async def open(self, snapshot, request, authority, *, media_scope=None, images=()):
-        """工具遵循预设与入口授权交集，缺少搜索绑定时返回不可重试的配置拒绝。"""
+        """关联 MCP 自动开放白名单内工具，内置工具仍遵循预设与入口授权交集。"""
         if request.tools == ():
             yield BoundTools((), {})
             return
@@ -114,7 +114,11 @@ class ToolRuntime:
                     if tool.name in handlers:
                         raise AgentError("AGENT_TOOL_NAME_CONFLICT", status_code=409)
                     handlers[tool.name] = session.call
-            configured = snapshot.agent.tools if snapshot.agent else auth.allowed_tools
+            # 服务授权与白名单已在连接和发现阶段校验，无需再逐个写入 Agent 工具配置。
+            configured = (
+                tuple(dict.fromkeys((*snapshot.agent.tools, *(t.name for t in remote.tools))))
+                if snapshot.agent else auth.allowed_tools
+            )
             if remote.warnings and request.tools is None:
                 unavailable = {w.service_code for w in remote.warnings}
                 available = {t.name for t in definitions}

@@ -40,7 +40,7 @@ it('聊天、图片理解与错误转发独立保存，清空路由提交 null',
   }));
 });
 
-it('工具和 MCP 下拉选择保存准确的名称和 ID，不改变其他 Agent 配置', async () => {
+it('关联 MCP 只保存服务 ID，无需把远端工具写入 Agent 工具配置', async () => {
   let patch: unknown;
   const agent = { id: 1, revision: 3, code: 'helper', name: '助手', description: '', enabled: false,
     model_id: 1, vision_model_id: null, fallback_model_id: null, skill_ids: [], mcp_ids: [], tools: [], system_prompt: '原提示', max_steps: 3, options: {} };
@@ -56,11 +56,9 @@ it('工具和 MCP 下拉选择保存准确的名称和 ID，不改变其他 Agen
   await waitFor(() => expect(screen.getByRole('combobox', { name: '关联 MCP（最多 3 个）' })).toBeEnabled());
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '关联 MCP（最多 3 个）' }));
   fireEvent.click(await screen.findByText('文档服务 · docs'));
-  fireEvent.mouseDown(screen.getByRole('combobox', { name: '允许工具' }));
-  fireEvent.change(screen.getByRole('combobox', { name: '允许工具' }), { target: { value: 'find_docs' } });
-  fireEvent.click(await screen.findByText('find_docs · 文档服务'));
+  expect(screen.getByText(/已关联 MCP 的工具自动可用/)).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
-  await waitFor(() => expect(patch).toEqual({ expected_revision: 3, tools: ['find_docs'], mcp_ids: [8] }));
+  await waitFor(() => expect(patch).toEqual({ expected_revision: 3, mcp_ids: [8] }));
 });
 
 it('关联未加载时保留 ID，冲突保留草稿，只提交修改字段', async () => {

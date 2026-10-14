@@ -10,7 +10,7 @@ function Editor({ initialTools = [] as string[], initialMcps = [] as number[] })
     <output aria-label="工具草稿">{JSON.stringify(tools)}</output><output aria-label="MCP 草稿">{JSON.stringify(mcps)}</output></>;
 }
 
-it('MCP 下拉覆盖所有分页且仅提供通用服务，选择后可搜索其工具', async () => {
+it('MCP 下拉覆盖所有分页，关联后自动使用工具而无需逐个勾选', async () => {
   vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).includes('cursor=next')
     ? { items: [{ id: 2, name: '文档服务', code: 'docs', category: 'general', enabled: true, allowed_tools: ['find_docs'] }], next_cursor: null }
     : { items: [{ id: 1, name: '搜索服务', code: 'search', category: 'search', enabled: true, allowed_tools: ['search'] }], next_cursor: 'next' })));
@@ -20,10 +20,11 @@ it('MCP 下拉覆盖所有分页且仅提供通用服务，选择后可搜索其
   fireEvent.click(await screen.findByText('文档服务 · docs'));
   expect(screen.getByLabelText('MCP 草稿')).toHaveTextContent('[2]');
   expect(screen.queryByText('搜索服务 · search')).not.toBeInTheDocument();
+  expect(screen.getByText(/已关联 MCP 的工具自动可用/)).toBeVisible();
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '允许工具' }));
   fireEvent.change(screen.getByRole('combobox', { name: '允许工具' }), { target: { value: 'find_docs' } });
-  fireEvent.click(await screen.findByText('find_docs · 文档服务'));
-  expect(screen.getByLabelText('工具草稿')).toHaveTextContent('["find_docs"]');
+  expect(screen.queryByText('find_docs · 文档服务')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('工具草稿')).toHaveTextContent('[]');
 });
 
 it('已选三个 MCP 时不能添加第四个，未知工具和关联保留', async () => {
@@ -50,7 +51,7 @@ it('加载失败可刷新恢复，通配符不作为工具选项，已有草稿�
   failed = false;
   fireEvent.click(screen.getByRole('button', { name: '刷新 MCP 列表' }));
   expect(await screen.findByText('本地工具 · local')).toBeVisible();
-  expect(screen.getByText(/具体工具名称/)).toBeVisible();
+  expect(screen.getByText(/白名单为 \* 时自动使用服务返回的全部工具/)).toBeVisible();
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '允许工具' }));
   expect(screen.queryByText('*')).not.toBeInTheDocument();
   await waitFor(() => expect(screen.getByText('网页读取 · read_url')).toBeVisible());

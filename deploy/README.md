@@ -14,7 +14,8 @@
 
 同一流水线的 `windows-installer` 为可选手动作业，使用 Windows Runner 构建便携包及
 `AgentBot-<版本>-windows-x64-Setup.exe`，并验收真实打包后端的首次 SQLite 启动。
-成功后下载该作业的 artifacts，其中有便携目录、安装器和 `SHA256SUMS.txt`。
+成功后下载该作业的 artifacts，其中有便携目录、安装器、`SHA256SUMS.txt`、
+`latest.json` 和一键安装脚本 `install.ps1` / `install.bat`。
 缺少 Windows Runner 时不要触发该作业；它不会阻塞 Linux 镜像或部署。
 
 ## 现有 Linux Runner
@@ -123,6 +124,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_windows.ps1 -Bui
 安装器不包含 WebView2 Runtime，目标电脑需提前安装；程序与安装器均未签名。
 
 ## 发布和回滚
+
+### Windows 一键安装下载站
+
+`https://public.loserbai.cn/agentbot/` 使用服务器 `192.168.1.5` 的
+`/www/public/agentbot/` 静态目录，沿用现有下载站。该目录只发布安装器、校验文件、
+版本清单和安装脚本，不上传配置、数据库、日志或媒体。
+公网命令见 [Windows 桌面版说明](../WINDOWS_README.md)。
+
+每次 Windows 安装器构建都会在 `dist/windows/installer/` 生成发布所需文件。
+先上传版本化的安装器和校验文件，再上传脚本，最后替换 `latest.json`，
+确保新清单引用的安装器已完整可用。示例在 Windows PowerShell 执行：
+
+```powershell
+ssh root@192.168.1.5 'mkdir -p /www/public/agentbot'
+scp dist/windows/installer/*-Setup.exe dist/windows/installer/SHA256SUMS.txt root@192.168.1.5:/www/public/agentbot/
+scp dist/windows/installer/install.ps1 dist/windows/installer/install.bat root@192.168.1.5:/www/public/agentbot/
+scp dist/windows/installer/latest.json root@192.168.1.5:/www/public/agentbot/latest.json.upload
+ssh root@192.168.1.5 'chmod 644 /www/public/agentbot/latest.json.upload && mv /www/public/agentbot/latest.json.upload /www/public/agentbot/latest.json'
+```
+
+保留旧版本安装器，回滚下载版本时仅替换为对应旧清单；客户端已有数据仍保留。
+发布后通过公网检查两种脚本、`latest.json` 和安装器均可下载，核对安装器 SHA256。
+下载脚本的离线测试：`uv run pytest tests/unit/test_windows_install.py --no-cov`。
+
+### Web 服务
 
 手动执行 `deploy-production`；发布文件保存在 `/opt/agentbot/releases/<流水线编号>/`。
 先拉取镜像再更新固定 Compose 项目，等待 `/health/ready`。成功后更新 `current`；

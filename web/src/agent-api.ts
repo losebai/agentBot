@@ -1,6 +1,6 @@
 import { ApiClient, ApiFailure } from './api';
 import type { Page } from './ai-types';
-import type { Agent, AgentDraft, Skill, SkillDraft, McpServer, McpDraft, AgentProbe, AgentCompletion, RunSummary, RunDetail, RunStep } from './agent-types';
+import type { Agent, AgentDraft, Skill, SkillDraft, McpServer, McpDraft, McpTool, AgentProbe, AgentCompletion, RunSummary, RunDetail, RunStep } from './agent-types';
 import { streamAgent } from './agent-stream';
 import { MediaApi } from './media-api';
 import { validateArtifact } from './media-validation';
@@ -24,6 +24,8 @@ export class AgentApi extends ApiClient {
   /** 编辑弹窗关闭时取消目录读取，避免继续加载无用分页。 */
   listMcps(cursor?: string, signal?: AbortSignal) { return this.request<Page<McpServer>>(`mcp-servers${query(cursor)}`, 'GET', undefined, signal); }
   getMcp(id: number) { return this.request<McpServer>(`mcp-servers/${id}`); }
+  /** 只读取已保存服务的工具定义；取消时由后端释放 MCP 连接。 */
+  listMcpTools(id: number, signal: AbortSignal) { return this.request<McpTool[]>(`mcp-servers/${id}/tools`, 'GET', undefined, signal); }
   createMcp(body: McpDraft) { return this.request<McpServer>('mcp-servers','POST',body); }
   updateMcp(id: number, revision: number, body: Partial<McpDraft>) { return this.request<McpServer>(`mcp-servers/${id}`,'PATCH',{expected_revision:revision,...body}); }
   deleteMcp(id: number, revision: number) { return this.request<void>(`mcp-servers/${id}`,'DELETE',{expected_revision:revision}); }

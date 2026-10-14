@@ -8,6 +8,26 @@
 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
 桌面界面使用 WebView2，不会自动改用旧 IE 内核。
 
+## 一键安装
+
+Windows PowerShell：
+
+```powershell
+irm https://public.loserbai.cn/agentbot/install.ps1 | iex
+```
+
+Windows CMD：
+
+```cmd
+curl -fsSL -o "%TEMP%\agentbot-install.bat" https://public.loserbai.cn/agentbot/install.bat && "%TEMP%\agentbot-install.bat"
+```
+
+脚本从同一下载站读取 `latest.json`，下载对应 Windows x64 安装器并校验 SHA256，
+校验通过后显示安装进度，创建桌面和开始菜单快捷方式。安装完成后手动打开 AgentBot；
+不会自动重启系统。下载、校验或安装失败会明确报错，不切换下载源。
+无需管理员权限；已有安装使用原目录升级并保留配置、数据库和媒体。
+桌面运行前仍需安装上方列出的 WebView2 Runtime。
+
 ## 首次使用
 
 1. 运行安装器，默认安装到 `%LOCALAPPDATA%\Programs\AgentBot`，无需管理员权限，
@@ -65,7 +85,8 @@ powershell -ExecutionPolicy Bypass -File tools/build_windows.ps1 -BuildInstaller
 最终生成 `dist/windows/AgentBot/AgentBot.exe`、`agent-bot.exe` 和共享 `_internal`。
 只附带 `.env.example`，不会打包本地 `.env`、数据库或媒体文件。
 构建目录已有运行数据时会拒绝覆盖，可通过 `-OutputDirectory dist/windows-new` 换目录。
-安装器输出到 `dist/windows/installer/`；编译器不在标准路径时可使用 `-IsccPath` 或
+安装器、SHA256 校验文件、`latest.json` 和两种一键安装脚本输出到
+`dist/windows/installer/`；编译器不在标准路径时可使用 `-IsccPath` 或
 `ISCC_PATH` 环境变量指定 `ISCC.exe`。安装器不捆绑 WebView2 Runtime，目标电脑需提前安装。
 GitLab 作业与 Windows Runner 准备步骤见 [CI/CD 部署说明](deploy/README.md)。
 

@@ -5,6 +5,7 @@ from contextlib import aclosing
 from fastapi import APIRouter, Query, Request
 
 from agent_bot.admin.agent_chat import AgentChatProbe, AgentProbeRequest
+from agent_bot.admin.mcp_tools import list_server_tools
 from agent_bot.admin.media_requests import run_with_disconnect
 from agent_bot.admin.streaming import ManagedStreamingResponse
 from agent_bot.agent.contracts import (
@@ -21,6 +22,7 @@ from agent_bot.agent.contracts import (
     SkillUpdate,
     SkillView,
     StepView,
+    ToolDefinition,
 )
 from agent_bot.agent.errors import AgentError
 from agent_bot.ai.contracts import Page, VersionDelete
@@ -96,6 +98,17 @@ def install_agent_routes(router: APIRouter, runtime):
     @router.post("/mcp-servers", response_model=McpView, status_code=201)
     async def create_mcp(body: McpCreate):
         return await operate("create_mcp", body)
+
+    @router.get("/mcp-servers/{id}/tools", response_model=tuple[ToolDefinition, ...])
+    async def mcp_tools(id: int, request: Request):
+        """只使用已认证目录快照；关闭弹窗断开连接时取消发现并归还运行时租约。"""
+        async def discover():
+            """整个 MCP 连接生命周期持有同一运行时租约。"""
+            async with runtime.lease():
+                server = await chat.service().catalog.get_mcp(id)
+                return await list_server_tools(server)
+
+        return await run_with_disconnect(request, discover())
 
     @router.patch("/mcp-servers/{id}", response_model=McpView)
     async def update_mcp(id: int, body: McpUpdate):

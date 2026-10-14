@@ -12,7 +12,7 @@ from mcp.client.streamable_http import streamable_http_client
 from agent_bot.agent.contracts import MAX_MCP_TOOLS, ServiceWarning
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.mcp.discovery import convert_result, discover
-from agent_bot.agent.mcp.http import client_factory
+from agent_bot.agent.mcp.http import MAX_MCP_RESPONSE_BYTES, client_factory
 from agent_bot.agent.tools.schema import ToolSchema
 
 
@@ -41,15 +41,19 @@ def classify(error):
 
 class McpWorker:
     """持有单个 MCP 服务连接和显式结果转换器。"""
-    def __init__(self, server, secret, remaining, result_converter=convert_result):
-        """每个工作任务拥有 SDK 生命周期；决策可显式使用严格结构化转换器。"""
+    def __init__(
+        self, server, secret, remaining, result_converter=convert_result, *, catalog=False,
+    ):
+        """每个任务拥有 SDK 生命周期；只读管理目录不占用执行期工具预算。"""
         self.server, self.secret, self.remaining = server, secret, remaining
         self.result_converter = result_converter
+        self.catalog = catalog
         self.queue = asyncio.Queue(maxsize=1)
         self.ready = asyncio.get_running_loop().create_future()
         self.task = asyncio.create_task(self._serve())
         self.tools = ()
         self.write_stream = None
+        self.failure = None
 
     async def _serve(self):
         """在同一任务进入和退出 SDK，转换结果时不丢弃决策的结构化契约。"""
@@ -57,8 +61,12 @@ class McpWorker:
         try:
 
             def report_failure(error):
+                """保留底层限额错误，避免 SDK 将响应中断重新包装成通用协议错误。"""
+                self.failure = error
                 if not self.ready.done():
                     self.ready.set_result(error)
+                if current is not None and not current.done():
+                    current.set_result(error)
 
             factory = client_factory(
                 self.server,
@@ -71,7 +79,8 @@ class McpWorker:
                     client = await stack.enter_async_context(factory())
                     streams = await stack.enter_async_context(
                         streamable_http_client(
-                            self.server.endpoint, http_client=client, max_sse_event_size=262144
+                            self.server.endpoint, http_client=client,
+                            max_sse_event_size=MAX_MCP_RESPONSE_BYTES,
                         )
                     )
                 else:
@@ -88,7 +97,9 @@ class McpWorker:
                     ClientSession(*streams[:2], read_timeout_seconds=self.server.timeout_seconds)
                 )
                 await asyncio.wait_for(session.initialize(), min(10, self.remaining()))
-                self.tools = await discover(session, self.server, self.remaining)
+                self.tools = await discover(
+                    session, self.server, self.remaining, catalog=self.catalog,
+                )
                 self.ready.set_result(None)
                 while True:
                     call, current = await self.queue.get()
@@ -108,7 +119,7 @@ class McpWorker:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            failure = classify(error)
+            failure = self.failure or classify(error)
             if not self.ready.done():
                 self.ready.set_result(failure)
             if current is not None and not current.done():
@@ -170,6 +181,16 @@ class McpConnector:
     def __init__(self, credentials):
         self.credentials = credentials
 
+    async def list_tools(self, server, *, remaining):
+        """只读发现管理目录，不向调用方提供可执行连接，取消时等待所属任务退出。"""
+        worker = McpWorker(server, self.credentials.resolve(server), remaining, catalog=True)
+        try:
+            await worker.start()
+            return worker.tools
+        finally:
+            with anyio.CancelScope(shield=True):
+                await worker.close()
+
     @asynccontextmanager
     async def open(self, servers, *, remaining, result_converter=convert_result):
         """限定合并工具数量并单独拒绝重名，固定决策仍使用严格结构化解析。"""
@@ -179,6 +200,9 @@ class McpConnector:
         failed = False
         try:
             for server in servers:
+                # 管理端关闭全部工具后保留服务配置，但执行不再建立无用连接。
+                if not server.allowed_tools:
+                    continue
                 if remaining() <= 0:
                     raise AgentError("AGENT_TIMEOUT", status_code=504)
                 worker = McpWorker(

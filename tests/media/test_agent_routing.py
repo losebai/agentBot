@@ -97,6 +97,49 @@ async def test_routes_and_clear_preserve_chat_binding(media_database, agent_para
     assert cleared.resolved.model.id == chat.id and cleared.fallback is None
 
 
+@pytest.mark.parametrize("vision_disabled", [False, True])
+async def test_mcp_screenshot_uses_explicit_vision_route_without_repeating_tool(
+    media_database, agent_params, media_model, vision_disabled,
+):
+    """首轮文本模型请求截图后，已配置识图模型接收原工具结果，工具仅执行一次。"""
+    from agent.test_engine import Tools
+    from agent_bot.agent.contracts import ToolResult
+
+    class ScreenshotTools(Tools):
+        """仅模拟工具截图，不访问桌面或付费模型。"""
+
+        async def call(self, call):
+            """沿用真实图片校验，结果图像只留在本次模型上下文。"""
+            self.invoked.append(call.call_id)
+            return ToolResult(
+                call_id=call.call_id, name=call.name, content="截图完成",
+                images=(ImagePreparer().prepare(picture(), None).model_image,),
+            )
+
+    service, _, chat, vision, backup = await routed_service(
+        media_database, agent_params, media_model,
+    )
+    if vision_disabled:
+        await media_model[0].update_model(
+            vision.id, ModelUpdate(expected_revision=vision.revision, enabled=False),
+        )
+    tools = ScreenshotTools()
+    service.tool_runtime = tools
+    snapshot = await service.catalog.snapshot(request())
+    assert snapshot.vision.model.id == vision.id
+    result = await service.complete(
+        request(), ExecutionAuthority(entry="admin", allowed_tools=("lookup",)),
+    )
+    calls = service.providers["openai-chat"].calls
+    assert [call.resolved.model.id for call in calls] == [
+        chat.id, backup.id if vision_disabled else vision.id,
+    ]
+    assert result.content == "最终回答" and len(tools.invoked) == 1
+    assert calls[1].messages[-1].tool_result.images
+    steps = await service.records.list_steps(result.execution_id)
+    assert "images" not in str([step.model_dump() for step in steps.items])
+
+
 async def test_vision_route_requires_declared_capability(
     media_database,
     agent_params,

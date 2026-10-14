@@ -80,9 +80,23 @@ class AgentModelRouter:
         return self.providers[self.resolved.provider.protocol]
 
     def bind_call(self, call: AgentModelCall) -> AgentModelCall:
-        """固定本轮绑定并收紧期限，备用自己的后续推理延续继续保留。"""
+        """工具首次返回图片时只使用显式识图路由，跨模型前清除旧模型私有延续。"""
+        messages = call.messages
+        if not self.has_images and any(
+            message.images or (message.tool_result and message.tool_result.images)
+            for message in messages
+        ):
+            self.has_images = True
+            previous = self.resolved.model.id
+            target = self.snapshot.vision if not self.forwarded else None
+            self._bind(target or self.resolved)
+            if self.resolved.model.id != previous:
+                messages = tuple(
+                    message.model_copy(update={"continuation": ()}) for message in messages
+                )
         return call.model_copy(
             update={
+                "messages": messages,
                 "resolved": self.resolved,
                 "credential": self.credential,
                 "timeout_seconds": remaining_timeout(self.timeout_seconds),

@@ -11,6 +11,8 @@ export interface SkillDraft extends DirectoryDraft { category: string; system_pr
 export interface Skill extends SkillDraft, Versioned {}
 export interface McpDraft extends DirectoryDraft { code: string; category: 'general'|'search'; transport: 'streamable'|'sse'; endpoint: string; credential?: string|null; allowed_tools: string[]; search_tool: string|null; timeout_seconds: number; required: boolean }
 export interface McpServer extends Omit<McpDraft, 'credential'>, Versioned { credential_set: boolean; credential_available: boolean }
+/** 只读发现返回工具定义，开关状态来自服务的 allowed_tools 集合。 */
+export interface McpTool { name: string; description: string; input_schema: Record<string, JsonValue>; source: 'mcp' }
 export interface AgentProbe { agent_code: string; prompt: string; messages: ChatMessage[]; session_id: string; attachment_ids?:string[]; request_id?: string; max_steps?: number; timeout_seconds?: number }
 export interface AgentMetadata { execution_id: string; request_id: string; model: string; usage: TokenUsage; duration_ms: number; record_saved: boolean; backend: 'python-agent'; attachments?:MediaAsset[] }
 export interface AgentCompletion extends AgentMetadata { content: string }

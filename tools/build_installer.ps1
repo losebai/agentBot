@@ -40,4 +40,13 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $installer -PathType Le
 $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
 "$hash  $([System.IO.Path]::GetFileName($installer))" |
     Set-Content -LiteralPath (Join-Path $output "SHA256SUMS.txt") -Encoding ascii
+# 同一输出目录可直接作为下载站的 /agentbot/；清单固定版本和散列，脚本不猜测备用下载源。
+@{
+    version = $Version
+    filename = [System.IO.Path]::GetFileName($installer)
+    sha256 = $hash
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output "latest.json") -Encoding ascii
+foreach ($name in @("install.ps1", "install.bat")) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "deploy/windows/$name") -Destination $output -Force
+}
 Write-Host "Windows 安装包已生成：$installer"

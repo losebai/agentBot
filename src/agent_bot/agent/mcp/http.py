@@ -1,10 +1,14 @@
-"""Enforce origin and response bounds below the MCP SDK HTTP client."""
+"""在 MCP SDK 下层限制源站和响应大小，为有界截图响应保留空间。"""
 
 from urllib.parse import urljoin
 
 import httpx2
 
 from agent_bot.agent.errors import AgentError
+from agent_bot.media.config import MAX_TOTAL_IMAGE_BYTES
+
+# 图片使用 base64 编码；额外 1 MiB 留给 JSON 元数据，SSE 和普通 JSON 共用同一上限。
+MAX_MCP_RESPONSE_BYTES = (MAX_TOTAL_IMAGE_BYTES + 2) // 3 * 4 + 1048576
 
 
 def origin(url):
@@ -25,7 +29,7 @@ class BoundedStream(httpx2.AsyncByteStream):
                     pending += chunk
                     normalized = pending.replace(b"\r\n", b"\n")
                     frames = normalized.split(b"\n\n")
-                    if any(len(frame) > 262144 for frame in frames):
+                    if any(len(frame) > MAX_MCP_RESPONSE_BYTES for frame in frames):
                         raise AgentError("AGENT_MCP_RESPONSE_TOO_LARGE")
                     for frame in frames[:-1]:
                         lines = frame.decode("utf-8").splitlines()
@@ -42,7 +46,7 @@ class BoundedStream(httpx2.AsyncByteStream):
                         pending = frames[-1]
                 else:
                     size += len(chunk)
-                    if size > 1048576:
+                    if size > MAX_MCP_RESPONSE_BYTES:
                         raise AgentError("AGENT_MCP_RESPONSE_TOO_LARGE")
                     yield chunk
         except AgentError as error:

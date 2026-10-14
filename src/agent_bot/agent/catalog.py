@@ -237,7 +237,7 @@ class AgentCatalog(AiDatabase):
         return item
 
     async def snapshot(self, request: AgentRequest, *, search_code=None) -> AgentSnapshot:
-        """根据本次图片输入选择主模型，备用快照只在明确配置时读取。"""
+        """根据输入选主模型，并固定明确配置的识图与备用快照，支持工具后续返回图片。"""
 
         def read(connection):
             """一致性读取不持有行锁，避免与目录配置写入形成反向锁序。"""
@@ -261,6 +261,17 @@ class AgentCatalog(AiDatabase):
                     raise AgentError("AGENT_MODEL_UNAVAILABLE", status_code=400)
                 model = model_view(connection, row)
             provider = AiCatalog._get(self, connection, "provider", model.provider_id)
+            vision = None
+            if agent and agent.vision_model_id:
+                vision_model = (
+                    model if agent.vision_model_id == model.id
+                    else AiCatalog._get(self, connection, "model", agent.vision_model_id)
+                )
+                vision_provider = (
+                    provider if vision_model.provider_id == provider.id
+                    else AiCatalog._get(self, connection, "provider", vision_model.provider_id)
+                )
+                vision = ResolvedModel(model=vision_model, provider=vision_provider)
             if (not model.enabled or not provider.enabled) and not (
                 agent and agent.fallback_model_id
             ):
@@ -292,6 +303,9 @@ class AgentCatalog(AiDatabase):
             if fallback:
                 revisions[f"model:{fallback.model.id}"] = fallback.model.revision
                 revisions[f"provider:{fallback.provider.id}"] = fallback.provider.revision
+            if vision:
+                revisions[f"model:{vision.model.id}"] = vision.model.revision
+                revisions[f"provider:{vision.provider.id}"] = vision.provider.revision
             selected = (
                 request.tools
                 if request.tools is not None
@@ -312,6 +326,7 @@ class AgentCatalog(AiDatabase):
                 mcps=mcps,
                 search_mcp=search,
                 resolved=ResolvedModel(model=model, provider=provider),
+                vision=vision,
                 fallback=fallback,
                 revisions=revisions,
             )

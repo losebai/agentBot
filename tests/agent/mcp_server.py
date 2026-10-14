@@ -13,8 +13,9 @@ from starlette.routing import Route
 
 @asynccontextmanager
 async def peer(*, foreign=False, repeating=False, status=200, call_wait=None,
-               tool_name="lookup", tool_schema=None, tool_result=None, tool_names=None):
-    """可配置完整工具列表和结构化结果，支持发现数量边界及取消测试。"""
+               tool_name="lookup", tool_schema=None, tool_result=None, tool_names=None,
+               response_sse=False):
+    """支持真实 SSE 工具响应、完整工具列表、结构化结果及取消测试。"""
     queue = asyncio.Queue()
     state = {
         "calls": [], "active": 0, "entered": asyncio.Event(),
@@ -67,6 +68,11 @@ async def peer(*, foreign=False, repeating=False, status=200, call_wait=None,
         if request.url.path == "/message":
             await queue.put(message)
             return Response(status_code=202)
+        if response_sse:
+            return Response(
+                f"event: message\ndata: {json.dumps(message)}\n\n",
+                media_type="text/event-stream",
+            )
         return JSONResponse(message)
 
     async def sse(request):

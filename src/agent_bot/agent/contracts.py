@@ -83,7 +83,8 @@ class McpFields(CodedItem):
     category: Literal["general", "search"] = "general"
     transport: Literal["streamable", "sse"] = "streamable"
     endpoint: str = Field(min_length=1, max_length=512)
-    allowed_tools: tuple[str, ...] = Field(min_length=1, max_length=MAX_MCP_TOOLS)
+    # 空集合显式关闭全部工具；星号表示允许发现结果中的全部工具。
+    allowed_tools: tuple[str, ...] = Field(max_length=MAX_MCP_TOOLS)
     search_tool: str | None = Field(default=None, min_length=1, max_length=100)
     timeout_seconds: int = Field(default=10, ge=1, le=30)
     required: bool = False
@@ -207,12 +208,13 @@ class ExecutionAuthority(AiModel):
 
 
 class AgentSnapshot(AiModel):
-    """主模型和备用模型固定在同一目录事务，运行时不重读配置。"""
+    """聊天、识图和备用模型固定在同一目录事务，运行时不重读配置。"""
 
     agent: AgentView | None = None
     skills: tuple[SkillView, ...] = ()
     mcps: tuple[McpView, ...] = ()
     resolved: ResolvedModel
+    vision: ResolvedModel | None = None
     fallback: ResolvedModel | None = None
     revisions: dict[str, int] = Field(default_factory=dict)
     search_mcp: McpView | None = None
@@ -241,13 +243,14 @@ class ToolCall(AiModel):
 
 
 class ToolResult(AiModel):
-    """附件元数据单独交付界面，模型只接收有限的工具正文。"""
+    """模型接收有界正文和私有图片，界面附件独立交付，图片字节不参与序列化。"""
 
     call_id: str
     name: str
     content: str = Field(max_length=32000)
     is_error: bool = False
     attachments: tuple[MediaAssetView, ...] = Field(default=(), exclude=True)
+    images: tuple[ModelImage, ...] = Field(default=(), max_length=8, exclude=True, repr=False)
 
 
 class TurnMessage(AiModel):

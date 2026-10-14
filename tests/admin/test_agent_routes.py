@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from agent.test_service import service_for
 from agent_bot.admin.config import AdminConfig
 from agent_bot.admin.routes import install_admin
-from agent_bot.agent.contracts import AgentCreate
+from agent_bot.agent.contracts import AgentCreate, McpCreate
 
 from .test_ai_routes import HEADERS, TOKEN
 
@@ -41,6 +41,68 @@ async def test_agent_crud_requires_admin_and_cas(agent_api):
     assert (await api.patch("/api/v1/agents/1", headers=HEADERS, json=update)).status_code == 200
     assert (await api.patch("/api/v1/agents/1", headers=HEADERS, json=update)).status_code == 409
     assert (await api.get("/api/v1/agents/1", headers=HEADERS)).json()["tools"] == []
+
+
+async def test_mcp_tool_discovery_requires_admin_and_does_not_change_whitelist(agent_api):
+    """读取完整工具目录不执行工具、不启用停用服务，也不改写已保存的工具集合。"""
+    from agent.mcp_server import peer
+
+    api, _, runtime = agent_api
+    async with peer(tool_names=["Snapshot", "Click"]) as (url, state):
+        server = await runtime.agent_service.catalog.create_mcp(McpCreate(
+            code="windows", name="Windows", endpoint=url + "/mcp", enabled=False,
+            allowed_tools=("Snapshot",),
+        ))
+        path = f"/api/v1/mcp-servers/{server.id}/tools"
+        assert (await api.get(path)).status_code == 401
+        assert state["calls"] == []
+        response = await api.get(path, headers=HEADERS)
+        assert response.status_code == 200
+        assert {tool["name"] for tool in response.json()} == {"Snapshot", "Click"}
+        saved = await runtime.agent_service.catalog.get_mcp(server.id)
+        assert saved.allowed_tools == ("Snapshot",) and not saved.enabled
+        assert saved.revision == server.revision
+        assert "tools/call" not in state["calls"]
+
+
+async def test_mcp_all_tools_can_be_disabled_without_connecting(agent_api):
+    """空集合表示关闭全部工具，保留服务配置，并允许重新获取服务端工具。"""
+    from agent.mcp_server import peer
+    from agent_bot.agent.mcp.client import McpConnector
+    from agent_bot.agent.mcp.credentials import McpCredentials
+
+    api, _, runtime = agent_api
+    async with peer() as (url, state):
+        server = await runtime.agent_service.catalog.create_mcp(McpCreate(
+            code="windows", name="Windows", endpoint=url + "/mcp", enabled=True,
+            allowed_tools=("*",), required=True,
+        ))
+        response = await api.patch(f"/api/v1/mcp-servers/{server.id}", headers=HEADERS, json={
+            "expected_revision": server.revision, "allowed_tools": [],
+        })
+        assert response.status_code == 200 and response.json()["allowed_tools"] == []
+        saved = await runtime.agent_service.catalog.get_mcp(server.id)
+        async with McpConnector(McpCredentials()).open((saved,), remaining=lambda: 5) as conn:
+            assert conn.tools == () and conn.warnings == ()
+        assert state["calls"] == []
+        tools = await api.get(f"/api/v1/mcp-servers/{server.id}/tools", headers=HEADERS)
+        assert tools.status_code == 200 and tools.json()[0]["name"] == "lookup"
+
+
+async def test_mcp_management_can_list_more_than_execution_tool_limit(agent_api):
+    """管理目录允许读取超过 32 项的完整工具集，用户才能选择执行预算内的工具。"""
+    from agent.mcp_server import peer
+
+    api, _, runtime = agent_api
+    names = [f"tool_{index}" for index in range(40)]
+    async with peer(tool_names=names) as (url, state):
+        server = await runtime.agent_service.catalog.create_mcp(McpCreate(
+            code="many", name="工具目录", endpoint=url + "/mcp", allowed_tools=("tool_0",),
+        ))
+        response = await api.get(f"/api/v1/mcp-servers/{server.id}/tools", headers=HEADERS)
+        assert response.status_code == 200
+        assert [tool["name"] for tool in response.json()] == names
+        assert "tools/call" not in state["calls"]
 
 
 @pytest.mark.parametrize(

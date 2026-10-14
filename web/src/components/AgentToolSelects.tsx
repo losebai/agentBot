@@ -14,7 +14,7 @@ const builtinTools = [
   ['tts_generate', '语音生成'], ['job', '后台任务（QQ）'],
 ];
 
-/** 每次打开编辑框读取完整 MCP 目录，工具选项来自内置目录及已选 MCP 白名单。 */
+/** 读取完整 MCP 目录以关联服务；远端工具随服务自动开放，内置工具单独选择。 */
 export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsChange }: {
   token: string; tools: string[]; mcpIds: number[];
   onToolsChange: (tools: string[]) => void; onMcpsChange: (ids: number[]) => void;
@@ -49,13 +49,7 @@ export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsCh
   const general = servers.filter(server => server.category === 'general');
   const selected = general.filter(server => mcpIds.includes(server.id));
   const toolOptions = new Map(builtinTools.map(([value, name]) => [value, { value, label: name + ' · ' + value }]));
-  for (const server of selected) {
-    for (const name of server.allowed_tools) {
-      // 通配符是 MCP 白名单规则，不是可以传给 Agent 的工具名称。
-      if (name !== '*' && !toolOptions.has(name)) toolOptions.set(name, { value: name, label: name + ' · ' + server.name });
-    }
-  }
-  // 不因目录缺项或取消 MCP 关联静默修改已有工具授权，由用户明确移除。
+  // 保留历史手动配置，关联 MCP 的新工具由服务端发现，不要求重复勾选。
   for (const name of tools) if (!toolOptions.has(name)) toolOptions.set(name, { value: name, label: name + '（原有配置）' });
   const mcpOptions = general.map(server => ({
     value: server.id, label: server.name + ' · ' + server.code + (server.enabled ? '' : '（停用）'),
@@ -77,7 +71,7 @@ export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsCh
     <Select id="agent-tools-select" aria-label="允许工具" mode="multiple" showSearch allowClear
       value={tools} options={Array.from(toolOptions.values())} optionFilterProp="label"
       placeholder="搜索并选择工具" style={{ width: '100%' }} onChange={onToolsChange} />
-    <p>工具来自内置目录和所选 MCP 的白名单。QQ 工具仍需当前会话授权。</p>
-    {selected.some(server => server.allowed_tools.includes('*')) && <p>所选 MCP 使用通配符白名单；如需选择其中的工具，请先在 MCP 管理中填写具体工具名称。</p>}
+    <p>此处选择内置工具，QQ 工具仍需当前会话授权。已关联 MCP 的工具自动可用，无需在此逐个选择；具体范围由 MCP 服务白名单决定。</p>
+    {selected.some(server => server.allowed_tools.includes('*')) && <p>白名单为 * 时自动使用服务返回的全部工具。</p>}
   </>;
 }

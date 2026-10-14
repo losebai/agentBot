@@ -6,6 +6,29 @@
 
 普通文本和 Agent 的模型调用统一通过 LangChain，显式支持 Chat Completions、Responses 和 Ollama 三种协议。Agent 由 LangGraph 编排模型调用、整批工具校验、顺序执行和收尾回答；业务工具通过 StructuredTool 接入，继续使用项目的 QQ 权限、MCP 会话、媒体作用域、总超时及取消机制。模型地址和凭据来自数据库快照，SDK 不自动重试或切换协议，外部 LangSmith tracing 在调用期间关闭。依赖由 `uv.lock` 固定，更新后重启服务加载新执行路径。
 
+## Windows 一键安装
+
+适用于 Windows 10/11 x64，无需安装 Python、uv 或 Node.js。
+
+**PowerShell：**
+
+```powershell
+irm https://public.loserbai.cn/agentbot/install.ps1 | iex
+```
+
+**CMD：**
+
+```cmd
+curl -fsSL -o "%TEMP%\agentbot-install.bat" https://public.loserbai.cn/agentbot/install.bat && "%TEMP%\agentbot-install.bat"
+```
+
+脚本下载当前 Windows 安装器并校验 SHA256，默认安装到
+`%LOCALAPPDATA%\Programs\AgentBot`，无需管理员权限。升级保留已有配置、数据库与媒体。
+
+安装完成后，从桌面或开始菜单打开 `AgentBot`。首次启动自动生成配置和本地 SQLite 数据库，
+进入管理页面后添加模型供应商和机器人接入地址。桌面运行需要 WebView2 Runtime；
+运行要求、配置和排查方法见 [Windows 桌面版说明](WINDOWS_README.md)。
+
 ## 项目结构
 
 ```text
@@ -30,7 +53,7 @@ docs/               设计文档
 
 Python 源码平铺在 `src/`，通过构建配置和开发安装钩子映射为 `agent_bot` 包。代码导入使用 `agent_bot.*`，NoneBot 插件路径为 `agent_bot.plugin`。请通过 `uv sync` 安装项目，再使用 `agent-bot` 或 `python -m agent_bot` 入口。
 
-## 环境要求
+## 源码运行与构建环境
 
 - Python 3.12 和 uv。
 - 默认内置 SQLite 保存运行配置、记忆、业务记录和持久任务队列；MySQL、Redis 均为可选后端。
@@ -39,7 +62,7 @@ Python 源码平铺在 `src/`，通过构建配置和开发安装钩子映射为
 - 自动发言需要一个提供 `laya_predict` 的 MCP 服务，通过管理端目录登记。
 - 使用本地绘图或语音工具时，分别需要 ComfyUI 或 GPT-SoVITS。
 
-## 安装与首次运行
+## 源码安装与首次运行
 
 以下命令均在仓库根目录执行。
 
@@ -182,9 +205,13 @@ QQ Agent 执行超时或工具会话过期时，已有非空正文会直接投�
 
 1. 完成供应商和模型登记，选择支持原生工具调用的模型。
 2. 按需在“MCP 服务”登记 Streamable HTTP 或 SSE 地址、工具白名单和访问令牌。网页搜索使用 `search` 分类，填写搜索工具名称，并在“机器人配置 → Agent 运行配置”设置 `chat_python_search_mcp_code`；`read_url` 只读取公网网页。
-3. 按需创建 Skill，再创建 Agent，选择模型、工具和 Skill。Agent 可关联最多 3 个通用 MCP 服务，白名单筛选后所有服务合计最多 32 个 MCP 工具，超限时明确报错；工具轮次预算为 1–5，Skill 所需工具也必须在 Agent 中授权。
+3. 按需创建 Skill，再创建 Agent，选择模型、内置工具和 Skill。Agent 可关联最多 3 个通用 MCP 服务，连接后自动向模型提供服务白名单内的工具，无需在 Agent 中逐个勾选；MCP 白名单为 `*` 时提供服务返回的全部工具。白名单筛选后所有服务合计最多 32 个 MCP 工具，超限时明确报错；工具轮次预算为 1–5，Skill 所需的内置工具也必须在 Agent 中授权。
 4. 在“对话测试 → Agent 对话”选择 Agent；执行步骤和结果可在“会话记录 → Agent 运行记录”查看。
 5. 在“机器人配置 → Agent 运行配置”设置默认 Agent 预设代码 `chat_python_agent_code`、工具轮次、通用 MCP 服务 `chat_mcp_services`、联网搜索和群成员 @ 工具授权。Agent 管理页只维护预设，运行字段集中在机器人配置；保存沿用配置版本校验和热刷新，页签切换保留草稿。预设代码留空时仍走 Agent，使用当前 Chat 模型、提示词和预算。旧 `chat_agent_enabled` 开关已移除，数据库中的历史值不再生效，下次保存配置时清理；不需要 SQL 结构迁移。每个 MCP 服务独立保存地址与令牌，编辑令牌留空保留、明确清除才删除，保存后新请求立即使用新配置。
+
+在 MCP 服务编辑页点击“获取全部工具”，可读取已保存连接的完整工具列表并逐项启用、关闭，也可启用全部或关闭全部。开关修改在“保存 MCP”后更新工具白名单，空集合表示关闭全部工具，执行时不再连接该服务；获取列表本身不会执行工具或修改配置。搜索服务必须保留已指定的搜索工具。新增服务或修改连接地址、协议、令牌后，先保存再获取列表。
+
+Windows MCP 等服务返回的截图会经过真实图片校验，并作为私有图像观察传入后续 LangChain 模型轮次；图片字节不写入工具步骤或日志。工具首次返回图片时使用 Agent 已配置的图片理解模型；未配置时要求当前模型具备识图能力，不会自行选择其他模型。响应传输预算包含图片的 base64 编码，单图、总图片量和模型上下文仍沿用现有媒体限制。
 
 “Agent 管理 → 编辑 → 模型路由”分别配置聊天模型、图片理解模型和错误转发模型。纯文本走聊天模型；QQ 当前消息或引用消息携图、管理对话上传图片时走图片理解模型。图片模型留空时沿用聊天模型，所选模型仍必须在供应商页面显式启用图片理解能力。Agent 路由优先于机器人全局模型别名；不按模型名称推断能力。
 
@@ -275,6 +302,8 @@ uv run pytest -m "not e2e" -k "not database_onebot_token_reaches_adapter_without
 测试使用 Fake/Mock，不连接 QQ、不调用付费模型或生产服务。Windows 事件循环需要本机 socketpair，因此允许 loopback。命令排除了会清空真实 MySQL 配置表的联调测试；完整覆盖率门槛为 80%。文档修改只需核对内容、命令和路径。
 
 ## 构建与安装发布包
+
+直接安装桌面版请使用上方的 [Windows 一键安装](#windows-一键安装)。以下说明从源码构建发布包。
 
 Windows 独立桌面版可执行 `powershell -ExecutionPolicy Bypass -File tools/build_windows.ps1`。
 构建后分发整个 `dist/windows/AgentBot` 目录，双击 `AgentBot.exe` 打开内嵌管理界面；

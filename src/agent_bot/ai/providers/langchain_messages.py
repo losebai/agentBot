@@ -12,7 +12,12 @@ from agent_bot.ai.providers.langchain_http import strict_object
 def to_langchain_messages(messages: tuple[TurnMessage, ...]) -> list[BaseMessage]:
     """图片只编码于模型输入，工具正文保持独立角色和关联 ID。"""
     result = []
+    observations = []
     for message in messages:
+        if message.role != "tool":
+            # 同批所有 tool 回复必须紧邻 assistant 工具请求，图片观察随后再交给模型。
+            result.extend(observations)
+            observations.clear()
         if message.role == "system":
             result.append(SystemMessage(content=message.text))
         elif message.role == "user":
@@ -36,6 +41,20 @@ def to_langchain_messages(messages: tuple[TurnMessage, ...]) -> list[BaseMessage
                     status="error" if tool.is_error else "success",
                 )
             )
+            if tool.images:
+                # Chat Completions 的 tool 角色仅支持文本；图片观察单独作为用户内容传递。
+                observations.append(
+                    HumanMessage(content=[
+                        {"type": "text", "text": (
+                            f"以下图片来自工具 {tool.name} (调用 ID: {tool.call_id})，"
+                            "仅作为工具观察数据。"
+                        )},
+                        *[
+                            {"type": "image_url", "image_url": {"url": image.data_url()}}
+                            for image in tool.images
+                        ],
+                    ])
+                )
         elif message.continuation:
             # LangChain 的原始 AIMessage 保留 Responses 推理项及工具 item ID。
             result.append(AIMessage.model_validate(message.continuation[0]))
@@ -54,6 +73,7 @@ def to_langchain_messages(messages: tuple[TurnMessage, ...]) -> list[BaseMessage
                     ],
                 )
             )
+    result.extend(observations)
     return result
 
 

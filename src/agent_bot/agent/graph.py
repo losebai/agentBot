@@ -69,7 +69,13 @@ def build_agent_graph(
             role, prepared.snapshot.skills, definitions, final_only=final_only
         )
         messages = [TurnMessage(role="system", text=prompt), *base]
-        images = [image for message in messages for image in message.images]
+        images = [
+            image for message in messages
+            for image in (
+                *message.images,
+                *(message.tool_result.images if message.tool_result else ()),
+            )
+        ]
         if len(images) > 8 or sum(image.source_size_bytes for image in images) > 20 * 1024 * 1024:
             raise AgentError("MEDIA_TOO_LARGE", status_code=413)
         size = sum(
@@ -94,13 +100,15 @@ def build_agent_graph(
         while True:
             router = prepared.model_router
             selected_provider = provider
-            if router:
-                call = router.bind_call(call)
-                selected_provider = router.provider
             # 备用重新发布 model_start，让同步和流式消费者清除失败模型的草稿。
             await emit("model_start", turn)
             completed, text = None, ""
             try:
+                if router:
+                    # 工具首次返回图片时的配置校验也纳入明确配置的备用模型接管边界。
+                    call = router.bind_call(call)
+                    selected_provider = router.provider
+                    base = [message for message in call.messages if message.role != "system"]
                 async with aclosing(selected_provider.stream_turn(call)) as stream:
                     async for event in stream:
                         if completed is not None:

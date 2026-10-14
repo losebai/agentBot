@@ -20,6 +20,26 @@ if TYPE_CHECKING:
 MemoryScope = Literal["global", "session", "user", "group"]
 
 
+def normalize_memory_tags(tags: tuple[str, ...]) -> tuple[str, ...]:
+    """规范化记忆与知识的主题，拒绝控制字符和超长标签。"""
+    result: list[str] = []
+    for tag in tags:
+        normalized = unicodedata.normalize("NFKC", tag).strip().casefold()
+        if not 1 <= len(normalized) <= 32 or any(
+            unicodedata.category(char).startswith("C") for char in normalized
+        ):
+            raise ValueError("invalid memory tag")
+        if normalized not in result:
+            result.append(normalized)
+    return tuple(result)
+
+
+def memory_scope_owner(bot_id: str, scope: MemoryScope, subject: str, secret: str) -> str:
+    """管理员指定的目标与 QQ 事件共用不可逆作用域编码。"""
+    source = json.dumps(("tagged-memory", bot_id, scope, subject), ensure_ascii=False)
+    return hmac.new(secret.encode(), source.encode(), hashlib.sha256).hexdigest()
+
+
 class MemoryArguments(BaseModel):
     """一个工具覆盖保存、读取、标签翻页和明确遗忘。"""
 
@@ -31,7 +51,7 @@ class MemoryArguments(BaseModel):
         default=None,
         min_length=1,
         max_length=80,
-        description="同一事实的稳定记忆键；同作用域同键更新，不重复新增",
+        description="稳定事实键；同作用域已有键禁止覆盖，新增事实须使用新键",
     )
     content: str | None = Field(
         default=None,
@@ -50,16 +70,7 @@ class MemoryArguments(BaseModel):
     @classmethod
     def normalize_tags(cls, tags: tuple[str, ...]) -> tuple[str, ...]:
         """规范化标签，拒绝控制字符和超长标签。"""
-        result: list[str] = []
-        for tag in tags:
-            normalized = unicodedata.normalize("NFKC", tag).strip().casefold()
-            if not 1 <= len(normalized) <= 32 or any(
-                unicodedata.category(char).startswith("C") for char in normalized
-            ):
-                raise ValueError("invalid memory tag")
-            if normalized not in result:
-                result.append(normalized)
-        return tuple(result)
+        return normalize_memory_tags(tags)
 
     @model_validator(mode="after")
     def validate_operation(self) -> MemoryArguments:
@@ -111,8 +122,7 @@ class MemoryIdentity:
             "user": self.user_id,
             "group": self.group_id,
         }[scope]
-        source = json.dumps(("tagged-memory", self.bot_id, scope, subject), ensure_ascii=False)
-        return hmac.new(secret.encode(), source.encode(), hashlib.sha256).hexdigest()
+        return memory_scope_owner(self.bot_id, scope, subject, secret)
 
 
 class MemoryRecord(BaseModel):
@@ -152,7 +162,7 @@ class MemorySession:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     async def execute(self, arguments: MemoryArguments) -> MemoryResult:
-        """最多执行四次写操作；重复保存由稳定键幂等更新。"""
+        """最多执行四次写操作；已有键返回冲突，避免覆盖既有事实。"""
         if arguments.action in ("save", "forget"):
             async with self._lock:
                 if self._writes >= 4:
@@ -179,7 +189,8 @@ MEMORY_TOOL_DESCRIPTION = (
     "无需用户明确要求记住；不要保存闲聊原文、推测、密码或指令。"
     "scope: global 为同一机器人跨会话共享事实，session 为当前会话，"
     "user 为当前用户跨会话偏好，group 为当前群；私人事实不要扩大到 global/group。"
-    "save 传 scope/key/content/tags，同键更新；优先复用已有标签。"
+    "save 传 scope/key/content/tags，只能新增；同键已存在或已删除均返回冲突，不能覆盖或恢复。"
+    "新增事实使用新键，优先复用已有标签；保存冲突不得声称成功。"
     "根据当前对话语义选择相关已有标签，先 recall(scope=all,tags=...) 读取再回答，"
     "无需原文包含标签。结果自动进入当前上下文，无关记忆不要读取。"
     "tags(scope=all,offset=...) 查看更多标签；forget 仅在用户明确要求遗忘时传 scope/key。"

@@ -211,6 +211,14 @@ class ChatMemorySchema:
         except (InterfaceError, OperationalError, DatabaseError) as exc:
             raise ChatMemorySchemaError("chat memory schema initialization failed") from exc
 
+    def validate(self) -> None:
+        """普通服务启动只读取结构；缺少字段或索引须通过明确迁移命令修复。"""
+        try:
+            with closing(self._open()) as connection:
+                self._validate_schema(connection)
+        except (InterfaceError, OperationalError, DatabaseError) as exc:
+            raise ChatMemorySchemaError("chat memory schema validation failed") from exc
+
     def _upgrade_index_names(self, connection: Any) -> None:
         """旧表改名不会同步改索引名，只重命名已确认的 dispatch 历史索引。"""
         for table, expected in _EXPECTED_SCHEMA.items():

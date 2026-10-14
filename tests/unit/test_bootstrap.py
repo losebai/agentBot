@@ -384,5 +384,5 @@ def test_runtime_config_storage_contract_covers_all_plugin_and_nonebot_fields() 
     plugin_fields = set(RuntimeConfig.__mro__[1].model_fields)
 
     assert set(RuntimeConfig.model_fields) == (
-        plugin_fields | expected_nonebot_fields | expected_onebot_fields
+        plugin_fields | expected_nonebot_fields | expected_onebot_fields | {"app_enabled_plugins"}
     )

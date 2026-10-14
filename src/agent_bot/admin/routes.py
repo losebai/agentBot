@@ -19,6 +19,7 @@ from agent_bot.admin.chat import ChatProbe
 from agent_bot.admin.config import AdminConfig
 from agent_bot.admin.errors import classify_api_error
 from agent_bot.admin.http import ManagementMiddleware
+from agent_bot.admin.knowledge_routes import install_knowledge_routes
 from agent_bot.admin.media_routes import install_media_routes
 from agent_bot.admin.models import (
     ApiError,
@@ -30,6 +31,7 @@ from agent_bot.admin.models import (
     SettingsSnapshot,
     SettingsUpdate,
 )
+from agent_bot.admin.plugin_routes import install_plugin_routes
 from agent_bot.admin.settings import SettingsService
 from agent_bot.admin.streaming import ManagedStreamingResponse
 from agent_bot.admin.workflow_routes import install_workflow_routes
@@ -174,6 +176,8 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         )
 
     install_ai_routes(router, runtime)
+    install_knowledge_routes(router, runtime)
+    install_plugin_routes(router, runtime, manager)
     install_agent_routes(router, runtime)
     install_media_routes(router, runtime)
     install_workflow_routes(router, runtime, manager)

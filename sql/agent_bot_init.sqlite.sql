@@ -825,3 +825,25 @@ CREATE TABLE IF NOT EXISTS chat_tool_operations (
 -- 按命名空间清理已过期的幂等记录。
 CREATE INDEX IF NOT EXISTS chat_tool_operations_expiry
     ON chat_tool_operations(namespace, expires_at);
+
+-- 标签知识库增量：既有 SQLite 部署显式执行，可重复执行。
+-- 在当前业务结构之后执行，仅新增知识正文和标签表，不改写记忆、配置或密钥。
+-- 两表关联由应用事务维护，逻辑删除保留正文和标签，不添加外键。
+CREATE TABLE IF NOT EXISTS chat_knowledge (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, -- 只新增知识条目的标识
+    title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 200), -- 不可编辑的知识标题
+    content TEXT NOT NULL CHECK(length(content) BETWEEN 1 AND 16000), -- 不可编辑的知识正文
+    is_deleted INTEGER NOT NULL DEFAULT 0 CHECK(is_deleted IN (0, 1)), -- 删除保留历史正文
+    create_time TEXT NOT NULL -- 知识创建时间
+);
+-- 按有效状态与标识进行稳定分页。
+CREATE INDEX IF NOT EXISTS idx_knowledge_active_id ON chat_knowledge(is_deleted, id);
+
+CREATE TABLE IF NOT EXISTS chat_knowledge_tag (
+    knowledge_id INTEGER NOT NULL, -- 由应用事务维护的知识关联
+    tag TEXT NOT NULL CHECK(length(tag) BETWEEN 1 AND 32), -- 规范化主题标签
+    PRIMARY KEY (knowledge_id, tag) -- 同条目同主题只关联一次
+);
+-- 按标签筛选知识并统计有效条目。
+CREATE INDEX IF NOT EXISTS idx_knowledge_tag_lookup ON chat_knowledge_tag(tag, knowledge_id);
+

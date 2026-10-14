@@ -90,7 +90,7 @@ function patchValue(field: SettingField, value: DraftValue): JsonValue {
 }
 
 /** 按用途管理机器人配置，跨分类保留草稿并共用版本校验与保存操作。 */
-export function Settings({ token }: { token: string }) {
+export function Settings({ token, onPlugins }: { token: string; onPlugins?: () => void }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [snapshot, setSnapshot] = useState<SettingsSnapshot>();
   const [draft, setDraft] = useState<Record<string, DraftValue>>({});
@@ -144,7 +144,7 @@ export function Settings({ token }: { token: string }) {
     finally { setSaving(false); }
   }
 
-  const fields = snapshot?.fields.filter(field => fieldCategory(field) === category
+  const fields = snapshot?.fields.filter(field => field.name !== 'app_enabled_plugins' && fieldCategory(field) === category
     && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase()))
     // 名称是群聊触发入口，在 QQ 分类中优先展示。
     .sort((left, right) => Number(right.name === 'nickname') - Number(left.name === 'nickname')) || [];
@@ -182,6 +182,7 @@ export function Settings({ token }: { token: string }) {
           ? <ComfyWorkflows token={token} disabled={loading || saving || settingsRefreshing}
             onSettingsChanged={workflowSettingsChanged} onBusyChange={setWorkflowBusy} />
           : <>
+    {category === 'basic' && onPlugins && <Button type="link" onClick={onPlugins}>管理内置插件</Button>}
     {fields.some(field => field.scope === 'static') && <Alert message="启动配置保存后需手动“服务→重启后端”生效；环境变量覆盖或缺少启动文件的字段只读。" type="info" showIcon className="notice" />}
     <Input prefix={<SearchOutlined />} placeholder="搜索设置名称或描述" aria-label="搜索配置" value={filter} onChange={event => setFilter(event.target.value)} className="settings-search" />
     {loading ? <div className="loading"><Spin /></div> : <div className="settings-card">

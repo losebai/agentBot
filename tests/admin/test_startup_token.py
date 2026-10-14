@@ -192,6 +192,21 @@ def test_database_failure_rolls_back_file(admin_store, admin_runtime, startup_to
     assert admin_store.load_revision() == 1
 
 
+def test_plugin_and_token_update_conflict_rolls_back_both_sources(
+    admin_store, admin_runtime, startup_tokens,
+):
+    """同次编辑插件选择和静态 Token 时文件冲突不得提前提交运行配置。"""
+    original = startup_tokens.path.read_bytes()
+    update = SettingsUpdate(expected_revision=1, startup_revision="0" * 64, values={
+        "app_enabled_plugins": [], "onebot_v11_access_token": NEW_TOKEN,
+    })
+    with pytest.raises(SettingsRevisionConflictError):
+        manager(admin_store, admin_runtime, startup_tokens).update(update)
+    assert startup_tokens.path.read_bytes() == original
+    assert admin_store.load_revision() == 1
+    assert admin_store.load().config.app_enabled_plugins == ["qqbot"]
+
+
 def test_readonly_startup_source_cannot_be_bypassed(admin_store, admin_runtime, startup_tokens):
     """环境覆盖或不可编辑文件不能借直接 HTTP 候选值绕过只读边界。"""
     startup_tokens.editable_names = frozenset()

@@ -1,8 +1,18 @@
 # agentBot
 
+应用支持启动加载的内置插件，QQ 接入作为 `qqbot` 插件默认启用。在管理页面的“插件管理”保存启停选择后，使用已有的“服务 → 重启后端”或手动重启服务生效。选择保存在所选运行配置数据库的 `app_enabled_plugins`，不通过环境变量覆盖。
+
+停用 QQBot 后，管理页面、AI 对话、Agent、会话和媒体功能继续运行；QQ 接入、消息队列、自动发言与 QQ 任务结果投递停止加载。公共 Python 任务执行仍可运行，待投递结果保留到重新启用 QQBot。插件列表为空时只启动公共服务。
+
+新增内置插件需实现 `agent_bot.plugins.contracts.ApplicationPlugin`，提供元数据及 `prepare/start/stop/is_ready/bots`，并显式登记到 `plugins/catalog.py`。准备阶段不联网，异步启动分配资源，停止必须回收部分启动资源；插件不得关闭宿主提供的公共数据库池或媒体资源。本版本只支持内置注册，不支持第三方安装或热加载。
+
 基于 Python、NoneBot 和 OneBot V11 的机器人服务，提供 React 浏览器管理界面。支持普通对话、多轮 Agent、Skill、MCP、图片理解、图片与对话音频生成，以及 ComfyUI 和 GPT-SoVITS 工具。
 
 管理界面集中提供机器人配置、供应商和模型管理、Agent/Skill/MCP 配置、对话测试及调用记录。当前使用纯 Python 服务，支持普通对话、Agent、媒体、一次性 Job 和自动发言决策。视频、通用 Laya 指令和 SolonCode 暂未迁移。
+
+“标签与知识库”提供知识条目及标签记忆的分页、关键词搜索、标签筛选、详情、新增和逻辑删除。两类记录均不能编辑；同作用域同记忆键（含已删除记录）不能覆盖或恢复，新增事实须使用新键。手工新增记忆可选择已有匿名作用域，或填写机器人及用户、群聊、会话目标；QQ 召回继续按原身份隔离。
+
+知识条目是实例内共享资料，在 Agent 的“允许工具”中显式勾选 `knowledge_search` 后，可在 QQ 命名 Agent 和管理端对话中检索，并按 `【知识 #ID：标题】` 引用真实来源。首版支持手工文本录入及标签/关键词检索。既有部署先按 [SQL 使用说明](sql/README.md) 执行对应数据库的知识库增量，普通启动不升级数据库。
 
 普通文本和 Agent 的模型调用统一通过 LangChain，显式支持 Chat Completions、Responses 和 Ollama 三种协议。Agent 由 LangGraph 编排模型调用、整批工具校验、顺序执行和收尾回答；业务工具通过 StructuredTool 接入，继续使用项目的 QQ 权限、MCP 会话、媒体作用域、总超时及取消机制。模型地址和凭据来自数据库快照，SDK 不自动重试或切换协议，外部 LangSmith tracing 在调用期间关闭。依赖由 `uv.lock` 固定，更新后重启服务加载新执行路径。
 

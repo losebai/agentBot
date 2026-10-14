@@ -1,7 +1,7 @@
 # SQL 使用说明
 
 新安装按 `CHAT_DB_BACKEND` 选择 [MySQL 脚本](agent_bot_init.sql) 或 [SQLite 脚本](agent_bot_init.sqlite.sql)。MySQL 先创建独立数据库，SQLite 文件由显式初始化命令创建，
-该文件按依赖顺序创建全部 27 张表，覆盖运行配置、群成员、聊天记忆、标签记忆、
+该文件按依赖顺序创建完整业务表，覆盖运行配置、群成员、聊天记忆、标签记忆、共享知识、
 工作流、Python AI、Agent、Skill、MCP、媒体、定时任务和自动发言决策模块。
 聊天相关表和配置键使用 `chat_*`，环境变量使用 `CHAT_*`。
 
@@ -38,3 +38,9 @@ wheel 兼容保留三份自有分阶段资源与
 旧 `dispatch_chat_*` 表改名为 `chat_*` 后，MySQL 会保留原索引名。执行 [2026-10-13-chat-index-names.sql](2026-10-13-chat-index-names.sql) 将记忆、群成员和工作流的索引原位改为当前名称。脚本可重复执行，新旧索引同时存在时不制造名称冲突，不改变字段、唯一性和历史记录。记忆初始化也兼容已确认的旧索引名称；缺少其他必需结构时仍明确报错。
 
 SQLite 脚本使用中文行注释说明表、字段、索引和外键，替代 SQLite 不支持的 `COMMENT` 子句。JSON 字段通过 `json_valid` 约束，外键在每个连接启用；业务初始化使用事务，重复执行不改写已有数据。MySQL 增量 SQL 不可在 SQLite 执行。
+
+## 标签知识库升级
+
+既有 MySQL 部署显式执行 [2026-10-14-tags-knowledge-memory.sql](2026-10-14-tags-knowledge-memory.sql)，SQLite 部署执行 [2026-10-14-tags-knowledge-memory.sqlite.sql](2026-10-14-tags-knowledge-memory.sqlite.sql)。增量只新增知识正文与标签关联表，可重复执行，不删除或重建既有配置、记忆和密钥。新安装使用对应完整初始化脚本；普通启动不会自动升级，未启用知识工具的聊天不依赖这两张表。
+
+标签记忆从本版本起只允许新增、查看和逻辑删除。同一作用域已有键会返回冲突，包括已删除键，不再覆盖正文、替换标签或恢复旧记录；新增事实需使用新键。此行为变化不修改既有记忆字段、唯一约束或历史内容。

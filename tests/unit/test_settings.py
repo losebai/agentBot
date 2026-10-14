@@ -24,6 +24,7 @@ from agent_bot.settings import (
 )
 
 EXPECTED_RUNTIME_FIELDS = {
+    "app_enabled_plugins",
     "chat_python_agent_code",
     "chat_python_search_mcp_code",
     "chat_model",
@@ -173,6 +174,7 @@ def database_params() -> DatabaseParams:
 def runtime_config() -> RuntimeConfig:
     """构造覆盖所有运行字段的配置，媒体开关也必须参与持久化。"""
     values: dict[str, object] = {
+        "app_enabled_plugins": ["qqbot"],
         "chat_python_agent_code": "helper",
         "chat_python_search_mcp_code": "search",
         "chat_model": "private-model-db-snapshot-test",
@@ -662,7 +664,7 @@ def test_runtime_config_storage_contract_covers_all_plugin_and_nonebot_fields() 
     plugin_fields = set(RuntimeConfig.__mro__[1].model_fields)
 
     assert set(RuntimeConfig.model_fields) == (
-        plugin_fields | expected_nonebot_fields | expected_onebot_fields
+        plugin_fields | expected_nonebot_fields | expected_onebot_fields | {"app_enabled_plugins"}
     )
 
 

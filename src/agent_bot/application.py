@@ -5,18 +5,17 @@ from pathlib import Path
 
 import nonebot
 from fastapi import FastAPI
-from nonebot.adapters.onebot.v11 import Adapter
 
+from agent_bot.admin.application_runtime import ApplicationRuntimeProvider
 from agent_bot.admin.config import AdminConfig
 from agent_bot.admin.models import STARTUP_SETTING_NAMES
 from agent_bot.admin.routes import install_admin
-from agent_bot.admin.runtime import PluginRuntimeProvider
 from agent_bot.bootstrap import (
     inject_runtime_config,
     nonebot_init_kwargs,
     scrub_runtime_environment,
-    validate_onebot_driver,
 )
+from agent_bot.core.application import assemble_runtime
 from agent_bot.settings import VersionedSettings
 from agent_bot.startup_settings import StartupSettingsStore
 
@@ -30,18 +29,16 @@ def create_application(stored: VersionedSettings, admin: AdminConfig) -> FastAPI
     scrub_runtime_environment()
     nonebot.init(_env_file=(os.devnull,), **nonebot_init_kwargs(stored.config))
     driver = nonebot.get_driver()
-    validate_onebot_driver(driver, stored.config)
     inject_runtime_config(driver.config, stored.config, revision=stored.revision)
-    driver.register_adapter(Adapter)
     app = driver.server_app
     if not isinstance(app, FastAPI):
         raise ValueError("agentBot management requires a FastAPI application")
-    if nonebot.load_plugin("agent_bot.plugin") is None:
-        raise RuntimeError("failed to load the Chat plugin")
-    from agent_bot.plugin import application as plugin
-
-    install_admin(app, plugin.get_settings_store(),
-                  PluginRuntimeProvider(plugin, startup_settings_store=startup), admin)
+    runtime, plugins = assemble_runtime(stored, driver, app)
+    app.state.runtime, app.state.plugins = runtime, plugins
+    install_admin(
+        app, runtime.settings_store,
+        ApplicationRuntimeProvider(runtime, plugins, startup_settings_store=startup), admin,
+    )
     from agent_bot.static import install_static
 
     install_static(app)

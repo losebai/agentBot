@@ -84,6 +84,7 @@ from agent_bot.plugin.runtime import (
     close_runtime_state,
     effective_runtime_config,
 )
+from agent_bot.plugins.qqbot.binding import current_context
 from agent_bot.runtime_reload import SettingsReloader
 from agent_bot.services.chat import ChatService
 from agent_bot.services.chat_tools import build_chat_tool_registry
@@ -135,26 +136,41 @@ def _log_auto_speak_error(error_type: str) -> None:
     logger.warning("自动发言本轮失败：{}", error_type)
 
 
-_database_params = database_params(load_bootstrap_config())
+_context = current_context()
+_database_params = (_context.runtime.database_params if _context is not None
+                    else database_params(load_bootstrap_config()))
+
+
+def _legacy_startup(action):
+    """只有独立 NoneBot 兼容入口注册回调，统一宿主直接调用生命周期。"""
+    return get_driver().on_startup(action) if _context is None else action
+
+
+def _legacy_shutdown(action):
+    """宿主插件通过管理器关闭，不注册第二个关闭所有者。"""
+    return get_driver().on_shutdown(action) if _context is None else action
+
 _queue_bootstrap = load_queue_bootstrap_config()
 _redis_bootstrap = load_redis_bootstrap_config() if _queue_bootstrap.backend == "redis" else None
 plugin_config = get_plugin_config(RuntimeConfig)
-_database_pool = create_database_pool(
+_database_pool = (_context.runtime.database_pool if _context is not None else create_database_pool(
     _database_params,
     max_size=plugin_config.chat_db_pool_size,
     acquire_timeout_seconds=plugin_config.chat_db_timeout_seconds,
     connect_timeout_seconds=plugin_config.chat_db_timeout_seconds,
     read_timeout_seconds=plugin_config.chat_db_timeout_seconds,
     write_timeout_seconds=plugin_config.chat_db_timeout_seconds,
-)
-_settings_store = SettingsStore(
+))
+_settings_store = (_context.runtime.settings_store if _context is not None else SettingsStore(
     _database_params, connect=_database_pool.connect, static_config=plugin_config,
-)
+))
 # 媒体资源按进程持有；构造不联网、不创建目录，运行时热刷新复用同一个实例。
-_media_resources = MediaResources(MediaConfig.from_environment(), _database_params,
-                                   connect=_database_pool.connect)
+_media_resources = (_context.runtime.media_resources if _context is not None else
+                    MediaResources(MediaConfig.from_environment(), _database_params,
+                                   connect=_database_pool.connect))
 _group_member_store = GroupMemberStore(_database_params, connect=_database_pool.connect)
-_workflow_store = WorkflowStore(_database_params, connect=_database_pool.connect)
+_workflow_store = (_context.runtime.workflow_store if _context is not None else
+                   WorkflowStore(_database_params, connect=_database_pool.connect))
 _memory_schema = ChatMemorySchema(_database_params, connect=_database_pool.connect)
 _tagged_memory_store = TaggedMemoryStore(
     _database_params, connect=_database_pool.connect,
@@ -165,6 +181,7 @@ _tagged_memory_store = TaggedMemoryStore(
 def _build_runtime_state(
     config: RuntimeConfig,
     previous: _RuntimeState | None = None,
+    *, core_state=None,
 ) -> _RuntimeState:
     """使用入口依赖构建可原子替换的运行时快照。"""
 
@@ -182,6 +199,8 @@ def _build_runtime_state(
         previous=previous,
         chat_tool_bridge=ChatToolBridge(lambda: _chat_mcp_server),
         media_resources=_media_resources,
+        core_state=(core_state if core_state is not None else
+                    _context.runtime.state if _context is not None else None),
     )
 
 
@@ -231,8 +250,9 @@ def _publish_runtime_state(state: _RuntimeState) -> None:
 
 
 _reply_gateway = OneBotReplyGateway(lambda: plugin_config)
-_runtime_state = _build_runtime_state(plugin_config)
-_publish_runtime_state(_runtime_state)
+_runtime_state = _build_runtime_state(plugin_config) if _context is None else None
+if _runtime_state is not None:
+    _publish_runtime_state(_runtime_state)
 _event_context = EventContextService(
     config_provider=lambda: plugin_config,
     access_policy_provider=lambda: access_policy,
@@ -285,6 +305,11 @@ def _tool_operations() -> ToolOperationStore:
         _redis_client, key_prefix=_redis_bootstrap.key_prefix,
         ttl_seconds=plugin_config.chat_queue_result_ttl_seconds,
     )
+if _context is not None:
+    from agent_bot.agent.tools.chat import ChatToolBridge
+
+    _context.runtime.bind_chat_bridge(ChatToolBridge(lambda: _chat_mcp_server))
+
 
 
 _tool_session_manager = ChatToolSessionManager(
@@ -302,7 +327,9 @@ _tool_session_manager = ChatToolSessionManager(
     operation_store_provider=_tool_operations,
 )
 
-_runtime_gate = RuntimeLeaseGate()
+_runtime_gate = _context.runtime.gate if _context is not None else RuntimeLeaseGate()
+_channel_ready = asyncio.Event()
+_channel_closed = False
 _auto_speak_task: asyncio.Task[None] | None = None
 _ai_job_task: asyncio.Task[None] | None = None
 _ai_job_runner_task: asyncio.Task[None] | None = None
@@ -367,22 +394,43 @@ class _ConversationProcessor(ConversationQueueProcessor):
         )
 
 
-if _queue_bootstrap.backend == "sqlite":
-    from agent_bot.integrations.sqlite_queue import build_sqlite_conversation_queue
+_queue_resources = None
+_redis_client = None
+conversation_queue = None
+image_queue = None
 
-    _queue_resources = build_sqlite_conversation_queue(
-        _queue_bootstrap.sqlite_path, "chat", plugin_config, _ConversationProcessor(),
-    )
-    _redis_client = None
-else:
-    assert _redis_bootstrap is not None
-    _queue_resources = build_conversation_queue(
-        _redis_bootstrap, plugin_config, _ConversationProcessor(),
-    )
-    _redis_client = _queue_resources.redis_client
-_conversation_queue_store = _queue_resources.store
-conversation_queue = _queue_resources.queue
-image_queue = _queue_resources.image_queue
+
+def initialize_channel_runtime() -> None:
+    """公共快照已建立后分配 QQ 客户端和队列，同步准备只注册处理器。"""
+    global _runtime_state, _queue_resources, _redis_client
+    global conversation_queue, image_queue, _conversation_queue_store
+
+    if _runtime_state is None:
+        _runtime_state = _build_runtime_state(plugin_config)
+        _publish_runtime_state(_runtime_state)
+    if _queue_resources is not None:
+        return
+    if _queue_bootstrap.backend == "sqlite":
+        from agent_bot.integrations.sqlite_queue import build_sqlite_conversation_queue
+
+        _queue_resources = build_sqlite_conversation_queue(
+            _queue_bootstrap.sqlite_path, "chat", plugin_config, _ConversationProcessor(),
+        )
+        _redis_client = None
+    else:
+        assert _redis_bootstrap is not None
+        _queue_resources = build_conversation_queue(
+            _redis_bootstrap, plugin_config, _ConversationProcessor(),
+        )
+        _redis_client = _queue_resources.redis_client
+    _conversation_queue_store = _queue_resources.store
+    conversation_queue = _queue_resources.queue
+    image_queue = _queue_resources.image_queue
+
+
+if _context is None:
+    initialize_channel_runtime()
+
 
 
 def _effective_runtime_config(
@@ -412,16 +460,34 @@ def _log_pending_restart_fields(
 async def _runtime_lease():
     """登记一次运行时使用，避免与热更新交叉。"""
 
+    await wait_channel_ready()
     async with _runtime_gate.lease():
         yield
 
 
-@get_driver().on_startup
-async def initialize_chat_memory() -> None:
-    """幂等创建并严格校验持久聊天记忆表。"""
+async def wait_channel_ready() -> None:
+    """规则检查同样等待启动，防止正向连接早到事件访问未发布的权限和状态。"""
+    if _context is not None:
+        await _channel_ready.wait()
+        if _channel_closed:
+            raise RuntimeError("QQBot 已关闭")
 
-    await asyncio.to_thread(_memory_schema.initialize)
-    await asyncio.to_thread(_tagged_memory_store.initialize)
+
+def mark_channel_ready() -> None:
+    """队列和后台生产者全部启动成功后才放行启动期间到达的平台事件。"""
+    _channel_ready.set()
+
+
+@_legacy_startup
+async def initialize_chat_memory() -> None:
+    """统一服务只校验已有结构，直接加载的历史 NoneBot 入口保留原初始化契约。"""
+
+    if _context is not None:
+        await asyncio.to_thread(_memory_schema.validate)
+        await asyncio.to_thread(_tagged_memory_store.validate)
+    else:
+        await asyncio.to_thread(_memory_schema.initialize)
+        await asyncio.to_thread(_tagged_memory_store.initialize)
 
 
 async def _memory_cleanup_loop() -> None:
@@ -450,7 +516,7 @@ async def _memory_cleanup_loop() -> None:
             logger.warning("过期聊天记忆清理失败：{}", type(exc).__name__)
 
 
-@get_driver().on_startup
+@_legacy_startup
 async def start_memory_cleanup() -> None:
     """幂等启动持久记忆过期清理任务。"""
 
@@ -475,7 +541,7 @@ async def stop_memory_cleanup() -> None:
         _memory_cleanup_task = None
 
 
-@get_driver().on_startup
+@_legacy_startup
 async def initialize_workflow_catalog() -> None:
     """先增补旧表兼容列，再读取工作流或从配置目录导入全部 JSON。"""
 
@@ -490,7 +556,7 @@ async def initialize_workflow_catalog() -> None:
     await asyncio.to_thread(_workflow_store.upsert, definitions)
 
 
-@get_driver().on_startup
+@_legacy_startup
 async def start_conversation_queue() -> None:
     """启动明确选择的本地或 Redis 持久队列，不在连接失败时切换后端。"""
 
@@ -498,7 +564,7 @@ async def start_conversation_queue() -> None:
     await conversation_queue.start()
 
 
-@get_driver().on_startup
+@_legacy_startup
 async def start_chat_mcp() -> None:
     """启动已配置的聊天 MCP 服务。"""
 
@@ -506,7 +572,7 @@ async def start_chat_mcp() -> None:
         await _chat_mcp_server.start()
 
 
-@get_driver().on_startup
+@_legacy_startup
 async def start_auto_speak() -> None:
     """幂等启动自动发言后台任务。"""
 
@@ -520,7 +586,7 @@ async def start_auto_speak() -> None:
     )
 
 
-@get_driver().on_startup
+@_legacy_startup
 async def start_ai_job_polling() -> None:
     """分别启动执行与投递轮询，两者均在租约内读取最新配置。"""
     global _ai_job_task, _ai_job_runner_task
@@ -532,6 +598,8 @@ async def start_ai_job_polling() -> None:
         runtime_lease=_runtime_lease,
     )
     _ai_job_task = start_background_task(_ai_job_task, poller.run, name="chat-ai-jobs")
+    if _context is not None:
+        return
     runner = AiJobRunner(
         config_provider=lambda: plugin_config,
         client_provider=lambda: chat_service.client,
@@ -577,6 +645,9 @@ async def _close_runtime_state(state: _RuntimeState) -> None:
 async def _apply_runtime_settings(stored: VersionedSettings) -> None:
     """等待在途消息完成后，原子发布一个经过完整校验的新运行时快照。"""
 
+    if _context is not None:
+        await _context.runtime._apply_settings(stored)
+        return
     await apply_runtime_settings(
         stored,
         current_state=_runtime_state,
@@ -609,7 +680,7 @@ _initial_settings_revision = getattr(
 )
 if type(_initial_settings_revision) is not int or _initial_settings_revision < 1:
     _initial_settings_revision = 1
-_settings_reloader = SettingsReloader(
+_settings_reloader = None if _context is not None else SettingsReloader(
     _settings_store,
     initial_revision=_initial_settings_revision,
     apply=_apply_runtime_settings,
@@ -618,12 +689,14 @@ _settings_reloader = SettingsReloader(
 
 def get_runtime_state() -> _RuntimeState:
     """供 agentBot 管理层读取当前运行时；使用客户端前必须获取租约。"""
+    if _runtime_state is None:
+        raise RuntimeError("QQBot 尚未启动")
     return _runtime_state
 
 
 def get_applied_settings_revision() -> int:
     """返回已完成热更新处理的版本；启动字段的差异由管理层另外展示。"""
-    return _settings_reloader.revision
+    return _context.runtime.revision if _context is not None else _settings_reloader.revision
 
 
 def get_settings_store() -> SettingsStore:
@@ -633,7 +706,7 @@ def get_settings_store() -> SettingsStore:
 
 def acquire_runtime():
     """供管理对话测试与机器人共享热更新租约。"""
-    return _runtime_gate.lease()
+    return _runtime_lease()
 
 
 async def check_management_readiness() -> bool:
@@ -652,7 +725,7 @@ async def _settings_refresh_loop() -> None:
     await settings_refresh_loop(lambda: plugin_config, _settings_reloader)
 
 
-@get_driver().on_startup
+@_legacy_startup
 async def start_settings_refresh() -> None:
     """启动数据库配置 revision 轮询任务。"""
 
@@ -680,6 +753,7 @@ async def stop_settings_refresh() -> None:
 async def _is_authorized(event: MessageEvent) -> bool:
     """使用当前访问策略校验消息来源。"""
 
+    await wait_channel_ready()
     return await _event_context.is_authorized(event)
 
 
@@ -754,6 +828,7 @@ _KEYWORD_REPLY_STATE_KEY = "chat_keyword_at_reply"
 async def _matches_keyword_at_reply(event: MessageEvent, state: T_State) -> bool:
     """匹配群聊关键词并把固定回复写入 matcher 状态。"""
 
+    await wait_channel_ready()
     return await _message_routing.matches_keyword_reply(
         event,
         state,
@@ -764,18 +839,21 @@ async def _matches_keyword_at_reply(event: MessageEvent, state: T_State) -> bool
 async def _targets_natural_chat(event: MessageEvent) -> bool:
     """判断消息是否明确指向当前机器人。"""
 
+    await wait_channel_ready()
     return await _message_routing.targets_natural_chat(event)
 
 
 async def _accepts_natural_chat(event: MessageEvent) -> bool:
     """避免已删除的 `/chat` 入口被自然聊天兜底成普通 AI 请求。"""
 
+    await wait_channel_ready()
     return await _message_routing.accepts_natural_chat(event)
 
 
 async def _accepts_recent_group_context(event: MessageEvent) -> bool:
     """筛选仅用于记录近期上下文的普通群聊文本。"""
 
+    await wait_channel_ready()
     return await _message_routing.accepts_recent_group_context(
         event,
         target_checker=_targets_natural_chat,
@@ -957,10 +1035,28 @@ handle_naraka_command = _registered_handlers.handle_naraka_command
 handle_naraka_search_command = _registered_handlers.handle_naraka_search_command
 
 
-@get_driver().on_shutdown
+@_legacy_shutdown
 async def close_clients() -> None:
     """请求与客户端退出后关闭媒体清理和文件锁，数据库池最后关闭。"""
 
+    if _context is not None:
+        from agent_bot.core.application import close_actions
+
+        global _channel_closed
+        _channel_closed = True
+        # 部分启动失败也要唤醒早到的事件，让它们明确失败并释放适配器的任务。
+        _channel_ready.set()
+        storage = _queue_resources if _queue_bootstrap.backend == "sqlite" else _redis_client
+        await close_actions([
+            stop_auto_speak, stop_ai_job_polling, stop_memory_cleanup,
+            *([conversation_queue.stop] if conversation_queue is not None else []),
+            *([image_queue.stop] if image_queue is not None else []),
+            *([_chat_mcp_server.stop] if _chat_mcp_server is not None else []),
+            *([storage.aclose] if storage is not None else []),
+            *([lambda: _close_runtime_state(_runtime_state)]
+              if _runtime_state is not None else []),
+        ])
+        return
     await stop_ai_job_polling()
     try:
         try:
@@ -994,7 +1090,7 @@ async def close_clients() -> None:
                                     await _database_pool.aclose()
 
 
-@get_driver().on_startup
+@_legacy_startup
 async def start_media_resources() -> None:
     """可选媒体资源启动失败只影响媒体就绪，不阻断纯文本入口。"""
     await _media_resources.start()

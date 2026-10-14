@@ -1,5 +1,5 @@
 import { Alert, Button, ConfigProvider, Input, Spin } from 'antd';
-import { DashboardOutlined, LogoutOutlined, MessageOutlined, SettingOutlined, ApiOutlined, RobotOutlined, HistoryOutlined } from '@ant-design/icons';
+import { DashboardOutlined, LogoutOutlined, MessageOutlined, SettingOutlined, ApiOutlined, RobotOutlined, HistoryOutlined, TagsOutlined } from '@ant-design/icons';
 import { useEffect, useState } from 'react';
 import { ApiClient, errorMessage } from './api';
 import { Overview } from './pages/Overview';
@@ -8,6 +8,8 @@ import { Chat } from './pages/Chat';
 import { Providers } from './pages/Providers';
 import { Sessions } from './pages/Sessions';
 import { AgentManagement } from './pages/AgentManagement';
+import { Plugins } from './pages/Plugins';
+import { Knowledge } from './pages/Knowledge';
 
 // 组件库与页面采用同一套中性色；告警仍保留语义颜色，按钮不使用装饰性阴影。
 const workspaceTheme = {
@@ -30,9 +32,9 @@ const workspaceTheme = {
   },
 };
 
-const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理'};
+const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', plugins:'插件管理', chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理', knowledge:'标签与知识库'};
 
-/** 按服务端登录模式进入工作台；Agent、共享 Skill 与 MCP 使用同一导航入口。 */
+/** 按服务端登录模式进入工作台；知识与记忆使用独立入口，离开时取消页面请求。 */
 export function App() {
   // null 表示尚未登录，空字符串表示后端明确启用了免登录。
   const [token, setToken] = useState<string | null>(null);
@@ -85,17 +87,21 @@ export function App() {
       : <div className="workspace"><aside className="sidebar"><div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot</span></div><p className="nav-label">工作空间</p><nav aria-label="主导航">{[
         { key: 'overview', label: '运行概览', icon: <DashboardOutlined /> },
         { key: 'settings', label: '机器人配置', icon: <SettingOutlined /> },
+        { key: 'plugins', label: '插件管理', icon: <ApiOutlined /> },
         { key: 'chat', label: '对话测试', icon: <MessageOutlined /> },
         { key: 'providers', label: '供应商与模型', icon: <ApiOutlined /> },
         { key: 'sessions', label: '会话记录', icon: <HistoryOutlined /> },
+        { key: 'knowledge', label: '标签与知识库', icon: <TagsOutlined /> },
         { key: 'agents', label: 'Agent 管理', icon: <RobotOutlined /> },
       ].map(item => <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
         <main className="main-area"><header className="topbar"><span className="topbar-title">{titles[page]}</span><span className="workspace-label">AgentBot</span></header>
           <section hidden={page !== 'overview'}>{visited.includes('overview') && <Overview token={token} />}</section>
-          <section hidden={page !== 'settings'}>{visited.includes('settings') && <Settings token={token} />}</section>
+          <section hidden={page !== 'settings'}>{visited.includes('settings') && <Settings token={token} onPlugins={() => navigate('plugins')} />}</section>
+          <section hidden={page !== 'plugins'}>{visited.includes('plugins') && <Plugins token={token} />}</section>
           <section hidden={page !== 'chat'}>{page === 'chat' && <Chat token={token} />}</section>
           <section hidden={page !== 'providers'}>{visited.includes('providers') && <Providers token={token} />}</section>
           <section hidden={page !== 'sessions'}>{page === 'sessions' && <Sessions token={token} />}</section>
+          <section hidden={page !== 'knowledge'}>{page === 'knowledge' && <Knowledge token={token} />}</section>
           <section hidden={page !== 'agents'}>{visited.includes('agents') && <AgentManagement token={token} />}</section>
         </main></div>}
   </ConfigProvider>;

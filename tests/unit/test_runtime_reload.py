@@ -183,7 +183,7 @@ async def test_refresh_loop_logs_safe_stage_type_and_validation_reason(
 ) -> None:
     """自动刷新失败日志应定位快照加载字段，同时不记录配置原值。"""
 
-    from agent_bot.plugin import lifecycle
+    from agent_bot.core import lifecycle
 
     store = Mock()
     store.load_revision.return_value = 8

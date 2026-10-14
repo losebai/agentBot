@@ -39,8 +39,9 @@ class ChatClient(Protocol):
         request_options: LlmRequestOptions | None = None,
         chat_tools: Sequence[ChatToolName] = (),
         tool_session_token: str | None = None,
+        allow_knowledge: bool = True,
     ) -> str:
-        """生成一次文本回复。"""
+        """生成一次文本回复，内部正文生成可显式关闭共享知识读取。"""
 
         ...
 

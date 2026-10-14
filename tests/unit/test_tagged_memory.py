@@ -52,6 +52,25 @@ def test_tags_are_normalized_and_deduplicated() -> None:
     assert args.tags == ("game", "游戏")
 
 
+def test_save_cannot_modify_existing_memory(memory_store) -> None:
+    """同键保存不能更改正文和标签，已删除记录也不能恢复。"""
+    identity = MemoryIdentity(bot_id="10000", user_id="10001", session_id="a")
+    memory_store.execute(identity, MemoryArguments(
+        action="save", key="偏好", content="原文", tags=["原标签"]
+    ))
+    with pytest.raises(RuntimeError, match="记忆键已存在"):
+        memory_store.execute(identity, MemoryArguments(
+            action="save", key="偏好", content="新文", tags=["新标签"]
+        ))
+    recalled = memory_store.execute(identity, MemoryArguments(action="recall", tags=["原标签"]))
+    assert recalled.records[0].content == "原文"
+    memory_store.execute(identity, MemoryArguments(action="forget", key="偏好"))
+    with pytest.raises(RuntimeError, match="记忆键已存在"):
+        memory_store.execute(identity, MemoryArguments(
+            action="save", key="偏好", content="恢复尝试", tags=["新标签"]
+        ))
+
+
 @pytest.fixture
 def memory_store(tmp_path):
     """用 SQLite 执行真实关系查询，只翻译 MySQL 的建表与锁语法。"""
@@ -144,8 +163,8 @@ def memory_store(tmp_path):
     return store
 
 
-def test_store_scopes_upsert_tag_replacement_and_forget(memory_store) -> None:
-    """验证关联查询和更新原子替换标签，遗忘后不残留目录标签。"""
+def test_store_scopes_duplicate_rejection_and_forget(memory_store) -> None:
+    """验证关联查询和同键拒绝，遗忘后不残留目录标签。"""
     first = MemoryIdentity(bot_id="10000", user_id="10001", session_id="a", group_id="20000")
     other = MemoryIdentity(bot_id="10000", user_id="10002", session_id="b", group_id="20000")
     private = MemoryIdentity(bot_id="10000", user_id="10001", session_id="c")
@@ -171,18 +190,20 @@ def test_store_scopes_upsert_tag_replacement_and_forget(memory_store) -> None:
         "user",
     }
     assert memory_store.execute(foreign, read).records == ()
-    save = MemoryArguments(action="save", key="喜欢的游戏", content="永劫", tags=["永劫"])
+    save = MemoryArguments(action="save", key="新的游戏", content="永劫", tags=["永劫"])
     memory_store.execute(first, save)
-    memory_store.execute(first, save)
+    with pytest.raises(RuntimeError, match="记忆键已存在"):
+        memory_store.execute(first, save)
     records = memory_store.execute(first, MemoryArguments(action="recall", tags=["永劫"])).records
     assert len(records) == 1
     assert records[0].content == "永劫"
     old_tag = memory_store.execute(first, MemoryArguments(action="recall", tags=["游戏"]))
-    assert old_tag.records == ()
+    assert old_tag.records[0].content == "session"
     forget = MemoryArguments(action="forget", key="喜欢的游戏")
     assert memory_store.execute(first, forget).status == "forgotten"
     assert memory_store.execute(first, forget).status == "not_found"
-    assert memory_store.execute(first, MemoryArguments(action="tags")).tags == ()
+    catalog = memory_store.execute(first, MemoryArguments(action="tags"))
+    assert {item.tag for item in catalog.tags} == {"永劫"}
 
 
 def test_memory_ids_are_incrementing_integers_and_tag_links_use_them(
@@ -208,10 +229,10 @@ def test_memory_ids_are_incrementing_integers_and_tag_links_use_them(
     assert tag_ids == ids
 
 
-def test_forget_hides_memory_without_deleting_row_and_save_restores_it(
+def test_forget_hides_memory_without_deleting_row_and_cannot_restore_it(
     memory_store, tmp_path,
 ) -> None:
-    """遗忘只标记删除，后续同 key 保存恢复原 ID 并替换标签。"""
+    """遗忘只标记删除，后续同 key 保存被拒绝且原内容和标签不变。"""
     import sqlite3
 
     identity = MemoryIdentity(bot_id="bot", user_id="user", session_id="session")
@@ -245,21 +266,22 @@ def test_forget_hides_memory_without_deleting_row_and_save_restores_it(
     assert deleted == 1
     assert old_tags == [("old",)]
 
-    memory_store.execute(
-        identity,
-        MemoryArguments(action="save", key="preference", content="new", tags=["new"]),
-    )
+    with pytest.raises(RuntimeError, match="记忆键已存在"):
+        memory_store.execute(
+            identity,
+            MemoryArguments(action="save", key="preference", content="new", tags=["new"]),
+        )
     with sqlite3.connect(tmp_path / "memory.db") as connection:
         restored = connection.execute(
             "SELECT id, is_deleted FROM chat_tagged_memory WHERE memory_key = 'preference'"
         ).fetchone()
-    assert restored == (original_id, 0)
+    assert restored == (original_id, 1)
     assert memory_store.execute(
         identity, MemoryArguments(action="recall", tags=["old"])
     ).records == ()
     assert memory_store.execute(
         identity, MemoryArguments(action="recall", tags=["new"])
-    ).records[0].content == "new"
+    ).records == ()
 
 
 def test_memory_queries_are_parameterized_and_results_bounded(memory_store) -> None:
@@ -374,14 +396,14 @@ async def test_mcp_memory_catalog_and_recall_use_the_token_identity(memory_store
         },
     )
     assert forbidden.is_error
-    for _ in range(3):
+    for index in range(3):
         assert not (
             await server.call_tool(
                 token,
                 "memory",
                 {
                     "action": "save",
-                    "key": "key",
+                    "key": f"key-{index}",
                     "content": "fact",
                     "tags": ["topic"],
                 },
@@ -410,8 +432,8 @@ def test_plain_chat_selects_authorized_memory_without_keywords() -> None:
     assert router.select("记住我的喜好").chat_tools == ()
 
 
-def test_scope_capacity_allows_updates_but_rejects_new_records(memory_store) -> None:
-    """容量达到硬上限后仍能更正已有记忆，不能无限写入新键。"""
+def test_scope_capacity_requires_forget_before_new_key(memory_store) -> None:
+    """容量达到硬上限后不能编辑，明确遗忘旧事实才可新增另一键。"""
     identity = MemoryIdentity(bot_id="bot", user_id="user", session_id="session")
     for index in range(256):
         memory_store.execute(
@@ -423,7 +445,7 @@ def test_scope_capacity_allows_updates_but_rejects_new_records(memory_store) -> 
                 tags=["topic"],
             ),
         )
-    with pytest.raises(ValueError, match="capacity"):
+    with pytest.raises(RuntimeError, match="记忆已满"):
         memory_store.execute(
             identity,
             MemoryArguments(
@@ -433,17 +455,13 @@ def test_scope_capacity_allows_updates_but_rejects_new_records(memory_store) -> 
                 tags=["new"],
             ),
         )
-    memory_store.execute(
-        identity,
-        MemoryArguments(
-            action="save",
-            key="0",
-            content="changed",
-            tags=["changed"],
-        ),
-    )
+    with pytest.raises(RuntimeError, match="记忆键已存在"):
+        memory_store.execute(
+            identity,
+            MemoryArguments(action="save", key="0", content="changed", tags=["changed"]),
+        )
     result = memory_store.execute(identity, MemoryArguments(action="recall", tags=["changed"]))
-    assert result.records[0].content == "changed"
+    assert result.records == ()
     assert memory_store.execute(identity, MemoryArguments(action="forget", key="0")).status == (
         "forgotten"
     )
@@ -451,7 +469,7 @@ def test_scope_capacity_allows_updates_but_rejects_new_records(memory_store) -> 
         identity,
         MemoryArguments(action="save", key="257", content="replacement", tags=["new"]),
     )
-    with pytest.raises(ValueError, match="capacity"):
+    with pytest.raises(RuntimeError, match="记忆键已存在"):
         memory_store.execute(
             identity,
             MemoryArguments(action="save", key="0", content="restored", tags=["changed"]),

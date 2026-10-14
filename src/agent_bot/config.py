@@ -683,6 +683,18 @@ class PluginConfig(BaseModel):
 class RuntimeConfig(PluginConfig):
     """合并启动静态配置与数据库动态配置后的有效快照，供业务统一校验和消费。"""
 
+    app_enabled_plugins: list[str] = Field(default_factory=lambda: ["qqbot"])
+
+    @field_validator("app_enabled_plugins")
+    @classmethod
+    def validate_enabled_plugins(cls, value: list[str]) -> list[str]:
+        """只允许内置插件 ID，数据库配置不能触发任意模块导入。"""
+        from agent_bot.plugins.catalog import BUILTIN_PLUGIN_IDS
+
+        if len(set(value)) != len(value) or set(value) - BUILTIN_PLUGIN_IDS:
+            raise ValueError("unknown or duplicate enabled plugin ID")
+        return value
+
     driver: str = Field(default="~fastapi+~websockets", min_length=1)
     host: IPvAnyAddress = IPv4Address("127.0.0.1")  # type: ignore[assignment]
     port: int = Field(default=8080, ge=1, le=65535)
@@ -753,6 +765,7 @@ class RuntimeConfig(PluginConfig):
 
 
 CONFIG_DESCRIPTIONS: dict[str, str] = {
+    "app_enabled_plugins": "启用的内置插件 (重启生效)",
     # AI 服务
     "chat_python_agent_code": "Python Agent 预设代码 (空值使用当前聊天模型与提示词)",
     "chat_python_search_mcp_code": "Python 网页搜索 MCP 服务代码 (search 分类)",

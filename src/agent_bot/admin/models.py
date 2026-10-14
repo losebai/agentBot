@@ -103,6 +103,19 @@ class BotInfo(ApiModel):
     adapter: str
 
 
+class PluginInfo(ApiModel):
+    """区分保存选择、当前进程启用和渠道运行状态。"""
+
+    id: str
+    name: str
+    version: str
+    description: str
+    saved_enabled: bool
+    enabled: bool
+    status: Literal["disabled", "prepared", "running", "stopped", "failed"]
+    restart_required: bool
+
+
 class OverviewStatistics(CallStatistics):
     """累计数据来自数据库，正在运行数量来自当前进程，避免历史 running 残留误报。"""
 

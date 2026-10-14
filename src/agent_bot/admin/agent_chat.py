@@ -74,6 +74,8 @@ class AgentChatProbe:
     def authority(self):
         """运行时真实可用的管理媒体工具才可加入授权。"""
         names = ("web_search", "read_url")
+        if getattr(self.service().tool_runtime, "knowledge_store", None) is not None:
+            names += ("knowledge_search",)
         adapter = getattr(self.service().tool_runtime, "admin_media_tools", None)
         if adapter is not None:
             names += tuple(sorted(adapter.allowed_tools))

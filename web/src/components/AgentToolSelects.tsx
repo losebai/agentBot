@@ -7,6 +7,7 @@ import type { McpServer } from '../agent-types';
 // 内置名称对应服务端工具策略；选择只保存配置，不授予当前 QQ 会话执行权限。
 const builtinTools = [
   ['web_search', '网页搜索'], ['read_url', '网页读取'],
+  ['knowledge_search', '知识库检索'],
   ['memory', '标签记忆（QQ）'], ['naraka_query', '永劫无间查询（QQ）'],
   ['naraka_search', '永劫无间搜索（QQ）'], ['mention_member', '群成员 @（QQ）'],
   ['local_workflow_list', '工作流列表'], ['local_workflow_generate_image', '工作流生图'],

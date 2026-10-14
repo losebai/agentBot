@@ -1,0 +1,97 @@
+"""知识与记忆管理遵循管理员认证和禁止编辑的 HTTP 边界。"""
+
+import sqlite3
+
+import httpx
+import pytest
+from fastapi import FastAPI
+
+from agent_bot.admin.config import AdminConfig
+from agent_bot.admin.routes import install_admin
+from agent_bot.database import database_connector, initialize_database
+from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
+from agent_bot.knowledge.store import KnowledgeStore
+from agent_bot.settings import DatabaseParams
+
+TOKEN = "offline-knowledge-admin-password"
+HEADERS = {"Authorization": "Bearer " + TOKEN}
+
+
+@pytest.fixture
+async def knowledge_api(tmp_path, admin_store, admin_runtime):
+    """管理接口使用隔离真实数据库，QQ 连接仍是现有运行时替身。"""
+    params = DatabaseParams(backend="sqlite", sqlite_path=str(tmp_path / "admin.db"))
+    initialize_database(params)
+    admin_runtime.knowledge_store = KnowledgeStore(params, connect=database_connector(params))
+    admin_runtime.tagged_memory_store = TaggedMemoryStore(params, secret="offline-memory")
+    app = FastAPI()
+    install_admin(app, admin_store, admin_runtime, AdminConfig(token=TOKEN))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://offline"
+    ) as api:
+        yield api, params
+
+
+async def test_knowledge_and_memory_routes_require_admin_auth(knowledge_api):
+    """所有目录和详情都安装到同一认证路由，不因新增页面而开放原文。"""
+    api, _ = knowledge_api
+    for path in ("knowledge", "knowledge-tags", "memories", "memory-tags", "memory-scopes"):
+        assert (await api.get("/api/v1/" + path)).status_code == 401
+        assert (await api.get("/api/v1/" + path, headers=HEADERS)).status_code == 200
+
+
+async def test_routes_offer_no_edit_methods(knowledge_api):
+    """直接调用更新方法也不能覆盖已保存知识或记忆。"""
+    api, _ = knowledge_api
+    for path in ("knowledge/1", "memories/1"):
+        for method in ("PATCH", "PUT"):
+            assert (
+                await api.request(
+                    method, "/api/v1/" + path, headers=HEADERS, json={"content": "覆盖"}
+                )
+            ).status_code == 405
+
+
+async def test_admin_create_delete_and_conflicts(knowledge_api):
+    """新增、同键拒绝和删除结果对用户明确可见，不静默恢复记忆。"""
+    api, _ = knowledge_api
+    item = await api.post(
+        "/api/v1/knowledge",
+        headers=HEADERS,
+        json={"title": "说明", "content": "中文内容", "tags": ["部署"]},
+    )
+    assert item.status_code == 201
+    id = item.json()["id"]
+    assert (await api.delete(f"/api/v1/knowledge/{id}", headers=HEADERS)).status_code == 204
+    assert (await api.get(f"/api/v1/knowledge/{id}", headers=HEADERS)).status_code == 404
+    body = {
+        "scope": "user",
+        "bot_id": "10001",
+        "target": "10002",
+        "key": "偏好",
+        "content": "原文",
+        "tags": ["语言"],
+    }
+    first = await api.post("/api/v1/memories", headers=HEADERS, json=body)
+    assert first.status_code == 201
+    duplicate = await api.post(
+        "/api/v1/memories", headers=HEADERS, json={**body, "content": "新文"}
+    )
+    assert duplicate.status_code == 409
+    id = first.json()["id"]
+    assert (await api.get(f"/api/v1/memories/{id}", headers=HEADERS)).json()["content"] == "原文"
+    assert (await api.delete(f"/api/v1/memories/{id}", headers=HEADERS)).status_code == 204
+    assert (await api.post("/api/v1/memories", headers=HEADERS, json=body)).status_code == 409
+
+
+async def test_missing_knowledge_schema_does_not_break_status(knowledge_api):
+    """缺表只拒绝知识请求，基础状态和原有记忆管理保持可用。"""
+    api, params = knowledge_api
+    with sqlite3.connect(params.sqlite_path) as db:
+        db.execute("DROP TABLE chat_knowledge_tag")
+        db.execute("DROP TABLE chat_knowledge")
+    response = await api.get("/api/v1/knowledge", headers=HEADERS)
+    assert response.status_code == 503
+    assert response.json()["code"] == "KNOWLEDGE_NOT_INITIALIZED"
+    assert (await api.get("/api/v1/status", headers=HEADERS)).status_code == 200
+    assert (await api.get("/api/v1/memories", headers=HEADERS)).status_code == 200

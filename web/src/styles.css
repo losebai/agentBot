@@ -280,3 +280,9 @@ h1 { font-size: 21px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
   .mode-tabs { padding: 12px 18px 0; gap: 18px; }
   .agent-management > .ant-tabs-nav { padding: 12px 18px 0; }
 }
+
+/* 知识正文保留原始换行；归属标识在窄屏换行，避免撑开只读详情。 */
+.knowledge-content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font: inherit; background: #fafafa; padding: 16px; border-radius: 6px; }
+.knowledge-summary { min-width: 180px; line-height: 1.7; }
+.knowledge-owner { overflow-wrap: anywhere; color: var(--text-secondary); }
+.knowledge-form .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }

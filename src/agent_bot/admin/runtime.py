@@ -74,6 +74,16 @@ class PluginRuntimeProvider:
         """检查所选持久队列与消费者，不要求 QQ 或可选 Redis 已连接。"""
         return await self.plugin.check_management_readiness()
 
+    @property
+    def knowledge_store(self):
+        """旧插件入口使用当前公共 Agent 的知识存储。"""
+        return self.agent_service.tool_runtime.knowledge_store
+
+    @property
+    def tagged_memory_store(self):
+        """旧插件管理入口复用已绑定启动密钥的记忆存储。"""
+        return self.plugin._tagged_memory_store
+
     def bots(self) -> list[BotInfo]:
         """Read local adapter connections without causing platform side effects."""
         return [

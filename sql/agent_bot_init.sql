@@ -562,3 +562,24 @@ CREATE TABLE IF NOT EXISTS chat_tool_operations (
     PRIMARY KEY (namespace, job_id, tool),
     KEY chat_tool_operations_expiry (namespace, expires_at) COMMENT '回收过期执行权和结果'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='工具副作用执行权与持久结果';
+
+-- 标签知识库增量：既有 MySQL 部署显式执行一次，可重复执行。
+-- 在当前业务结构之后执行，仅新增知识正文和标签表，不改写记忆、配置或密钥。
+-- 两表关系由应用事务维护，逻辑删除保留原文和标签，不添加外键。
+CREATE TABLE IF NOT EXISTS chat_knowledge (
+    id INT NOT NULL AUTO_INCREMENT COMMENT '只新增知识条目的自增标识',
+    title VARCHAR(200) NOT NULL COMMENT '知识标题，新增后不可编辑',
+    content TEXT NOT NULL COMMENT '知识正文，应用限制一至一万六千字符，新增后不可编辑',
+    is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除标记，删除保留历史正文',
+    create_time DATETIME NOT NULL COMMENT '知识创建时间',
+    PRIMARY KEY (id),
+    KEY idx_knowledge_active_id (is_deleted, id) COMMENT '按有效状态和标识分页'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='管理员维护的只新增共享知识';
+
+CREATE TABLE IF NOT EXISTS chat_knowledge_tag (
+    knowledge_id INT NOT NULL COMMENT '知识条目标识，由应用事务保证关联',
+    tag VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '规范化主题标签，新增后不可编辑',
+    PRIMARY KEY (knowledge_id, tag),
+    KEY idx_knowledge_tag_lookup (tag, knowledge_id) COMMENT '按标签筛选知识和统计有效条目'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='知识条目与主题标签关联';
+

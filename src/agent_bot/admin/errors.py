@@ -6,6 +6,17 @@ from agent_bot.ai.errors import AiError
 def classify_api_error(error: AiError) -> tuple[int, str, str]:
     """稳定中文错误文案不回显上游响应、文件路径或凭据。"""
     messages = {
+        "KNOWLEDGE_NOT_INITIALIZED": "知识库表尚未初始化，请执行对应知识库增量 SQL",
+        "KNOWLEDGE_UNAVAILABLE": "知识库数据库暂时不可用，请检查连接",
+        "KNOWLEDGE_NOT_FOUND": "知识条目不存在或已删除",
+        "KNOWLEDGE_CONFLICT": "知识条目保存冲突，请重新新增",
+        "KNOWLEDGE_INVALID_INPUT": "知识内容或标签不符合要求",
+        "KNOWLEDGE_INVALID_PAGE": "分页条件已改变或游标无效，请重新查询",
+        "MEMORY_NOT_FOUND": "记忆不存在或已删除",
+        "MEMORY_SCOPE_NOT_FOUND": "记忆作用域不存在或类型不匹配",
+        "MEMORY_CONFLICT": "此作用域记忆键已存在，不能编辑或恢复，请使用新键",
+        "MEMORY_CAPACITY": "此作用域记忆已满，请删除旧记忆后使用新键新增",
+        "MEMORY_UNAVAILABLE": "记忆数据库不可用，请检查连接与初始化结构",
         "WORKFLOW_NOT_READY": "工作流存储尚未就绪，请检查服务状态",
         "WORKFLOW_TOO_LARGE": "工作流文件超过 1 MiB 大小限制",
         "WORKFLOW_DIRECTORY_MISSING": "未配置工作流同步目录，请在启动配置中设置后重启服务",

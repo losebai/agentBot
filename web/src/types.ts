@@ -1,5 +1,17 @@
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
+/** 保存启用状态与进程运行状态分开，修改开关需重启后生效。 */
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  saved_enabled: boolean;
+  enabled: boolean;
+  status: 'disabled' | 'prepared' | 'running' | 'stopped' | 'failed';
+  restart_required: boolean;
+}
+
 export interface SettingField {
   name: string;
   description: string;

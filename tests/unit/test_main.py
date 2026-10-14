@@ -9,6 +9,20 @@ from agent_bot.bot_cli import main, run_bot
 from agent_bot.config import RuntimeConfig
 
 
+@pytest.fixture(autouse=True)
+def isolated_message_loader(monkeypatch):
+    """入口测试只观察加载边界，不复用 NoneBug 另一个宿主的 QQ 实例。"""
+    from agent_bot.plugins.qqbot.plugin import QQBotPlugin
+
+    def load(_plugin):
+        """实际消息行为由集成测试覆盖，此处保留 NoneBot 的成功与失败语义。"""
+        if nonebot.load_plugin("agent_bot.plugin") is None:
+            raise RuntimeError("failed to load agent_bot.plugin")
+        return Mock()
+
+    monkeypatch.setattr(QQBotPlugin, "_load_module", load)
+
+
 def runtime_config() -> RuntimeConfig:
     return RuntimeConfig(
         onebot_v11_access_token="database-onebot-token-that-is-at-least-32-characters",
@@ -56,6 +70,8 @@ def test_run_bot_loads_database_before_nonebot_and_adapter(
         "plugin",
         "run",
     ]
+    driver.on_startup.assert_called_once()
+    driver.on_shutdown.assert_called_once()
 
 
 def test_run_bot_injects_database_config_without_loading_legacy_dotenv(
@@ -109,6 +125,7 @@ def test_run_bot_fails_closed_when_database_load_fails(
 
 
 def test_run_bot_fails_fast_when_plugin_cannot_load(monkeypatch: pytest.MonkeyPatch) -> None:
+    """准备阶段失败时公共 HTTP 客户端尚未创建，不启动监听。"""
     driver = Mock()
     run = Mock()
     monkeypatch.setattr(
@@ -120,7 +137,7 @@ def test_run_bot_fails_fast_when_plugin_cannot_load(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(nonebot, "load_plugin", Mock(return_value=None))
     monkeypatch.setattr(nonebot, "run", run)
 
-    with pytest.raises(RuntimeError, match=r"agent_bot\.plugin"):
+    with pytest.raises(RuntimeError, match="plugin qqbot prepare failed"):
         run_bot()
 
     driver.register_adapter.assert_called_once()

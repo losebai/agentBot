@@ -25,6 +25,11 @@ from pydantic import (
 )
 
 from agent_bot.integrations.gpt_sovits import GeneratedSpeech, GptSoVitsError
+from agent_bot.integrations.tagged_memory_store import (
+    TaggedMemoryCapacityError,
+    TaggedMemoryConflictError,
+    TaggedMemoryStoreError,
+)
 from agent_bot.integrations.workflow_store import WorkflowNotFoundError
 from agent_bot.mentions import (
     AmbiguousMentionTargetError,
@@ -764,7 +769,14 @@ async def _memory(arguments: dict[str, object], context: ChatToolContext) -> Mem
     """把模型参数交给当前令牌绑定的记忆会话。"""
     if context.memory_session is None:
         raise ChatToolError("UNAVAILABLE", "当前请求未启用记忆")
-    return await context.memory_session.execute(MemoryArguments.model_validate(arguments))
+    try:
+        return await context.memory_session.execute(MemoryArguments.model_validate(arguments))
+    except TaggedMemoryConflictError as error:
+        raise ChatToolError("MEMORY_CONFLICT", str(error)) from error
+    except TaggedMemoryCapacityError as error:
+        raise ChatToolError("MEMORY_CAPACITY", str(error)) from error
+    except TaggedMemoryStoreError as error:
+        raise ChatToolError("MEMORY_UNAVAILABLE", "记忆数据库不可用，请检查初始化与连接") from error
 
 
 def build_chat_tool_registry() -> ChatToolRegistry:

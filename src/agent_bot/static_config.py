@@ -10,7 +10,9 @@ from agent_bot.config import RuntimeConfig
 from agent_bot.runtime_fields import RESTART_REQUIRED_FIELDS
 
 # 接入地址保存在数据库；需要重启适配器不代表必须放进启动文件。
-DATABASE_CONNECTION_SETTING_NAMES = frozenset({"onebot_v11_ws_urls", "onebot_v11_api_roots"})
+DATABASE_CONNECTION_SETTING_NAMES = frozenset(
+    {"onebot_v11_ws_urls", "onebot_v11_api_roots", "app_enabled_plugins"}
+)
 STATIC_SETTING_NAMES = (RESTART_REQUIRED_FIELDS - DATABASE_CONNECTION_SETTING_NAMES) | frozenset(
     {
         "chat_tts_output_directory",

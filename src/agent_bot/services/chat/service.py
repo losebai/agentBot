@@ -603,6 +603,9 @@ class ChatService:
                 if decision.capability not in {"agent", "media"}:
                     await self._model_guard.ensure_enabled(model_id, capability=decision.capability)
             context_options = {} if chat_context is None else {"chat_context": chat_context}
+            if reply_composition:
+                # 完成通知只表达已确定事实，新增共享知识工具不能扩大原有通知能力。
+                context_options["allow_knowledge"] = False
             if laya_decision:
                 context_options["laya_decision"] = True
             effective_request_id = request_id or f"qq-{uuid.uuid4().hex}"

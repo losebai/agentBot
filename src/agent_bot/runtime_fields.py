@@ -2,6 +2,7 @@
 
 RESTART_REQUIRED_FIELDS = frozenset(
     {
+        "app_enabled_plugins",
         "driver",
         "host",
         "port",

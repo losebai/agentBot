@@ -5,15 +5,14 @@ import sys
 from collections.abc import Sequence
 
 import nonebot
-from nonebot.adapters.onebot.v11 import Adapter
 
 from agent_bot.bootstrap import (
     inject_runtime_config,
     load_startup_settings,
     nonebot_init_kwargs,
     scrub_runtime_environment,
-    validate_onebot_driver,
 )
+from agent_bot.core.application import assemble_runtime
 
 
 def run_bot() -> None:
@@ -26,12 +25,8 @@ def run_bot() -> None:
         **nonebot_init_kwargs(stored.config),
     )
     driver = nonebot.get_driver()
-    validate_onebot_driver(driver, stored.config)
     inject_runtime_config(driver.config, stored.config, revision=stored.revision)
-    driver.register_adapter(Adapter)
-    plugin = nonebot.load_plugin("agent_bot.plugin")
-    if plugin is None:
-        raise RuntimeError("failed to load agent_bot.plugin")
+    assemble_runtime(stored, driver, getattr(driver, "server_app", None))
     nonebot.run()
 
 

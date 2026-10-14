@@ -11,6 +11,22 @@ function managementResponse(url: string) {
       ai_backend: 'python-ordinary' });
 }
 
+it('主导航可进入标签与知识库，离开后不保留详情页', async () => {
+  vi.stubGlobal('fetch', vi.fn(async url => {
+    const path = String(url);
+    if (path.endsWith('/auth')) return Response.json({password_required: false});
+    if (path.includes('knowledge-tags')) return Response.json([]);
+    if (path.includes('/knowledge?')) return Response.json({items: [], next_cursor: null});
+    return managementResponse(path);
+  }));
+  render(<App />);
+  const nav = await screen.findByRole('navigation');
+  fireEvent.click(within(nav).getByRole('button', {name: /标签与知识库$/}));
+  expect(await screen.findByRole('button', {name: '新增知识'})).toBeInTheDocument();
+  fireEvent.click(within(nav).getByRole('button', {name: /运行概览$/}));
+  expect(screen.queryByRole('button', {name: '新增知识'})).not.toBeInTheDocument();
+});
+
 it('密码校验失败时保持登录页面且不持久化密码', async () => {
   vi.stubGlobal('fetch', vi.fn(async (url) => String(url).endsWith('/auth')
     ? Response.json({ password_required: true })

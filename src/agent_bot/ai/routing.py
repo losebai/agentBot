@@ -213,6 +213,7 @@ class RoutingAiClient:
         chat_tools: Sequence[ChatToolName] = (),
         tool_session_token: str | None = None,
         laya_decision: bool = False,
+        allow_knowledge: bool = True,
     ) -> str:
         """QQ Agent 超时发送已有正文；图片路由继续保留原请求授权。"""
         route = AiRouteRequest(
@@ -239,6 +240,9 @@ class RoutingAiClient:
                     else tuple(chat_tools) + (("web_search", "read_url") if use_web_search else ())
                 )
                 services = tuple(self.mcp_services) if use_agent and not vision_only else ()
+                # 共享知识仍与命名 Agent 的显式工具配置取交集，不改变普通对话路径。
+                if allow_knowledge and use_agent and self.agent_code and not vision_only:
+                    names += ("knowledge_search",)
                 agent_code = None if vision_only else self.agent_code
                 request = AgentRequest(
                     agent_code=agent_code,

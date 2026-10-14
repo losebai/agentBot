@@ -128,11 +128,20 @@ async def test_application_assembles_management_and_preserves_existing_routes(
     async def original():
         return {"preserved": True}
 
-    driver = SimpleNamespace(config=SimpleNamespace(), server_app=app, register_adapter=Mock())
+    driver = SimpleNamespace(config=SimpleNamespace(), server_app=app, register_adapter=Mock(),
+                             on_startup=Mock(), on_shutdown=Mock())
     monkeypatch.setattr(nonebot, "init", Mock())
     monkeypatch.setattr(nonebot, "get_driver", lambda: driver)
     monkeypatch.setattr(nonebot, "load_plugin", lambda _: object())
     monkeypatch.setattr(plugin, "get_settings_store", lambda: admin_store)
+    # 公共存储由宿主注入，装配测试不能读取开发者的数据库或旧 QQ 全局资源。
+    from agent_bot.core import application as core_application
+
+    admin_runtime.settings_store = admin_store
+    monkeypatch.setattr(core_application, "ApplicationRuntime", lambda _: admin_runtime)
+    from agent_bot.plugins.qqbot.plugin import QQBotPlugin
+
+    monkeypatch.setattr(QQBotPlugin, "_load_module", lambda _: Mock())
     token = "offline-admin-token-longer-than-thirty-two-characters"
     result = create_application(
         VersionedSettings(admin_runtime.config, 1), AdminConfig(token=token)

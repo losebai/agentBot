@@ -91,6 +91,8 @@ path = "tools/build_hook.py"
 "sql/2026-10-13-tool-call-payloads.sql" = "agent_bot/resources/2026-10-13-tool-call-payloads.sql"
 "sql/2026-10-13-tool-call-payloads.sqlite.sql" = "agent_bot/resources/2026-10-13-tool-call-payloads.sqlite.sql"
 "sql/agent_bot_init.sql" = "agent_bot/resources/agent_bot_init.sql"
+"sql/2026-10-14-tags-knowledge-memory.sql" = "agent_bot/resources/2026-10-14-tags-knowledge-memory.sql"
+"sql/2026-10-14-tags-knowledge-memory.sqlite.sql" = "agent_bot/resources/2026-10-14-tags-knowledge-memory.sqlite.sql"
 "sql/agent_bot_init.sqlite.sql" = "agent_bot/resources/agent_bot_init.sqlite.sql"
 "sql/agent_bot_queue_init.sqlite.sql" = "agent_bot/resources/agent_bot_queue_init.sqlite.sql"
 "sql/2026-10-13-local-queue.sql" = "agent_bot/resources/2026-10-13-local-queue.sql"
@@ -141,6 +143,8 @@ allowed-confusables = ["，", "；", "！", "？", "："]
 [tool.ruff.lint.per-file-ignores]
 "src/plugin/__init__.py" = ["B008"]
 "src/plugin/handlers.py" = ["B008"]
+# 当前标准包路径沿用原 QQ 模块的 NoneBot 依赖注入例外，不扩大到其他插件。
+"src/agent_bot/plugin/handlers.py" = ["B008"]
 
 [tool.ruff.lint.isort]
 # 平铺目录通过构建映射获得包名，显式标明第一方包以保持既有导入顺序。

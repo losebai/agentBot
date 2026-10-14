@@ -1,4 +1,4 @@
-import type { BotInfo, ChatMessage, ChatResponse, JsonValue, ServiceStatus, SettingsSnapshot } from './types';
+import type { BotInfo, ChatMessage, ChatResponse, JsonValue, PluginInfo, ServiceStatus, SettingsSnapshot } from './types';
 import { readChatEvents } from './stream';
 
 export class ApiFailure extends Error {
@@ -28,7 +28,10 @@ export class ApiClient {
   auth(signal?: AbortSignal) { return this.request<{ password_required: boolean }>('auth', 'GET', undefined, signal); }
   status() { return this.request<ServiceStatus>('status'); }
   bots() { return this.request<BotInfo[]>('bots'); }
-  settings() { return this.request<SettingsSnapshot>('settings'); }
+  /** 页面卸载时取消读取，避免过期响应覆盖插件草稿。 */
+  settings(signal?: AbortSignal) { return this.request<SettingsSnapshot>('settings', 'GET', undefined, signal); }
+  /** 插件目录返回已保存选择及当前进程状态，不触发平台连接。 */
+  plugins(signal?: AbortSignal) { return this.request<PluginInfo[]>('plugins', 'GET', undefined, signal); }
   /** 运行草稿使用数据库版本；包含静态修改时另传启动文件版本防止覆盖外部编辑。 */
   updateSettings(expected_revision: number, values: Record<string, JsonValue>, startup_revision?: string | null) {
     return this.request<SettingsSnapshot>('settings', 'PATCH', { expected_revision, values,

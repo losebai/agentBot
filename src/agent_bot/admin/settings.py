@@ -9,6 +9,7 @@ from pydantic import SecretStr
 
 from agent_bot.admin.models import (
     BOOTSTRAP_SETTING_NAMES,
+    NATIVE_ONLY_STARTUP_SETTING_NAMES,
     STARTUP_SETTING_NAMES,
     SettingField,
     SettingsSnapshot,
@@ -61,6 +62,9 @@ class SettingsService:
         if stored.revision != request.expected_revision:
             raise SettingsRevisionConflictError("settings revision conflict")
         submitted = request.values.model_fields_set
+        # 托管进程的选择属于原生窗口，不能靠手工 HTTP 草稿绕过只读界面。
+        if submitted & NATIVE_ONLY_STARTUP_SETTING_NAMES:
+            raise SettingsValidationError("NapCat startup settings are native only")
         startup_names = submitted & STARTUP_SETTING_NAMES
         if startup_names and (
             self.startup is None or not startup_names.issubset(self.startup.editable_names)
@@ -118,7 +122,8 @@ class SettingsService:
         if startup is None and self.startup is not None:
             startup = self.startup.read()
         configured = self._configured_runtime(stored.config, startup)
-        editable = self.startup.editable_names if self.startup is not None else frozenset()
+        editable = ((self.startup.editable_names - NATIVE_ONLY_STARTUP_SETTING_NAMES)
+                    if self.startup is not None else frozenset())
         running = self.runtime.config
         pending = {
             name

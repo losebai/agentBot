@@ -1018,15 +1018,43 @@ async def test_processor_retry_reuses_provenance_without_resplitting(
 
 
 @pytest.mark.asyncio
-async def test_processor_truncation_never_adds_static_text(monkeypatch, chat_plugin) -> None:
-    """长度限制只能裁剪模型文字，不得注入固定截断提示。"""
+@pytest.mark.parametrize("scene", ["group", "private"])
+async def test_processor_long_reply_preserves_full_text_in_file(
+    monkeypatch, chat_plugin, scene,
+) -> None:
+    """超长正文完整保存并上传原会话，失败重试和热刷新不能截断或重调模型。"""
 
-    generate = AsyncMock(return_value="abcdefghijklmnopqrstuvwxyz")
+    answer = "  完整模型正文\n\nabcdefghijklmnopqrstuvwxyz  "
+    generate = AsyncMock(return_value=answer)
+    bot = onebot_mock()
+    bot.call_api.side_effect = [ConnectionError("offline"), {"file_id": "test-file"}]
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_max_reply_chars", 5)
-    result = await chat_plugin._ConversationProcessor().generate(queued_job(chatTools=()))
-    assert result.reply.text == "abcde"
-    assert "".join(result.delivery_parts) == "abcde"
+    job = queued_job(chatTools=(), scene=scene, groupId="20001" if scene == "group" else None)
+    processor = chat_plugin._ConversationProcessor()
+    result = await processor.generate(job)
+    assert result.reply_as_file is True
+    assert result.reply.text == answer
+    assert result.reply.source == "LLM"
+    assert result.reply.request_id == job.request_id
+    assert result.delivery_parts == (answer,)
+    restored = ConversationResult.model_validate_json(result.model_dump_json(by_alias=True))
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_max_reply_chars", 1000)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_chunk_chars", 1)
+    assert await processor.delivery_count(job, restored) == 1
+    with pytest.raises(ConnectionError):
+        await processor.deliver_part(job, restored, 0)
+    await processor.deliver_part(job, restored, 0)
+    generate.assert_awaited_once()
+    assert bot.call_api.await_count == 2
+    assert bot.call_api.await_args_list[0] == bot.call_api.await_args_list[1]
+    call = bot.call_api.await_args
+    assert call.args == (f"upload_{scene}_file",)
+    target_key = "group_id" if scene == "group" else "user_id"
+    assert call.kwargs[target_key] == int(job.group_id or job.user_id)
+    assert call.kwargs["name"].endswith(".txt")
+    assert base64.b64decode(call.kwargs["file"].removeprefix("base64://")).decode("utf-8") == answer
 
 
 @pytest.mark.asyncio

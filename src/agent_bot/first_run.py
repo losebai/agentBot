@@ -13,8 +13,8 @@ class FirstRunError(RuntimeError):
     """首次初始化失败，只向启动入口提供不含底层凭据的修复提示。"""
 
 
-def prepare_first_run(directory: Path) -> None:
-    """离线暂存并独占发布本地默认配置，绝不覆盖用户配置或重建已有数据库。"""
+def prepare_first_run(directory: Path, *, enable_managed_napcat: bool = False) -> None:
+    """桌面可显式选择托管，载荷随后校验；已有配置及数据库始终由用户所有。"""
     directory = directory.resolve()
     if any((directory / name).exists() for name in (".env", ".env.prod")):
         return
@@ -70,6 +70,8 @@ def prepare_first_run(directory: Path) -> None:
             f"ONEBOT_V11_ACCESS_TOKEN={config.onebot_v11_access_token.get_secret_value()}\n"
             f"CHAT_SESSION_SECRET={config.chat_session_secret.get_secret_value()}\n"
         )
+        if enable_managed_napcat:
+            env_text += "AGENT_BOT_NAPCAT_MODE=managed\nAGENT_BOT_NAPCAT_WEBUI_PORT=6099\n"
         staged_env = staging / ".env"
         staged_env.write_text(env_text, encoding="utf-8")
         staged_database = staging / "agent_bot.sqlite3"

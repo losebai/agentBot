@@ -16,6 +16,9 @@ from agent_bot.static_config import STATIC_SETTING_NAMES
 
 BOOTSTRAP_SETTING_NAMES = frozenset(field.alias for field in BootstrapConfig.model_fields.values())
 STARTUP_SETTING_NAMES = STATIC_SETTING_NAMES | BOOTSTRAP_SETTING_NAMES
+NATIVE_ONLY_STARTUP_SETTING_NAMES = frozenset({
+    "agent_bot_napcat_mode", "agent_bot_napcat_webui_port",
+})
 
 
 class ApiModel(BaseModel):

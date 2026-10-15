@@ -37,7 +37,7 @@ function fieldCategory(field: SettingField): Category {
   if (replySettingNames.has(name) || [
     'chat_auto_', 'chat_group_', 'chat_user_message_', 'chat_job_',
   ].some(prefix => name.startsWith(prefix))) return 'reply';
-  if (qqSettingNames.has(name) || [
+  if (name.startsWith('agent_bot_napcat_') || qqSettingNames.has(name) || [
     'onebot_', 'chat_allowed_', 'chat_blocked_',
   ].some(prefix => name.startsWith(prefix))) return 'qq';
   if (llmSettingNames.has(name) || [

@@ -49,6 +49,7 @@ def check(path: Path) -> None:
             "agent_bot/static/index.html",
             "agent_bot/bot_cli.py",
             "agent_bot/runtime_fields.py",
+            "agent_bot/napcat/qq_installation.py",
             "agent_bot/resources/sdxl_lightning_4step_api.json",
         }
         missing = required - set(names)
@@ -63,6 +64,7 @@ def check(path: Path) -> None:
         forbidden = {
             ".env", ".venv", "__pycache__", "node_modules", ".idea", "AGENTS.md",
             ".superpowers", "data", "logs", "tts", "qa-media", "qa-tts",
+            "runtime",
         }
         if any(
             forbidden.intersection(Path(name).parts)

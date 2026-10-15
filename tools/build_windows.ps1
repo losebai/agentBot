@@ -2,6 +2,7 @@
 param(
     [string]$OutputDirectory = "dist/windows",
     [switch]$BuildInstaller,
+    [string]$NapCatPayloadDirectory,
     [string]$IsccPath = $env:ISCC_PATH
 )
 
@@ -12,9 +13,29 @@ Push-Location $repoRoot
 try {
     $outputRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $OutputDirectory))
     $bundle = Join-Path $outputRoot "AgentBot"
+    # 输入必须在可清理输出之外，否则 PyInstaller 会先删除待复制的唯一载荷。
+    if ($NapCatPayloadDirectory) {
+        $napcatSource = (Resolve-Path -LiteralPath $NapCatPayloadDirectory).Path
+        if ($napcatSource.Equals($bundle, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $napcatSource.StartsWith($bundle + [System.IO.Path]::DirectorySeparatorChar,
+                [System.StringComparison]::OrdinalIgnoreCase) -or
+            $bundle.StartsWith($napcatSource + [System.IO.Path]::DirectorySeparatorChar,
+                [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'NAPCAT_PAYLOAD_OUTPUT_OVERLAP: payload source overlaps build output.'
+        }
+    }
     # PyInstaller 会重建输出目录，禁止覆盖任何已被用作部署目录的产物。
     if (Test-Path -LiteralPath $bundle) {
         $generatedNames = @("AgentBot.exe", "agent-bot.exe", "_internal", ".env.example", "WINDOWS_README.md")
+        if (Test-Path -LiteralPath (Join-Path $bundle 'runtime')) {
+            $runtimeItems = @(Get-ChildItem -LiteralPath (Join-Path $bundle 'runtime') -Force)
+            if ($runtimeItems.Count -ne 1 -or $runtimeItems[0].Name -ne 'napcat') {
+                throw '输出目录含有未声明的运行资源，请指定新的构建目录。'
+            }
+            & uv run --no-sync python tools/prepare_napcat_payload.py (Join-Path $bundle 'runtime/napcat') --check
+            if ($LASTEXITCODE -ne 0) { throw '输出目录中的 NapCat 资源含数据或不完整，已取消覆盖。' }
+            $generatedNames += 'runtime'
+        }
         $runtimeFiles = Get-ChildItem -LiteralPath $bundle -Force |
             Where-Object { $_.Name -notin $generatedNames }
         if ($runtimeFiles) {
@@ -57,6 +78,13 @@ try {
 
     Copy-Item -LiteralPath ".env.example" -Destination $bundle
     Copy-Item -LiteralPath "WINDOWS_README.md" -Destination $bundle
+    if ($NapCatPayloadDirectory) {
+        & $buildPython tools/prepare_napcat_payload.py $napcatSource --check
+        if ($LASTEXITCODE -ne 0) { throw 'NapCat 载荷校验失败。' }
+        $runtimeTarget = Join-Path $bundle 'runtime'
+        New-Item -ItemType Directory -Force -Path $runtimeTarget | Out-Null
+        Copy-Item -LiteralPath $napcatSource -Destination (Join-Path $runtimeTarget 'napcat') -Recurse
+    }
     # 便携包与安装器共用同一份已构建程序，版本来自已安装的发布包。
     if ($BuildInstaller) {
         $version = & $buildPython -c "from importlib.metadata import version; print(version('agent-bot'))"

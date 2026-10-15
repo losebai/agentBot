@@ -25,6 +25,8 @@ from agent_bot.settings import (
 
 EXPECTED_RUNTIME_FIELDS = {
     "app_enabled_plugins",
+    "agent_bot_napcat_mode",
+    "agent_bot_napcat_webui_port",
     "chat_python_agent_code",
     "chat_python_search_mcp_code",
     "chat_model",
@@ -175,6 +177,8 @@ def runtime_config() -> RuntimeConfig:
     """构造覆盖所有运行字段的配置，媒体开关也必须参与持久化。"""
     values: dict[str, object] = {
         "app_enabled_plugins": ["qqbot"],
+        "agent_bot_napcat_mode": "external",
+        "agent_bot_napcat_webui_port": 6099,
         "chat_python_agent_code": "helper",
         "chat_python_search_mcp_code": "search",
         "chat_model": "private-model-db-snapshot-test",
@@ -652,7 +656,7 @@ def test_load_rejects_schema_with_missing_columns(
 
 
 def test_runtime_config_storage_contract_covers_all_plugin_and_nonebot_fields() -> None:
-    """完整字段集合与插件运行配置一致，防止新增媒体开关漏存。"""
+    """完整字段包含插件、NoneBot、OneBot 和仅供桌面读取的启动字段。"""
     from nonebot.config import Config as NoneBotConfig
 
     expected_nonebot_fields = set(NoneBotConfig.model_fields)
@@ -664,7 +668,8 @@ def test_runtime_config_storage_contract_covers_all_plugin_and_nonebot_fields() 
     plugin_fields = set(RuntimeConfig.__mro__[1].model_fields)
 
     assert set(RuntimeConfig.model_fields) == (
-        plugin_fields | expected_nonebot_fields | expected_onebot_fields | {"app_enabled_plugins"}
+        plugin_fields | expected_nonebot_fields | expected_onebot_fields
+        | {"app_enabled_plugins", "agent_bot_napcat_mode", "agent_bot_napcat_webui_port"}
     )
 
 

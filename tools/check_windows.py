@@ -6,7 +6,6 @@ import ctypes
 import json
 import os
 import re
-import shutil
 import socket
 import subprocess
 import tempfile
@@ -16,12 +15,16 @@ from pathlib import Path
 
 import fakeredis
 import httpx
+from windows_smoke_files import copy_without_qq_payload
 
 from agent_bot.desktop import BackendProcess
 
 
-def check_gui(deployment: Path, port: int, screenshot: Path) -> None:
-    """通过此 WebView2 实例的调试端口验收真实桌面窗口，随后发送原生关闭消息。"""
+def check_gui(
+    deployment: Path, port: int, screenshot: Path, *, expected_text: str | None = None,
+    click_texts: tuple[str, ...] = (),
+) -> None:
+    """等待所属窗口完成指定状态渲染再截图，随后发送原生关闭消息。"""
     from websockets.sync.client import connect
 
     with socket.socket() as listener:
@@ -52,6 +55,8 @@ def check_gui(deployment: Path, port: int, screenshot: Path) -> None:
             raise RuntimeError("desktop window did not load the frontend")
         with connect(target["webSocketDebuggerUrl"], proxy=None) as connection:
             sequence = 0
+            pending_clicks = iter(click_texts)
+            next_click = next(pending_clicks, None)
 
             def call(method: str, params: dict) -> dict:
                 """跳过异步 CDP 事件，只返回此次请求结果。"""
@@ -65,11 +70,24 @@ def check_gui(deployment: Path, port: int, screenshot: Path) -> None:
                         return response["result"]
 
             while time.monotonic() < deadline:
+                if next_click is not None:
+                    label = json.dumps(next_click.replace(" ", ""))
+                    clicked = call("Runtime.evaluate", {
+                        "expression": "Array.from(document.querySelectorAll('button')).some(b => {"
+                        f"if (!b.disabled && b.innerText.replace(/\\s/g, '') === {label})"
+                        "{ b.click(); return true; } return false; })",
+                        "returnByValue": True,
+                    })
+                    if clicked["result"].get("value"):
+                        next_click = next(pending_clicks, None)
+                    time.sleep(0.2)
+                    continue
                 result = call("Runtime.evaluate", {
                     "expression": "document.body.innerText", "returnByValue": True,
                 })
                 content = result["result"].get("value", "")
-                if "供应商" in content and "Agent" in content:
+                if ("供应商" in content and "Agent" in content
+                        and (expected_text is None or expected_text in content)):
                     break
                 time.sleep(0.2)
             else:
@@ -125,7 +143,8 @@ def check(bundle: Path, screenshot: Path | None = None) -> None:
     try:
         with tempfile.TemporaryDirectory(prefix="agentbot-desktop-") as temporary:
             deployment = Path(temporary) / "desktop"
-            shutil.copytree(bundle, deployment)
+            # 离线验收不复制真实 QQ 载荷，避免首次启动连接用户账号。
+            copy_without_qq_payload(bundle, deployment)
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 port = listener.getsockname()[1]
@@ -158,6 +177,7 @@ def check(bundle: Path, screenshot: Path | None = None) -> None:
             backend = BackendProcess(
                 [str(executable), "--desktop-child"], Path(temporary),
                 deployment / "logs" / "check.log",
+                desktop_handshake=True,
             )
             started_at = time.perf_counter()
             backend.start()
@@ -194,7 +214,8 @@ def check_first_run(bundle: Path, screenshot: Path | None) -> None:
     """从没有配置和数据库的真实桌面包启动，验证无需 Redis 且重启保留配置。"""
     with tempfile.TemporaryDirectory(prefix="agentbot-first-run-") as temporary:
         deployment = Path(temporary) / "desktop"
-        shutil.copytree(bundle, deployment)
+        # 托管运行载荷仅做静态校验，真实 QQ 不进入离线启动副本。
+        copy_without_qq_payload(bundle, deployment)
         assert not (deployment / ".env").exists()
         assert not (deployment / "data").exists()
         with socket.socket() as listener:
@@ -209,6 +230,7 @@ def check_first_run(bundle: Path, screenshot: Path | None) -> None:
             backend = BackendProcess(
                 [str(deployment / "agent-bot.exe"), "--desktop-child"], Path(temporary),
                 deployment / "logs" / "first-run-check.log",
+                desktop_handshake=True,
             )
             before = (deployment / ".env").read_bytes() if screenshot is not None else None
             backend.start()

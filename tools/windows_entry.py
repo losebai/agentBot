@@ -2,6 +2,7 @@
 
 import multiprocessing
 import sys
+import traceback
 from pathlib import Path
 
 
@@ -24,11 +25,23 @@ def main() -> int:
 
             return desktop_main()
         except Exception as exc:
+            # 无控制台启动也保留故障位置；不记录异常正文、局部变量或配置秘密。
+            try:
+                log = Path("logs/desktop-launcher.log")
+                log.parent.mkdir(parents=True, exist_ok=True)
+                frames = traceback.extract_tb(exc.__traceback__)
+                log.write_text(type(exc).__name__ + "\n" + "\n".join(
+                    f"{Path(frame.filename).name}:{frame.lineno}:{frame.name}"
+                    for frame in frames
+                ), encoding="utf-8")
+            except OSError:
+                # 目录不可写时仍须弹出原生错误，不能让诊断写入遮蔽启动失败。
+                pass
             ctypes.windll.user32.MessageBoxW(
                 None,
                 f"桌面启动失败 ({type(exc).__name__})。\n"
                 "请确认程序目录可写，并已安装 Microsoft Edge WebView2 Runtime。\n"
-                "后端详情见 logs/desktop-backend.log；也可用 agent-bot.exe 排查。",
+                "启动详情见 logs/desktop-launcher.log；后端详情见 logs/desktop-backend.log。",
                 "AgentBot", 0x10,
             )
             return 1

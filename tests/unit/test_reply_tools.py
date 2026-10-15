@@ -17,8 +17,9 @@ from agent_bot.services.chat_tools import (
     ChatToolError,
     build_chat_tool_registry,
 )
-from agent_bot.services.conversation_queue import ConversationJob
+from agent_bot.services.conversation_queue import ConversationJob, ConversationResult
 from agent_bot.services.naraka import NarakaPlayerSearchResult
+from agent_bot.services.replies import LlmReplyComposer
 from agent_bot.services.workflow_execution import GeneratedWorkflowImage, WorkflowImageCollector
 
 
@@ -72,7 +73,7 @@ async def test_mention_intent_survives_new_context_and_rejects_a_second_intent()
 async def test_agent_always_delivers_final_text_once(
     choice: str | None, final_fails: bool, with_image: bool, use_query: bool,
 ) -> None:
-    """无工具调用也发送最终正文；工具只附加元数据，不能抢先发送文字。"""
+    """文字只发送一次；图片先发送，再以独立完成通知提醒原创建人。"""
     context = reply_context(
         naraka_service=SimpleNamespace(search_players=AsyncMock(
             return_value=NarakaPlayerSearchResult(query="小明"),
@@ -111,7 +112,11 @@ async def test_agent_always_delivers_final_text_once(
             collector=images, speech_collector=None, reply_collector=context.reply_collector,
         )
 
-    chat = SimpleNamespace(generate_queued=generate, commit_queued=AsyncMock())
+    chat = SimpleNamespace(
+        generate_queued=AsyncMock(side_effect=generate), commit_queued=AsyncMock(),
+    )
+    completion_chat = SimpleNamespace(generate_reply_queued=AsyncMock(return_value="绘图完成啦。"))
+    composer = LlmReplyComposer(lambda: completion_chat, timeout_seconds_provider=lambda: 300)
     config = RuntimeConfig(
         onebot_v11_access_token="test-token-that-is-longer-than-32-characters",
         chat_session_secret="test-secret-that-is-longer-than-32-characters",
@@ -119,7 +124,7 @@ async def test_agent_always_delivers_final_text_once(
     processor = ConversationQueueProcessor(
         config_provider=lambda: config, chat_service_provider=lambda: chat,
         runtime_lease=runtime, tool_session_provider=session, bot_provider=lambda _: context.bot,
-        reply_composer=mention_composer(), reply_gateway=mention_gateway(),
+        reply_composer=composer, reply_gateway=mention_gateway(),
         operation_store_provider=lambda: context.operation_store,
         image_submitter=AsyncMock(), workflow_service_provider=lambda: None,
     )
@@ -135,17 +140,35 @@ async def test_agent_always_delivers_final_text_once(
         return
     result = await processor.generate(job)
     context.bot.call_api.assert_not_awaited()
-    count = await processor.delivery_count(job, result)
-    assert count == 1
-    for index in range(count):
-        await processor.deliver_part(job, result, index)
-    await processor.commit(job, result)
-    context.bot.call_api.assert_awaited_once()
-    message = context.bot.call_api.await_args.kwargs["message"]
-    expected = "" if with_image else "哪里不对？说错什么了我改，但你得说清楚呀。"
-    assert message.extract_plain_text().strip() == expected
-    assert bool(message["at"]) == (choice == "mention_member" and not with_image)
-    assert bool(message["image"]) == with_image
+    restored = ConversationResult.model_validate_json(result.model_dump_json(by_alias=True))
+    async with fakeredis.aioredis.FakeRedis(decode_responses=True) as redis:
+        # 每个参数独占操作记录，完成通知持久化后由真实 Gateway 投递。
+        context.operation_store = RedisToolOperationStore(
+            redis, key_prefix="test:reply-completion", ttl_seconds=60,
+        )
+        count = await processor.delivery_count(job, restored)
+        assert count == (2 if with_image else 1)
+        await processor.deliver_part(job, restored, 0)
+        context.bot.call_api.assert_awaited_once()
+        message = context.bot.call_api.await_args.kwargs["message"]
+        expected = "" if with_image else "哪里不对？说错什么了我改，但你得说清楚呀。"
+        assert message.extract_plain_text().strip() == expected
+        assert bool(message["at"]) == (choice == "mention_member" and not with_image)
+        assert bool(message["image"]) == with_image
+        completion_chat.generate_reply_queued.assert_not_awaited()
+        if with_image:
+            await processor.deliver_part(job, restored, 1)
+            assert context.bot.call_api.await_count == 2
+            completion = context.bot.call_api.await_args.kwargs["message"]
+            assert completion.extract_plain_text().strip() == "绘图完成啦。"
+            assert [segment.data["qq"] for segment in completion["at"]] == [job.user_id]
+            assert not completion["image"]
+            completion_chat.generate_reply_queued.assert_awaited_once()
+            assert completion_chat.generate_reply_queued.await_args.args[0] == "image:job"
+            assert completion_chat.generate_reply_queued.await_args.kwargs["use_agent"] is True
+        await processor.commit(job, restored)
+    chat.generate_queued.assert_awaited_once()
+    chat.commit_queued.assert_awaited_once()
     assert chat.commit_queued.await_args.args[2] == ("[已生成图片]" if with_image else expected)
 
 

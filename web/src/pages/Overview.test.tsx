@@ -48,3 +48,17 @@ it('归档未初始化时明确提示统计不可用，并保留服务状态', a
   expect(screen.getByText('服务状态').parentElement).toHaveTextContent('就绪');
   expect(screen.getByText('对话总数').parentElement).toHaveTextContent('—');
 });
+
+it('托管状态读取失败仍显示已有用量和机器人连接', async () => {
+  vi.stubGlobal('fetch', vi.fn(async url => {
+    if (String(url).endsWith('/napcat/status')) throw new Error('offline observation failure');
+    return Response.json(String(url).endsWith('/bots') ? [{ id: '12345', adapter: 'OneBot V11' }] : status({
+      conversation_count: 9, running_requests: 0, total_tokens: 100, prompt_tokens: 90,
+      completion_tokens: 10, cached_tokens: 0, cache_prompt_tokens: 0, cache_hit_rate: null,
+    }));
+  }));
+  render(<Overview token="offline" />);
+  expect(await screen.findByText(/NapCat 状态读取失败/)).toBeInTheDocument();
+  expect(screen.getByText('12345')).toBeInTheDocument();
+  expect(screen.getByText('对话总数').parentElement).toHaveTextContent('9');
+});

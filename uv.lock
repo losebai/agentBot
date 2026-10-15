@@ -10,7 +10,7 @@ resolution-markers = [
 
 [[package]]
 name = "agent-bot"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -39,6 +39,7 @@ dependencies = [
 [package.optional-dependencies]
 desktop = [
     { name = "pywebview", marker = "sys_platform == 'win32'" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
 ]
 dev = [
     { name = "fakeredis" },
@@ -85,6 +86,7 @@ requires-dist = [
     { name = "pytest-socket", marker = "extra == 'dev'", specifier = ">=0.7,<1.0" },
     { name = "python-dotenv", specifier = ">=1.0,<2.0" },
     { name = "pywebview", marker = "sys_platform == 'win32' and extra == 'desktop'", specifier = ">=6.0,<7" },
+    { name = "pywin32", marker = "sys_platform == 'win32' and extra == 'desktop'", specifier = ">=311" },
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0,<7.0" },
     { name = "redis", specifier = ">=5.2,<7.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1.0" },

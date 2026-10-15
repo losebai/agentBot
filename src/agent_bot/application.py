@@ -16,15 +16,19 @@ from agent_bot.bootstrap import (
     scrub_runtime_environment,
 )
 from agent_bot.core.application import assemble_runtime
+from agent_bot.napcat.supervisor import NapCatSupervisor
 from agent_bot.settings import VersionedSettings
 from agent_bot.startup_settings import StartupSettingsStore
 
 
-def create_application(stored: VersionedSettings, admin: AdminConfig) -> FastAPI:
-    """先注册机器人生命周期，再添加管理接口及静态界面。"""
+def create_application(
+    stored: VersionedSettings, admin: AdminConfig, *, napcat: NapCatSupervisor | None = None,
+) -> FastAPI:
+    """装配公共服务；桌面注入所属托管上下文，QQ 插件可显式请求启动。"""
     if "fastapi" not in stored.config.driver:
         raise ValueError("agentBot management requires the FastAPI driver")
     # 环境字段随后为 NoneBot 安全清理，文件编辑能力须先捕获覆盖关系，防止虚假开放编辑。
+    # 原生字段仍需参与只读快照；HTTP 写权限由 SettingsService 单独拒绝。
     startup = StartupSettingsStore(Path.cwd(), STARTUP_SETTING_NAMES)
     scrub_runtime_environment()
     nonebot.init(_env_file=(os.devnull,), **nonebot_init_kwargs(stored.config))
@@ -33,6 +37,7 @@ def create_application(stored: VersionedSettings, admin: AdminConfig) -> FastAPI
     app = driver.server_app
     if not isinstance(app, FastAPI):
         raise ValueError("agentBot management requires a FastAPI application")
+    app.state.napcat = napcat
     runtime, plugins = assemble_runtime(stored, driver, app)
     app.state.runtime, app.state.plugins = runtime, plugins
     install_admin(

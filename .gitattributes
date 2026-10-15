@@ -3,3 +3,6 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 Dockerfile text eol=lf
+# Vite 变换入口脚本时需一致换行，避免 Windows 构建生成混合 CRLF/CRCRLF。
+web/index.html text eol=lf
+src/static/index.html text eol=lf

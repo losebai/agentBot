@@ -3,6 +3,8 @@
 RESTART_REQUIRED_FIELDS = frozenset(
     {
         "app_enabled_plugins",
+        "agent_bot_napcat_mode",
+        "agent_bot_napcat_webui_port",
         "driver",
         "host",
         "port",

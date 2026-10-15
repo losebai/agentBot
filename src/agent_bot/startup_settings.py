@@ -16,7 +16,7 @@ from typing import Any
 from dotenv import dotenv_values
 from dotenv.parser import parse_stream
 
-from agent_bot.settings import (
+from agent_bot.settings_errors import (
     SettingsError,
     SettingsRevisionConflictError,
     SettingsValidationError,

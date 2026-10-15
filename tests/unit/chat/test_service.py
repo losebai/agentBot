@@ -29,6 +29,8 @@ def without_execution_refs(messages: Sequence[ChatMessage]) -> list[ChatMessage]
 
 
 class FakeClient:
+    """记录完整模型调用契约，以检验聊天权限与无历史回复的隔离边界。"""
+
     def __init__(
         self,
         replies: list[str],
@@ -55,7 +57,10 @@ class FakeClient:
         use_agent: bool = True,
         use_web_search: bool = True,
         request_options: LlmRequestOptions | None = None,
+        allow_knowledge: bool = True,
     ) -> str:
+        """保存显式知识授权，防止通知或开画提示意外检索共享资料。"""
+
         self.calls.append(
             {
                 "model": model,
@@ -70,6 +75,7 @@ class FakeClient:
                 "use_agent": use_agent,
                 "use_web_search": use_web_search,
                 "request_options": request_options,
+                "allow_knowledge": allow_knowledge,
             }
         )
         return self.replies.pop(0)
@@ -975,7 +981,7 @@ async def test_service_keeps_bounded_fallback_memory_when_compression_fails() ->
 
 @pytest.mark.asyncio
 async def test_service_disables_web_search_for_ordinary_chat_from_config() -> None:
-    """关闭搜索只取消联网授权，不改变自然聊天的 Agent 执行入口。"""
+    """关闭搜索只取消联网授权，普通聊天仍使用 Agent 并保留知识检索许可。"""
     client = FakeClient(["普通回答"])
     service = make_service(client, web_search_enabled=False)
 
@@ -984,6 +990,7 @@ async def test_service_disables_web_search_for_ordinary_chat_from_config() -> No
     assert answer == "普通回答"
     assert client.calls[0]["use_agent"] is True
     assert client.calls[0]["use_web_search"] is False
+    assert client.calls[0]["allow_knowledge"] is True
 
 
 @pytest.mark.asyncio
@@ -1187,7 +1194,7 @@ async def test_queued_auto_speak_appends_instruction_after_system_prompt() -> No
 
 @pytest.mark.asyncio
 async def test_reply_generation_is_isolated_from_history_tools_web_and_media() -> None:
-    """Reply composition uses only persona, instruction, and the current prompt."""
+    """通知只使用人设、指令和当前输入，隔离历史、工具、联网、媒体及共享知识。"""
 
     client = FakeClient(["按人设生成的回复"])
     store = ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60)
@@ -1230,6 +1237,7 @@ async def test_reply_generation_is_isolated_from_history_tools_web_and_media() -
             "use_agent": False,
             "use_web_search": False,
             "request_options": None,
+            "allow_knowledge": False,
         }
     ]
     assert without_execution_refs(store.messages("s")) == [
@@ -1279,7 +1287,7 @@ async def test_same_session_queued_generations_run_concurrently() -> None:
 
 @pytest.mark.asyncio
 async def test_image_start_uses_llm_persona_without_media_tools_or_history() -> None:
-    """开画提示必须由带当前人设的 LLM 生成，且不能提前调用工具。"""
+    """开画提示由当前人设生成，不能提前调用工具、联网或检索共享知识。"""
 
     client = FakeClient(["好啦，我开始画了，稍等一下。"])
     store = ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60)
@@ -1303,6 +1311,7 @@ async def test_image_start_uses_llm_persona_without_media_tools_or_history() -> 
     assert answer == "好啦，我开始画了，稍等一下。"
     assert client.calls[0]["prompt"] == "画一只猫"
     assert client.calls[0]["request_id"] == "qq-image-request-start"
+    assert client.calls[0]["allow_knowledge"] is False
     assert client.calls[0]["image_urls"] == ()
     assert client.calls[0]["video_urls"] == ()
     assert client.calls[0]["use_agent"] is False

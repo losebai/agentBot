@@ -74,3 +74,10 @@ export interface BotInfo { id: string; adapter: string }
 /** Preserves the role/content wire shape from bai-web/src/services/ai/types.ts. */
 export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
 export interface ChatResponse { content: string; request_id: string; metadata?: import('./ai-types').CompletionMetadata | null }
+/** 托管状态不包含密钥、程序命令或本机路径。 */
+export interface NapCatStatus {
+  mode: 'external' | 'managed';
+  state: 'not_started' | 'starting' | 'running' | 'stopped' | 'failed' | 'plugin_disabled';
+  webui_ready: boolean;
+  error_code: string | null;
+}

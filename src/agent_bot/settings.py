@@ -17,6 +17,9 @@ from pymysql.err import DatabaseError, InterfaceError, OperationalError
 
 from agent_bot.config import CONFIG_DESCRIPTIONS, RuntimeConfig
 from agent_bot.database import database_connector
+from agent_bot.settings_errors import SettingsError as SettingsError
+from agent_bot.settings_errors import SettingsRevisionConflictError as SettingsRevisionConflictError
+from agent_bot.settings_errors import SettingsValidationError as SettingsValidationError
 from agent_bot.static_config import DYNAMIC_SETTING_NAMES, STATIC_SETTING_NAMES, static_values
 
 _SINGLETON_ID = 1
@@ -83,10 +86,6 @@ _EXPECTED_COLUMNS: dict[str, frozenset[str]] = {
 }
 
 
-class SettingsError(RuntimeError):
-    """配置数据库错误基类。"""
-
-
 class SettingsNotInitializedError(SettingsError):
     """配置数据库尚未导入初始快照。"""
 
@@ -97,14 +96,6 @@ class SettingsAlreadyInitializedError(SettingsError):
 
 class SettingsSchemaError(SettingsError):
     """配置数据库 schema 不受当前版本支持。"""
-
-
-class SettingsRevisionConflictError(SettingsError):
-    """配置快照在保存前已被其他进程更新。"""
-
-
-class SettingsValidationError(SettingsError):
-    """配置快照内容不符合当前受控模型。"""
 
 
 _P = ParamSpec("_P")

@@ -9,6 +9,12 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $bundle = (Resolve-Path -LiteralPath $BundleDirectory).Path
+$napcatDefine = @()
+if (Test-Path -LiteralPath (Join-Path $bundle 'runtime/napcat')) {
+    & uv run --no-sync python (Join-Path $PSScriptRoot 'prepare_napcat_payload.py') (Join-Path $bundle 'runtime/napcat') --check
+    if ($LASTEXITCODE -ne 0) { throw '安装器中的 NapCat 载荷校验失败。' }
+    $napcatDefine = @('/DWithNapCat=1')
+}
 foreach ($name in @("AgentBot.exe", "agent-bot.exe", "_internal", ".env.example", "WINDOWS_README.md")) {
     if (-not (Test-Path -LiteralPath (Join-Path $bundle $name))) {
         throw "Windows 程序包不完整：缺少 $name"
@@ -32,7 +38,7 @@ New-Item -ItemType Directory -Force -Path $output | Out-Null
 $installer = Join-Path $output "AgentBot-$Version-windows-x64-Setup.exe"
 # 编译失败不允许把同名旧产物当作新安装包；只删除明确的生成文件。
 if (Test-Path -LiteralPath $installer) { Remove-Item -LiteralPath $installer -Force }
-& $IsccPath "/DBundleDir=$bundle" "/DAppVersion=$Version" "/DOutputDir=$output" `
+& $IsccPath @napcatDefine "/DBundleDir=$bundle" "/DAppVersion=$Version" "/DOutputDir=$output" `
     (Join-Path $repoRoot "tools/windows-installer.iss")
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $installer -PathType Leaf)) {
     throw "Windows 安装器编译失败"

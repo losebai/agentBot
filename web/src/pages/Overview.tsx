@@ -1,8 +1,9 @@
 import { Alert, Button, Spin, Tag } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
-import type { BotInfo, ServiceStatus } from '../types';
+import type { BotInfo, NapCatStatus as NapCatObservation, ServiceStatus } from '../types';
+import { NapCatStatus } from '../components/NapCatStatus';
 
 /** 展示真实归档用量、当前对话活动与服务状态。 */
 export function Overview({ token }: { token: string }) {
@@ -11,14 +12,28 @@ export function Overview({ token }: { token: string }) {
   const [bots, setBots] = useState<BotInfo[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  /** 同时刷新运行时状态和机器人连接。 */
+  const [napcat, setNapcat] = useState<NapCatObservation>();
+  const [napcatError, setNapcatError] = useState('');
+  const pending = useRef<AbortController | null>(null);
+  /** 各观察接口独立失败；取消和身份检查一起阻止旧读取覆盖新状态。 */
   async function refresh() {
+    pending.current?.abort();
+    const controller = new AbortController();
+    pending.current = controller;
     setLoading(true); setError('');
-    try { const [next, connections] = await Promise.all([api.status(), api.bots()]); setStatus(next); setBots(connections); }
-    catch (failure) { setError(errorMessage(failure)); }
-    finally { setLoading(false); }
+    const [next, connections, managed] = await Promise.allSettled([
+      api.status(controller.signal), api.bots(controller.signal), api.napcatStatus(controller.signal),
+    ]);
+    if (controller.signal.aborted || pending.current !== controller) return;
+    if (next.status === 'fulfilled') setStatus(next.value);
+    else setError(errorMessage(next.reason));
+    if (connections.status === 'fulfilled') setBots(connections.value);
+    else setError(errorMessage(connections.reason));
+    if (managed.status === 'fulfilled') { setNapcat(managed.value); setNapcatError(''); }
+    else setNapcatError(errorMessage(managed.reason));
+    setLoading(false);
   }
-  useEffect(() => { void refresh(); }, [api]);
+  useEffect(() => { void refresh(); return () => pending.current?.abort(); }, [api]);
   const statistics = status?.statistics;
   // 统计故障独立显示，归档尚未升级时仍可查看机器人连接和服务就绪状态。
   const statisticsError = status?.statistics_error === 'AI_NOT_INITIALIZED'
@@ -47,6 +62,7 @@ export function Overview({ token }: { token: string }) {
       </div>
       {status.restart_required_fields.length > 0 && <Alert className="notice" showIcon type="warning" message={`以下设置需要重启：${status.restart_required_fields.join(', ')}`} />}
       <section className="panel capability-summary"><strong>AI 能力</strong><Tag>普通对话</Tag><Tag>Agent</Tag><Tag>媒体</Tag>{status.python_media&&<span>媒体存储：{status.python_media.code||(status.python_media.storage_available?'已就绪':'未就绪')}</span>}{status.python_ai && <span>Python 配置：{status.python_ai.code || (status.python_ai.initialized?'已初始化':'未初始化')} · 模型 {status.configured_model}</span>}{status.python_agent && <span>Agent 目录：{status.python_agent.code || (status.python_agent.initialized?'已初始化':'未初始化')} · 预设 {status.configured_agent || '使用聊天配置'}</span>}<Tag color={status.job_enabled?'green':'default'}>Job：{status.job_enabled?'已启用':'关闭'}</Tag><Tag color={status.auto_speak_enabled?'green':'default'}>自动发言：{status.auto_speak_enabled?'已启用':'关闭'}</Tag></section>
+      <NapCatStatus status={napcat} botCount={bots.length} error={napcatError} />
       <div className="overview-grid"><section className="panel"><div className="panel-header"><h2>机器人连接</h2><Tag>{bots.length} 个在线</Tag></div>
         {!bots.length ? <div className="empty-connections"><div className="connection-symbol">○</div><h3>等待机器人连接</h3><p>在 NapCat 中配置反向 WebSocket，连接此服务的<br /><code>/onebot/v11/ws</code>。</p></div>
           : bots.map(bot => <div className="bot-row" key={bot.id}><div className="bot-avatar">AB</div><div><strong>{bot.id}</strong><p>{bot.adapter}</p></div><Tag color="green">在线</Tag></div>)}</section>

@@ -31,6 +31,7 @@ from agent_bot.admin.models import (
     SettingsSnapshot,
     SettingsUpdate,
 )
+from agent_bot.admin.napcat_routes import install_napcat_routes
 from agent_bot.admin.plugin_routes import install_plugin_routes
 from agent_bot.admin.settings import SettingsService
 from agent_bot.admin.streaming import ManagedStreamingResponse
@@ -65,6 +66,14 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         require_token(authorization, admin.token.get_secret_value())
 
     router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
+    from agent_bot.napcat.contracts import NapCatStatus
+
+    def napcat_snapshot() -> NapCatStatus:
+        """仅桌面提供所属托管状态，普通服务不探测外部 NapCat。"""
+        supervisor = getattr(app.state, "napcat", None)
+        return supervisor.snapshot() if supervisor is not None else NapCatStatus()
+
+    install_napcat_routes(router, napcat_snapshot)
 
     @app.get("/api/v1/auth")
     async def auth_mode() -> dict[str, bool]:

@@ -18,7 +18,7 @@
 
 ## Windows 一键安装
 
-当前 Windows 发布版本：**0.5.0**。后续安装与更新以下载站的
+当前 Windows 发布版本：**0.5.1**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。
 
 适用于 Windows 10/11 x64，无需安装 Python、uv 或 Node.js。
@@ -77,6 +77,8 @@ Python 源码平铺在 `src/`，通过构建配置和开发安装钩子映射为
 - 默认内置 SQLite 保存运行配置、记忆、业务记录和持久任务队列；MySQL、Redis 均为可选后端。
 - Node.js 22，用于前端开发和源码构建；安装已构建的 wheel 后无需 Node.js。
 - QQ 接入需要 NapCat，支持 OneBot V11 正向或反向 WebSocket。
+- Windows 桌面版可托管固定版本 NapCat 并提供原生登录入口；已有部署保持外部接入。
+  载荷准备、目录与使用方式见 [NapCat 桌面托管](WINDOWS_README.md#napcat-桌面托管)。
 - 自动发言需要一个提供 `laya_predict` 的 MCP 服务，通过管理端目录登记。
 - 使用本地绘图或语音工具时，分别需要 ComfyUI 或 GPT-SoVITS。
 
@@ -183,7 +185,7 @@ uv run agent-bot
 
 使用正向 WebSocket 时，在管理页面的“机器人配置”QQ 设置中保存 `onebot_v11_ws_urls`，例如 `["ws://10.0.8.6:3001/"]`；启动时从数据库读取，旧 `.env` 中的空地址不会覆盖数据库。`onebot_v11_api_roots` 同样保存在数据库。地址修改后需重启适配器连接，页面会显示重启提示。静态 `DRIVER` 使用 `~fastapi+~websockets`（新默认值），NapCat Access Token 与 `.env`／环境变量中的 `ONEBOT_V11_ACCESS_TOKEN` 一致。
 
-OneBot Token 在网页“机器人配置 → QQ”中不回显；存在启动文件且未被环境变量覆盖时，可填写新 Token 并与其他运行草稿一起保存。管理 API 允许保存页面提供且严格授权的静态启动字段，值仍保存在 `.env`／启动文件中，不写入运行配置数据库；未编辑的字段和密钥保留。保存使用启动文件版本防止覆盖外部修改；静态密钥留空保留原值，可空密钥需明确点击“清除此密钥”才会清除。静态修改保存后保持当前连接与数据库后端，页面提示需要重启；手动使用已有桌面“服务 → 重启后端”应用新配置，并同步更新 NapCat Access Token。网页不控制进程。环境变量覆盖或缺少启动文件时相应字段只读；写入权限不足会明确报错，需修正实际启动环境或文件权限后再保存。
+OneBot Token 在网页“机器人配置 → QQ”中不回显；存在启动文件且未被环境变量覆盖时，可填写新 Token 并与其他运行草稿一起保存。管理 API 允许保存页面提供且严格授权的静态启动字段，值仍保存在 `.env`／启动文件中，不写入运行配置数据库；未编辑的字段和密钥保留。保存使用启动文件版本防止覆盖外部修改；静态密钥留空保留原值，可空密钥需明确点击“清除此密钥”才会清除。静态修改保存后保持当前连接与数据库后端，页面提示需要重启；手动使用已有桌面“服务 → 重启后端”应用新配置，并同步更新 NapCat Access Token。“插件管理 → QQ”可启动本窗口所属 NapCat 并打开登录页；不提供其他进程控制。环境变量覆盖或缺少启动文件时相应字段只读；写入权限不足会明确报错，需修正实际启动环境或文件权限后再保存。
 
 `CHAT_SESSION_SECRET` 用于生成会话 ID 与标签记忆身份摘要。修改并重启后会使用新的会话与身份命名空间；旧历史和记忆数据保留，但不再匹配原会话身份。供应商和 MCP 密钥不受影响。修改数据库类型或连接也只会在重启后选择新后端，不迁移已有数据。
 
@@ -345,7 +347,7 @@ Windows 独立桌面版可执行 `powershell -ExecutionPolicy Bypass -File tools
 ```powershell
 npm --prefix web run build
 uv build
-uv run python tools/check_package.py dist/agent_bot-0.5.0-py3-none-any.whl
+uv run python tools/check_package.py dist/agent_bot-0.5.1-py3-none-any.whl
 ```
 
 wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行模块、静态界面和 SQL 资源，并排除凭据、缓存、日志及媒体文件。
@@ -354,7 +356,7 @@ wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行�
 
 ```powershell
 uv venv --python 3.12
-uv pip install "D:\packages\agent_bot-0.5.0-py3-none-any.whl"
+uv pip install "D:\packages\agent_bot-0.5.1-py3-none-any.whl"
 .venv\Scripts\agent-bot.exe --help
 ```
 

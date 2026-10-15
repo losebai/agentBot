@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agent_bot.models import AgentToolName, ChatToolName
-from agent_bot.services.chat.routing import ChatRouteSelector
+from agent_bot.services.chat.routing import ChatRoute, ChatRouteSelector
 from agent_bot.services.chat_tools import (
     ChatToolContext,
     ChatToolError,
@@ -30,15 +30,16 @@ def _task() -> ImageTask:
 
 
 def test_management_intent_routes_to_agent_without_generation_tools() -> None:
-    """列出和取消意图无需触发生图路由也能进入 Agent。"""
+    """任务管理授权独立于生图和联网能力，不会隐式授予图片生成工具。"""
 
     route = ChatRouteSelector().select(
         "取消我上一张图片的任务",
         available_tools=("local_workflow_tasks", "local_workflow_cancel"),
         web_search_enabled=False,
     )
-    assert route.chat_tools == ("local_workflow_tasks", "local_workflow_cancel")
-    assert route.use_agent
+    assert route == ChatRoute(
+        chat_tools=("local_workflow_tasks", "local_workflow_cancel"), web_search=False,
+    )
 
 
 def _context(service: object | None, **overrides: object) -> ChatToolContext:

@@ -147,9 +147,9 @@ def test_local_workflow_authorization_is_independent_of_message_wording() -> Non
 def test_route_keeps_authorized_mention_available_and_selects_other_tools(
     prompt: str, expected: tuple[str, ...], web_search_enabled: bool,
 ) -> None:
-    """联网工具仅由配置控制，消息措辞和本地工具不影响其可用性。"""
+    """路由保留本地授权与联网配置，Agent 执行入口另由聊天服务决定。"""
 
-    from agent_bot.services.chat.routing import ChatRouteSelector
+    from agent_bot.services.chat.routing import ChatRoute, ChatRouteSelector
 
     allowed: tuple[ChatToolName, ...] = (
         "naraka_query", "naraka_search", "mention_member", "local_workflow_list",
@@ -158,9 +158,7 @@ def test_route_keeps_authorized_mention_available_and_selects_other_tools(
     route = ChatRouteSelector().select(
         prompt, available_tools=allowed, web_search_enabled=web_search_enabled,
     )
-    assert route.chat_tools == expected
-    assert route.web_search is web_search_enabled
-    assert route.use_agent is bool(expected or web_search_enabled)
+    assert route == ChatRoute(chat_tools=expected, web_search=web_search_enabled)
     assert ChatRouteSelector().select(prompt, available_tools=()).chat_tools == ()
 
 
@@ -169,18 +167,16 @@ def test_route_keeps_authorized_mention_available_and_selects_other_tools(
 def test_route_does_not_grant_mention_when_unavailable(
     prompt: str, web_search_enabled: bool,
 ) -> None:
-    """联网能力可单独进入 Agent，但不会授予未授权的本地工具。"""
+    """联网能力仅由配置控制，普通聊天不会因此获得未授权的本地工具。"""
 
-    from agent_bot.services.chat.routing import ChatRouteSelector
+    from agent_bot.services.chat.routing import ChatRoute, ChatRouteSelector
 
     route = ChatRouteSelector().select(
         prompt,
         available_tools=("naraka_query", "naraka_search"),
         web_search_enabled=web_search_enabled,
     )
-    assert route.chat_tools == ()
-    assert route.web_search is web_search_enabled
-    assert route.use_agent is web_search_enabled
+    assert route == ChatRoute(chat_tools=(), web_search=web_search_enabled)
 
 
 def compression(revision: int, session_id: str = "s") -> MemoryCompression:

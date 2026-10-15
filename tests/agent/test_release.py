@@ -60,4 +60,4 @@ def test_package_versions_match():
 
     root = Path(__file__).resolve().parents[2]
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    assert agent_bot.__version__ == project["project"]["version"] == "0.5.0"
+    assert agent_bot.__version__ == project["project"]["version"] == "0.5.1"

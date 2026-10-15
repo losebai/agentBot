@@ -330,16 +330,20 @@ async def test_nested_composer_does_not_reenter_outer_chat_admission() -> None:
 
 @pytest.mark.asyncio
 async def test_composer_runs_when_outer_capacity_is_saturated_without_bypassing_chat() -> None:
-    """Reply composition has separate capacity while ordinary direct/queued chat stays limited."""
+    """独立 Composer 不占普通额度；直接和排队聊天满额均拒绝，结束后释放额度。"""
 
     outer_started: list[str] = []
     saturated = asyncio.Event()
     release = asyncio.Event()
 
     async def complete(**options: object) -> str:
-        """Hold both ordinary model slots until independent composition completes."""
+        """占满普通模型名额，并核对独立表达请求没有历史或工具权限。"""
 
         if options.get("request_id") == "inner-mention":
+            assert options["use_agent"] is False
+            assert options["use_web_search"] is False
+            assert options["allow_knowledge"] is False
+            assert "chat_tools" not in options
             return "独立回复"
         outer_started.append(str(options["session_id"]))
         if len(outer_started) == 2:
@@ -356,15 +360,19 @@ async def test_composer_runs_when_outer_capacity_is_saturated_without_bypassing_
         await asyncio.wait_for(saturated.wait(), timeout=0.5)
         with pytest.raises(ChatBusyError):
             await service.ask("c", "普通请求不能绕过上限")
-        tasks.append(asyncio.create_task(
-            service.generate_queued("queued", "普通排队请求仍须等候", request_id="queued")
-        ))
+        with pytest.raises(ChatBusyError):
+            await service.generate_queued("queued", "排队请求也须立即拒绝", request_id="queued")
         reply = await asyncio.wait_for(composer.compose(reminder_intent()), timeout=0.5)
         assert reply is not None and reply.text == "独立回复"
         assert set(outer_started) == {"a", "b"}
+        assert service._store.context("group:outer").messages == ()
     finally:
         release.set()
         await asyncio.gather(*tasks)
+    assert await service.generate_queued("queued", "释放后允许执行", request_id="queued") == (
+        "普通模型回复"
+    )
+    assert set(outer_started) == {"a", "b", "queued"}
 
 
 @pytest.mark.asyncio

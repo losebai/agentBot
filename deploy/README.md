@@ -144,7 +144,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_windows.ps1 -Bui
 每次 Windows 安装器构建都会在 `dist/windows/installer/` 生成发布所需文件。
 版本采用 `主版本.次版本.修订号`，发布新程序时同步更新 `pyproject.toml` 和
 `src/agent_bot/__init__.py` 中的版本再构建；安装器的 `AppVersion`、文件名和
-`latest.json` 使用同一发布版本。当前已发布的 Windows 程序为 `0.5.0`。
+`latest.json` 使用同一发布版本。当前已发布的 Windows 程序为 `0.5.1`。
 安装脚本读取当前用户的安装登记，只有服务器版本更高时升级；相同版本跳过下载，
 本机版本更高时保留现有安装。升级成功后由安装器更新登记版本，脚本不提前改写。
 

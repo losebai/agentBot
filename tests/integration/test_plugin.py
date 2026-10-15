@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import threading
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock
@@ -236,10 +237,11 @@ async def test_native_mention_preflight_uses_final_tools_and_chat_model(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("answer", ["甲乙丙丁戊", "甲乙丙丁戊己庚"])
 async def test_model_answer_enters_gateway_once_without_rewriting_or_truncation_marker(
-    monkeypatch: pytest.MonkeyPatch, chat_plugin, reply_chat: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch, chat_plugin, reply_chat: AsyncMock, answer: str,
 ) -> None:
-    """已有模型回答须适配来源后经网关裁剪，不再次生成或注入固定文字。"""
+    """原文经网关发送一次，超限改为完整文件，投递后才提交历史。"""
 
     matcher = Mock(send=AsyncMock(), finish=AsyncMock(side_effect=FinishedException))
     with pytest.raises(FinishedException):
@@ -249,7 +251,7 @@ async def test_model_answer_enters_gateway_once_without_rewriting_or_truncation_
         )
     job = chat_plugin.conversation_queue.enqueue.await_args.args[0]
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_max_reply_chars", 5)
-    generate = AsyncMock(return_value="甲乙丙丁戊己庚")
+    generate = AsyncMock(return_value=answer)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
 
     @asynccontextmanager
@@ -262,26 +264,43 @@ async def test_model_answer_enters_gateway_once_without_rewriting_or_truncation_
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
     gateway = chat_plugin._reply_gateway
     send = AsyncMock(wraps=gateway.send_bot_exact_part)
+    send_file = AsyncMock(wraps=gateway.send_reply_file)
     monkeypatch.setattr(gateway, "send_bot_exact_part", send)
+    monkeypatch.setattr(gateway, "send_reply_file", send_file)
+    as_file = len(answer) > 5
 
     async def commit_after_send(*_args, **_kwargs):
         """历史提交必须发生在生成原文完成 OneBot 投递之后。"""
-        bot.send_private_msg.assert_awaited_once_with(
-            user_id=10001, message=Message("甲乙丙丁戊"),
-        )
+        if as_file:
+            # 完整文件必须先上传至原私聊，不发送裁剪正文或额外提示。
+            bot.call_api.assert_awaited_once()
+            upload = bot.call_api.await_args
+            assert upload.args == ("upload_private_file",)
+            assert upload.kwargs["user_id"] == 10001
+            assert upload.kwargs["name"].endswith(".txt")
+            assert base64.b64decode(
+                upload.kwargs["file"].removeprefix("base64://"),
+            ).decode("utf-8") == answer
+            bot.send_private_msg.assert_not_awaited()
+        else:
+            bot.send_private_msg.assert_awaited_once_with(user_id=10001, message=Message(answer))
+            bot.call_api.assert_not_awaited()
 
     commit = AsyncMock(side_effect=commit_after_send)
     monkeypatch.setattr(chat_plugin.chat_service, "commit_queued", commit)
     processor = chat_plugin._ConversationProcessor()
     result = await processor.generate(job)
+    assert result.reply_as_file is as_file
+    assert await processor.delivery_count(job, result) == 1
     await processor.deliver_part(job, result, 0)
     await processor.commit(job, result)
-    assert send.await_count == 1
-    assert isinstance(send.await_args.kwargs["reply"], GeneratedReply)
-    assert send.await_args.kwargs["reply"].text == "甲乙丙丁戊"
+    assert send.await_count + send_file.await_count == 1
+    delivery = send_file if as_file else send
+    assert isinstance(delivery.await_args.kwargs["reply"], GeneratedReply)
+    assert delivery.await_args.kwargs["reply"].text == answer
     generate.assert_awaited_once()
     commit.assert_awaited_once()
-    assert commit.await_args.args[2] == "甲乙丙丁戊"
+    assert commit.await_args.args[2] == answer
     reply_chat.assert_not_awaited()
 
 

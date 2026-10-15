@@ -23,6 +23,10 @@ src/static/assets/
 .idea
 /docs/
 data/
+runtime/
+# 本地准备的第三方 Shell 不进入源码仓库。
+/prepared/
+/deploy/NapCat.Shell.zip
 *.sqlite
 *.sqlite3
 *.db

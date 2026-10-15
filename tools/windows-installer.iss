@@ -45,6 +45,10 @@ Source: "{#BundleDir}\agent-bot.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BundleDir}\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#BundleDir}\.env.example"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BundleDir}\WINDOWS_README.md"; DestDir: "{app}"; Flags: ignoreversion
+; 只有明确校验过的程序载荷可加入安装包，配置和 QQ 资料均不在此目录。
+#ifdef WithNapCat
+Source: "{#BundleDir}\runtime\napcat\*"; DestDir: "{app}\runtime\napcat"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 
 [Icons]
 Name: "{group}\AgentBot"; Filename: "{app}\AgentBot.exe"; WorkingDir: "{app}"

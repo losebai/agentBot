@@ -1,5 +1,7 @@
 """QQ 媒体工具保持原令牌和参数校验边界。"""
 
+from unittest.mock import AsyncMock
+
 import pytest
 from pydantic import SecretStr
 
@@ -12,16 +14,17 @@ from agent_bot.services.chat_tools import ChatToolContext, build_chat_tool_regis
 from agent_bot.services.tool_sessions import ToolSessionStore
 
 
-async def test_media_schema_and_revoked_qq_token():
-    """本地受限 schema 可投影，调用仍需当前有效令牌和原始参数校验。"""
+async def test_media_schema_and_revoked_qq_token(monkeypatch: pytest.MonkeyPatch):
+    """本地 schema 保留参数校验，撤销会话返回过期错误且不执行媒体工具。"""
     store = ToolSessionStore(ttl_seconds=30, max_sessions=2)
     names = frozenset({"local_workflow_generate_image", "tts_generate", "local_workflow_cancel"})
     token = await store.create(ChatToolContext(session_id="g", user_id="u", allowed_tools=names))
-    bridge = ChatToolBridge(
-        ChatMcpServer(
-            store=store, registry=build_chat_tool_registry(), allowed_hosts=["localhost:*"]
-        )
+    server = ChatMcpServer(
+        store=store, registry=build_chat_tool_registry(), allowed_hosts=["localhost:*"]
     )
+    call_tool = AsyncMock(wraps=server.call_tool)
+    monkeypatch.setattr(server, "call_tool", call_tool)
+    bridge = ChatToolBridge(server)
     authority = ExecutionAuthority(
         entry="qq", allowed_tools=tuple(names), chat_token=SecretStr(token)
     )
@@ -35,10 +38,12 @@ async def test_media_schema_and_revoked_qq_token():
             authority,
         )
     await store.revoke(token)
-    with pytest.raises(AgentError, match="AGENT_TOOL_UNAUTHORIZED"):
+    with pytest.raises(AgentError, match="AGENT_TOOL_SESSION_EXPIRED") as error:
         await bridge.call(
             ToolCall(call_id="2", name="tts_generate", arguments={"text": "你好"}), authority
         )
+    assert error.value.status_code == 403
+    call_tool.assert_not_awaited()
 
 
 def test_local_projection_does_not_relax_remote_schema():

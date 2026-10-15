@@ -2,13 +2,14 @@ import { Alert, Button, Empty, Spin, Switch, Tag } from 'antd';
 import { ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
+import { NapCatPlugin } from '../components/NapCatPlugin';
 import type { PluginInfo, SettingsSnapshot } from '../types';
 
 const statusLabels: Record<PluginInfo['status'], string> = {
   disabled: '未启用', prepared: '已准备', running: '运行中', stopped: '已停止', failed: '启动失败',
 };
 
-/** 内置插件只保存启动选择，网页不提供进程重启或动态卸载能力。 */
+/** 插件选择保存后重启生效；QQ 卡片另提供所属 NapCat 启动与登录入口。 */
 export function Plugins({ token }: { token: string }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
@@ -80,7 +81,7 @@ export function Plugins({ token }: { token: string }) {
     {pendingRestart && <Alert message="重启后生效" description="使用已有的“服务 → 重启后端”，或手动重启服务。" type="warning" showIcon className="notice" />}
     {loading ? <div className="loading"><Spin /></div> : <div className="settings-card">
       {!plugins.length && <Empty description="没有内置插件" />}
-      {plugins.map(plugin => <div className="setting-row" key={plugin.id}>
+      {plugins.map(plugin => <div key={plugin.id}><div className="setting-row">
         <div className="setting-description"><label htmlFor={`plugin-${plugin.id}`}>{plugin.name}</label>
           <Tag>{statusLabels[plugin.status]}</Tag><code>{plugin.id} · {plugin.version}</code>
           <p>{plugin.description}</p></div>
@@ -90,7 +91,9 @@ export function Plugins({ token }: { token: string }) {
             setSelected(previous => enabled ? [...previous, plugin.id] : previous.filter(id => id !== plugin.id));
           }} />
           <small>当前进程：{plugin.enabled ? '已启用' : '未启用'}；已保存：{plugin.saved_enabled ? '启用' : '停用'}</small>
-        </div></div>)}
+        </div></div>
+        {plugin.id === 'qqbot' && <NapCatPlugin api={api} />}
+      </div>)}
     </div>}
   </div>;
 }

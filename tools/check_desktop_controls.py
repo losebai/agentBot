@@ -2,7 +2,6 @@
 
 import argparse
 import os
-import shutil
 import socket
 import subprocess
 import tempfile
@@ -10,6 +9,7 @@ import time
 from pathlib import Path
 
 import httpx
+from windows_smoke_files import copy_without_qq_payload
 
 
 def free_port() -> int:
@@ -43,7 +43,8 @@ def check(bundle: Path, screenshot: Path | None) -> None:
 
     with tempfile.TemporaryDirectory(prefix="agentbot-controls-") as temporary:
         deployment = Path(temporary) / "desktop"
-        shutil.copytree(bundle, deployment)
+        # 原生菜单验收只测试本项目后端，禁止意外启动真实 QQ。
+        copy_without_qq_payload(bundle, deployment)
         prepare_first_run(deployment)
         initial, changed = free_port(), free_port()
         save_port(deployment, initial)

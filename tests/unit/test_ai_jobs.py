@@ -12,7 +12,7 @@ from agent_bot.config import PluginConfig
 from agent_bot.integrations.onebot.ai_jobs import AiJobPoller
 from agent_bot.integrations.redis_queue import RedisConversationQueueStore
 from agent_bot.models import AiJobResult, ChatContext
-from agent_bot.services.chat.routing import ChatRouteSelector
+from agent_bot.services.chat.routing import ChatRoute, ChatRouteSelector
 from agent_bot.services.conversation_queue import ConversationJob, PersistedGeneratedReply
 
 
@@ -42,12 +42,11 @@ def job_result() -> AiJobResult:
 
 
 def test_job_is_offered_without_a_user_tool_keyword_and_serializes_bot_identity():
-    """启用后普通对话可由模型自主选 Job，并携带原机器人身份。"""
+    """已授权 Job 不依赖关键词或联网开关，调用上下文携带原机器人身份。"""
     route = ChatRouteSelector().select(
         "你好，明天提醒我开会", available_tools=("job",), web_search_enabled=False,
     )
-    assert route.chat_tools == ("job",)
-    assert route.use_agent
+    assert route == ChatRoute(chat_tools=("job",), web_search=False)
     context = ChatContext(botId="90001", scene="private", senderId="10001")
     assert context.model_dump(by_alias=True)["botId"] == "90001"
     assert "botId" not in ChatContext(

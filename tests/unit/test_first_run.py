@@ -14,6 +14,18 @@ from agent_bot.bootstrap import load_bootstrap_config, load_static_config
 from agent_bot.settings import DatabaseParams, SettingsStore
 
 
+def test_desktop_first_run_can_explicitly_enable_managed_napcat(tmp_path):
+    """桌面确认已有有效载荷后显式启用；再次初始化不能覆盖用户模式。"""
+    from agent_bot.first_run import prepare_first_run
+
+    prepare_first_run(tmp_path, enable_managed_napcat=True)
+    env = tmp_path / ".env"
+    assert "AGENT_BOT_NAPCAT_MODE=managed" in env.read_text(encoding="utf-8")
+    original = env.read_bytes()
+    prepare_first_run(tmp_path, enable_managed_napcat=False)
+    assert env.read_bytes() == original
+
+
 @pytest.fixture(autouse=True)
 def clean_startup_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """屏蔽开发机启动配置，保证测试只接触临时目录。"""

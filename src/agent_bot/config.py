@@ -684,6 +684,8 @@ class RuntimeConfig(PluginConfig):
     """合并启动静态配置与数据库动态配置后的有效快照，供业务统一校验和消费。"""
 
     app_enabled_plugins: list[str] = Field(default_factory=lambda: ["qqbot"])
+    agent_bot_napcat_mode: Literal["external", "managed"] = "external"
+    agent_bot_napcat_webui_port: int = Field(default=6099, ge=1, le=65535)
 
     @field_validator("app_enabled_plugins")
     @classmethod
@@ -766,6 +768,8 @@ class RuntimeConfig(PluginConfig):
 
 CONFIG_DESCRIPTIONS: dict[str, str] = {
     "app_enabled_plugins": "启用的内置插件 (重启生效)",
+    "agent_bot_napcat_mode": "NapCat 静态模式 (插件启动仅作用于当前实例)",
+    "agent_bot_napcat_webui_port": "NapCat 登录页端口 (启动配置，重启生效)",
     # AI 服务
     "chat_python_agent_code": "Python Agent 预设代码 (空值使用当前聊天模型与提示词)",
     "chat_python_search_mcp_code": "Python 网页搜索 MCP 服务代码 (search 分类)",

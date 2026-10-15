@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-bot"
-version = "0.5.0"
+version = "0.5.1"
 description = "Independent Agent bot service with browser administration"
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -37,7 +37,10 @@ agent-bot = "agent_bot.__main__:main"
 chat = "agent_bot.bot_cli:main"
 
 [project.optional-dependencies]
-desktop = ["pywebview>=6.0,<7; sys_platform == 'win32'"]
+desktop = [
+  "pywebview>=6.0,<7; sys_platform == 'win32'",
+  "pywin32>=311; sys_platform == 'win32'",
+]
 dev = [
   "nonebug>=0.4.3,<1.0",
   "fakeredis>=2.31,<3.0",
@@ -58,6 +61,7 @@ exclude = [
   "/.pytest_cache", "/.ruff_cache", "/.coverage*", "/dist", "/build",
   "/.env", "/.env.*",
   "/data", "/logs", "/tts", "*.log", "tts-*.wav",
+  "/runtime", "/prepared", "/deploy/NapCat.Shell.zip",
   "*.db", "*.sqlite", "*.sqlite3", "*-wal", "*-shm", "*-journal",
   ".pytest-*-results.txt", ".ruff-*-results.txt",
   "/dist-ci", "/reports", "/.uv-cache", "/.npm", "/deploy/runtime.env", "/image.env",

@@ -181,6 +181,16 @@ h1 { font-size: 21px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .record-detail { padding: 22px; overflow-wrap: anywhere; }
 .record-detail pre { white-space: pre-wrap; background: #f7f7f7; padding: 14px; border-radius: 6px; }
 .record-detail h3 { font-size: 14px; margin-top: 24px; }
+/* 用量字段保持精确数字；列表压成两列，详情随可用宽度换行。 */
+.call-token-usage dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; margin: 0; }
+.call-token-usage dt { color: var(--text-secondary); font-size: 11px; }
+.call-token-usage dd { margin: 4px 0 0; font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.call-token-usage p { color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
+.call-token-usage.compact { min-width: 190px; }
+.call-token-usage.compact dl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; }
+.call-token-usage.compact dl > div { display: flex; align-items: baseline; gap: 6px; }
+.call-token-usage.compact dl > div:last-child { grid-column: 1 / -1; }
+.call-token-usage.compact dd { font-size: 13px; margin: 0; }
 .result-metadata { color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
 
 /* 弹窗中的长表单独立滚动，保留原生校验和键盘焦点。 */

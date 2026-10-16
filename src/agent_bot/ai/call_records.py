@@ -11,7 +11,7 @@ from pydantic import Field
 
 from agent_bot.agent.contracts import StepView
 from agent_bot.ai.call_origin import command_call
-from agent_bot.ai.contracts import AiModel, Page
+from agent_bot.ai.contracts import AiModel, Page, TokenUsage
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
 
@@ -221,7 +221,7 @@ def insert_record(connection, values):
 
 
 class CallSummary(AiModel):
-    """列表不携带正文、凭据摘要或大 JSON。"""
+    """列表提供有界用量，不携带正文、凭据摘要或大 JSON。"""
 
     id: int
     session_Id: str | None
@@ -235,6 +235,7 @@ class CallSummary(AiModel):
     source_id: str
     execution_id: str | None
     status: str
+    usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
 class CallDetail(CallSummary):
@@ -260,30 +261,59 @@ class CallStatistics(AiModel):
     cache_hit_rate: float | None = Field(default=None, ge=0, le=1)
 
 
+def _usage_number(*fields: str) -> str:
+    """仅解析固定 JSON 数值路径，兼容历史协议及超长归档，不将空值视为零。"""
+    paths = [f"$.{prefix}.{field}" for prefix in ("usage", "original_data.usage")
+             for field in fields]
+    parts = []
+    for path in paths:
+        value = f"JSON_EXTRACT(data, '{path}')"
+        parts.append(
+            f"CASE WHEN JSON_TYPE({value}) IN ('INTEGER','DOUBLE','integer','real') "
+            f"THEN {value} END"
+        )
+    return "COALESCE(" + ",".join(parts) + ")" if len(parts) > 1 else parts[0]
+
+
+def _usage_expressions() -> dict[str, str]:
+    """列表、详情和累计统计共用协议映射；总量仅在输入输出均已知时补算。"""
+    prompt = _usage_number("prompt_tokens", "input_tokens")
+    completion = _usage_number("completion_tokens", "output_tokens")
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": f"COALESCE({_usage_number('total_tokens')},{prompt}+{completion})",
+        "cached_tokens": _usage_number(
+            "cached_tokens", "prompt_tokens_details.cached_tokens",
+            "input_tokens_details.cached_tokens",
+        ),
+        "cache_prompt_tokens": f"COALESCE({_usage_number('cache_prompt_tokens')},{prompt})",
+    }
+
+
+def _usage_columns() -> str:
+    """查询只返回五个用量数值，列表不为显示统计而加载整个归档 JSON。"""
+    return ",".join(f"{value} AS usage_{field}"
+                    for field, value in _usage_expressions().items())
+
+
+def _usage_from_row(row: dict[str, Any]) -> TokenUsage:
+    """将查询用量列收拢为契约；未上报缓存时不产生虚假的缓存输入分母。"""
+    values = {field: row.pop(f"usage_{field}") for field in TokenUsage.model_fields}
+    if values["cached_tokens"] is None:
+        values["cache_prompt_tokens"] = None
+    return TokenUsage.model_validate(values)
+
+
 class CallRecordStore(AiDatabase):
     """统一记录分页和幂等历史导入，时间相同时由自增主键稳定排序。"""
 
     async def statistics(self) -> CallStatistics:
         """在数据库内聚合统一记录，避免分页遗漏或重复累加原始执行表。"""
-        def number(*fields: str) -> str:
-            """仅引用固定 JSON 路径，兼容旧协议字段、超长归档和两种后端的 JSON null。"""
-            paths = [f"$.{prefix}.{field}" for prefix in ("usage", "original_data.usage")
-                     for field in fields]
-            parts = []
-            for path in paths:
-                value = f"JSON_EXTRACT(data, '{path}')"
-                parts.append(
-                    f"CASE WHEN JSON_TYPE({value}) IN ('INTEGER','DOUBLE','integer','real') "
-                    f"THEN {value} END"
-                )
-            return "COALESCE(" + ",".join(parts) + ")" if len(parts) > 1 else parts[0]
-
-        prompt = number("prompt_tokens", "input_tokens")
-        completion = number("completion_tokens", "output_tokens")
-        total = number("total_tokens")
-        cached = number("cached_tokens", "prompt_tokens_details.cached_tokens",
-                        "input_tokens_details.cached_tokens")
-        cache_prompt = f"COALESCE({number('cache_prompt_tokens')},{prompt})"
+        usage = _usage_expressions()
+        prompt, completion = usage["prompt_tokens"], usage["completion_tokens"]
+        total, cached = usage["total_tokens"], usage["cached_tokens"]
+        cache_prompt = usage["cache_prompt_tokens"]
         row = await self.run(lambda c: query(
             c,
             "SELECT COUNT(CASE WHEN system_kind IS NULL THEN 1 END) AS conversation_count, "
@@ -349,15 +379,17 @@ class CallRecordStore(AiDatabase):
         return await self.run(write, write=True)
 
     async def get_call(self, id: int):
-        """按目标主键读取详情，原生 Agent 同时附带该执行的脱敏工具负载。"""
+        """详情附带统一用量，原生 Agent 同时提供该执行的脱敏工具负载。"""
         row = await self.run(
             lambda c: query(
-                c, f"SELECT *, {_SYSTEM_KIND} AS system_kind FROM {_TABLE} WHERE id=%s",
+                c, f"SELECT *, {_SYSTEM_KIND} AS system_kind, {_usage_columns()} "
+                f"FROM {_TABLE} WHERE id=%s",
                 (id,), one=True,
             )
         )
         if row is None:
             raise AiError("AI_RECORD_NOT_FOUND", status_code=404)
+        row["usage"] = _usage_from_row(row)
         for key in ("data", "request_context"):
             row[key] = json_value(row[key])
         if row["source"] == "python:agent_bot_agent_run" and row.get("execution_id"):
@@ -378,7 +410,7 @@ class CallRecordStore(AiDatabase):
         self, *, type=None, session_id=None, status=None, limit=50, cursor=None,
         category=None, system_kind=None,
     ):
-        """分组和类型在数据库分页前筛选，游标绑定完整条件，避免跨标签串页。"""
+        """分页前筛选分组和类型，并只投影用量数值；游标绑定完整条件避免串页。"""
         page_limit(limit)
         if type not in {None, "ordinary", "agent", "auto_speak", "unknown"}:
             raise AiError("AI_INVALID_PAGE", status_code=422)
@@ -421,13 +453,16 @@ class CallRecordStore(AiDatabase):
         rows = await self.run(
             lambda c: query(
                 c,
-                f"SELECT {sql_columns(set(CallSummary.model_fields) - {'system_kind'})}, "
-                f"{_SYSTEM_KIND} AS system_kind FROM {_TABLE}{where} "
+                f"SELECT {sql_columns(set(CallSummary.model_fields) - {'system_kind', 'usage'})}, "
+                f"{_SYSTEM_KIND} AS system_kind, {_usage_columns()} FROM {_TABLE}{where} "
                 "ORDER BY create_time DESC,id DESC LIMIT %s",
                 (*args, limit + 1),
             )
         )
-        items = [CallSummary.model_validate(row) for row in rows[:limit]]
+        items = []
+        for row in rows[:limit]:
+            row["usage"] = _usage_from_row(row)
+            items.append(CallSummary.model_validate(row))
         after = (
             base64.urlsafe_b64encode(
                 json.dumps(

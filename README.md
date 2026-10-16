@@ -18,7 +18,7 @@
 
 ## Windows 一键安装
 
-当前 Windows 发布版本：**0.5.1**。后续安装与更新以下载站的
+当前 Windows 发布版本：**0.5.2**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。
 
 适用于 Windows 10/11 x64，无需安装 Python、uv 或 Node.js。

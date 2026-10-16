@@ -27,6 +27,9 @@ _CONTROL_AFTER_GENERATE_VALUES = frozenset(
 )
 # 两种采样协议的噪声字段不同，必须写入真正参与执行的字段而非新增无效 seed。
 _SAMPLER_SEED_FIELDS = {"KSampler": "seed", "SamplerCustom": "noise_seed"}
+_FIXED_REFERENCE_PATH = re.compile(
+    r"(?:chat-reference|dispatch-chat-reference)/[a-f0-9]{64}\.(png|jpg|webp)"
+)
 
 WorkflowNode: TypeAlias = dict[str, Any]
 ApiWorkflow: TypeAlias = dict[str, WorkflowNode]
@@ -652,7 +655,7 @@ def prepare_workflow_prompt(
 
 
 def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
-    """校验单采样编辑链；固定底图只允许受控摘要文件，两种采样协议不能混用。"""
+    """校验单采样编辑链，允许用户画布追加一张受控身份底图。"""
     if not definition.executable:
         raise WorkflowValidationError("workflow bindings are incomplete")
     if definition.workflow_type == "text_to_image":
@@ -693,21 +696,11 @@ def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
             node = workflow[node_id]
             if node["class_type"] != class_type or not isinstance(node["inputs"].get(field), str):
                 raise WorkflowValidationError("image workflow binding is invalid")
-        if definition.workflow_type == "fixed_reference" and not re.fullmatch(
-            r"(?:chat-reference|dispatch-chat-reference)/[a-f0-9]{64}\.(png|jpg|webp)",
-            workflow[definition.input_image_node_id]["inputs"]["image"],
-        ):
-            raise WorkflowValidationError("fixed reference path is invalid")
         if workflow[definition.output_node_id]["class_type"] not in _OUTPUT_NODE_TYPES:
             raise WorkflowValidationError("image workflow output is invalid")
-        for class_types, expected in (
-            ({"LoadImage"}, definition.input_image_node_id),
-            (set(_SAMPLER_SEED_FIELDS), definition.seed_node_id),
-        ):
-            if [key for key, node in workflow.items() if node["class_type"] in class_types] != [
-                expected,
-            ]:
-                raise WorkflowValidationError("image workflow nodes are ambiguous")
+        if [key for key, node in workflow.items() if node["class_type"] in
+                _SAMPLER_SEED_FIELDS] != [definition.seed_node_id]:
+            raise WorkflowValidationError("image workflow nodes are ambiguous")
         outputs = [
             key for key, node in workflow.items() if node["class_type"] in _OUTPUT_NODE_TYPES
         ]
@@ -719,17 +712,14 @@ def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
             raise WorkflowValidationError("image workflow bindings are disconnected")
         encoder = workflow[definition.negative_node_id]["inputs"]
         image_link = [definition.input_image_node_id, 0]
-        if encoder.get("images.image_1") != image_link or any(
-            name.startswith("images.") and name != "images.image_1" for name in encoder
-        ):
-            raise WorkflowValidationError("image workflow reference is ambiguous")
+        has_identity_reference = _validate_image_references(workflow, definition)
         sampler = workflow[definition.seed_node_id]["inputs"]
         for field, slot in (("positive", 0), ("negative", 1), ("latent_image", 2)):
             if sampler.get(field) != [definition.negative_node_id, slot]:
                 raise WorkflowValidationError("image workflow conditioning is invalid")
         generators = [key for key, node in workflow.items() if node["class_type"] == "TextGenerate"]
-        if definition.workflow_type == "fixed_reference":
-            # 固定角色使用 Chat LLM 的编辑指令，不再加载 PE 模型重复增强。
+        if definition.workflow_type == "fixed_reference" or has_identity_reference:
+            # 单图 PE 看不到双图身份关系，固定角色均直接使用 Chat LLM 的编辑指令。
             if generators or encoder.get("prompt") != [definition.positive_node_id, 0]:
                 raise WorkflowValidationError("fixed reference instruction is invalid")
             return
@@ -757,6 +747,40 @@ def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
             raise WorkflowValidationError("image workflow enhanced prompt is invalid")
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise WorkflowValidationError("image workflow bindings are invalid") from exc
+
+
+def _validate_image_references(
+    workflow: ApiWorkflow, definition: WorkflowDefinition,
+) -> bool:
+    """首图绑定唯一用户画布，第二图仅允许受控目录内的固定身份图。"""
+    encoder = workflow[definition.negative_node_id]["inputs"]
+    image_ids = {definition.input_image_node_id}
+    image_fields = {"images.image_1"}
+    if encoder.get("images.image_1") != [definition.input_image_node_id, 0]:
+        raise WorkflowValidationError("image workflow reference is ambiguous")
+    reference = encoder.get("images.image_2")
+    fixed_id = (
+        definition.input_image_node_id if definition.workflow_type == "fixed_reference" else None
+    )
+    if reference is not None:
+        if (definition.workflow_type != "image_to_image" or not _is_api_link(reference)
+                or reference[1] != 0 or reference[0] in image_ids):
+            raise WorkflowValidationError("image workflow reference is ambiguous")
+        fixed_id = _linked_node_id(reference)
+        image_ids.add(fixed_id)
+        image_fields.add("images.image_2")
+    if fixed_id is not None:
+        fixed = workflow[fixed_id]
+        path = fixed["inputs"].get("image")
+        if (fixed["class_type"] != "LoadImage" or not isinstance(path, str)
+                or not _FIXED_REFERENCE_PATH.fullmatch(path)):
+            raise WorkflowValidationError("fixed reference path is invalid")
+    if ({key for key, node in workflow.items() if node["class_type"] == "LoadImage"}
+            != image_ids or any(
+                name.startswith("images.") and name not in image_fields for name in encoder
+            )):
+        raise WorkflowValidationError("image workflow reference is ambiguous")
+    return reference is not None
 
 
 def _join_workflow_prompt(model_prompt: str, fixed_prompt: str) -> str:

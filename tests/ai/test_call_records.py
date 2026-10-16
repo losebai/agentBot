@@ -102,6 +102,42 @@ async def test_empty_or_unreported_cache_statistics_remain_unknown(ai_params, un
     assert partial.total_tokens == 100
 
 
+@pytest.mark.parametrize(("usage", "overflow", "expected"), [
+    ({"prompt_tokens": 1000, "completion_tokens": 100, "total_tokens": 1100,
+      "cached_tokens": 300, "cache_prompt_tokens": 500}, False,
+     TokenUsage(prompt_tokens=1000, completion_tokens=100, total_tokens=1100,
+                cached_tokens=300, cache_prompt_tokens=500)),
+    ({"prompt_tokens": 100, "completion_tokens": 20,
+      "prompt_tokens_details": {"cached_tokens": 0}}, False,
+     TokenUsage(prompt_tokens=100, completion_tokens=20, total_tokens=120,
+                cached_tokens=0, cache_prompt_tokens=100)),
+    ({"input_tokens": 200, "output_tokens": 30,
+      "input_tokens_details": {"cached_tokens": 80}}, True,
+     TokenUsage(prompt_tokens=200, completion_tokens=30, total_tokens=230,
+                cached_tokens=80, cache_prompt_tokens=200)),
+    ({"prompt_tokens": 50, "completion_tokens": 5, "cached_tokens": None}, False,
+     TokenUsage(prompt_tokens=50, completion_tokens=5, total_tokens=55)),
+    ({"prompt_tokens": None, "input_tokens": 90, "completion_tokens": None,
+      "cached_tokens": 0}, False,
+     TokenUsage(prompt_tokens=90, cached_tokens=0, cache_prompt_tokens=90)),
+    (None, False, TokenUsage()),
+])
+async def test_call_list_and_detail_expose_normalized_usage(
+    ai_params, unified_db, usage, overflow, expected,
+):
+    """列表与详情统一新旧协议用量，超长归档、零命中和未上报字段保持真实含义。"""
+    store = CallRecordStore(ai_params, connect=unified_db.connect)
+    await store.import_batch([legacy_record({
+        "id": 1, "content": "长输入" * 30000 if overflow else "输入",
+        "data": {"choices": [], "usage": usage},
+    }, "usage-test")])
+    summary = (await store.list_calls()).items[0]
+    assert summary.usage == expected
+    assert "data" not in summary.model_dump()
+    detail = await store.get_call(summary.id)
+    assert detail.usage == expected
+
+
 async def test_legacy_idempotency_and_type_bound_cursor(ai_params, unified_db):
     """来源隔离相同旧主键，重复导入不覆盖记录且游标不能换筛选。"""
     store = CallRecordStore(ai_params, connect=unified_db.connect)

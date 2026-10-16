@@ -1,5 +1,5 @@
 import { ApiClient } from './api';
-import type { Page } from './ai-types';
+import type { Page, TokenUsage } from './ai-types';
 import type { RunStep } from './agent-types';
 
 export type CallType = 'ordinary' | 'agent' | 'auto_speak' | 'unknown';
@@ -10,6 +10,8 @@ export interface CallSummary {
   duration: number | null; model: string | null; request_id: string | null;
   system_kind?: SystemKind | null;
   type: CallType; source: string; source_id: string; execution_id: string | null; status: string;
+  /** 单次归档的累计用量；未上报字段保留 null，缓存输入已包含在输入总量中。 */
+  usage: TokenUsage;
 }
 export interface CallDetail extends CallSummary {
   content: string | null; replay_context: string | null; user_certificate: string | null;

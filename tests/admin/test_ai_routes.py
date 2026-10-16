@@ -259,6 +259,32 @@ async def test_status_statistics_use_live_counts_and_authenticated_archive(pytho
     assert response.json()["statistics"]["running_requests"] == 0
 
 
+async def test_call_record_usage_is_available_in_list_and_detail(python_api):
+    """认证接口提供历史协议用量；列表只返回数值摘要，不暴露完整响应和请求正文。"""
+    from agent_bot.ai.call_records import CallRecordStore, legacy_record
+
+    api, _, runtime = python_api
+    sessions = runtime.ai_service.sessions
+    store = CallRecordStore(sessions.params, connect=sessions.connect)
+    await store.import_batch([legacy_record({
+        "id": 1, "content": "只在详情显示的正文", "data": {"choices": [], "usage": {
+            "prompt_tokens": 100, "completion_tokens": 10,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        }},
+    }, "usage-api")])
+    response = await api.get("/api/v1/ai/records", headers=HEADERS)
+    assert response.status_code == 200
+    summary = response.json()["items"][0]
+    assert summary["usage"] == {
+        "prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110,
+        "cached_tokens": 0, "cache_prompt_tokens": 100,
+    }
+    assert "data" not in summary and "content" not in summary
+    detail = await api.get(f"/api/v1/ai/records/{summary['id']}", headers=HEADERS)
+    assert detail.status_code == 200
+    assert detail.json()["usage"] == summary["usage"]
+
+
 async def test_statistics_database_error_is_reported_without_secrets(python_api, monkeypatch):
     """统计失败返回明确错误，不能显示虚假零值或泄漏底层数据库详情。"""
     import pymysql

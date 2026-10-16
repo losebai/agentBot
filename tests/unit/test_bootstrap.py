@@ -374,7 +374,7 @@ def test_runtime_environment_is_scrubbed_case_insensitively(
 
 
 def test_runtime_config_storage_contract_covers_all_plugin_and_nonebot_fields() -> None:
-    """字段集合不能漏掉插件、适配器或新增的媒体路由开关。"""
+    """字段集合必须覆盖插件、适配器及宿主的 NapCat 静态启动字段。"""
     expected_nonebot_fields = set(NoneBotConfig.model_fields)
     expected_onebot_fields = {
         "onebot_v11_secret",
@@ -382,7 +382,8 @@ def test_runtime_config_storage_contract_covers_all_plugin_and_nonebot_fields() 
         "onebot_v11_api_roots",
     }
     plugin_fields = set(RuntimeConfig.__mro__[1].model_fields)
+    host_fields = {"app_enabled_plugins", "agent_bot_napcat_mode", "agent_bot_napcat_webui_port"}
 
     assert set(RuntimeConfig.model_fields) == (
-        plugin_fields | expected_nonebot_fields | expected_onebot_fields | {"app_enabled_plugins"}
+        plugin_fields | expected_nonebot_fields | expected_onebot_fields | host_fields
     )

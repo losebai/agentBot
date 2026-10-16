@@ -55,9 +55,9 @@ def test_agent_sql_is_a_packaged_nondestructive_resource():
 
 
 def test_package_versions_match():
-    """源码和项目声明必须使用当前同一发布版本。"""
+    """源码和项目声明必须同步到当前 Windows 发布版本。"""
     import agent_bot
 
     root = Path(__file__).resolve().parents[2]
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    assert agent_bot.__version__ == project["project"]["version"] == "0.5.1"
+    assert agent_bot.__version__ == project["project"]["version"] == "0.5.2"

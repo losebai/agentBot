@@ -10,7 +10,12 @@
 
 ## 一键安装
 
-当前发布版本为 **0.5.2**，命令始终读取下载站 `latest.json` 中的可用版本。
+当前发布版本为 **0.5.3**，命令始终读取下载站 `latest.json` 中的可用版本。
+
+0.5.3 新增持久素材及图片记忆。已有部署升级前请备份业务数据库和媒体目录，
+在所选业务库执行 `2026-10-17-material-memory.sql`（MySQL）或
+`2026-10-17-material-memory.sqlite.sql`（SQLite）；脚本位于安装目录的
+`_internal/agent_bot/resources/`。普通启动不自动升级数据库，不能误对队列库执行。
 
 Windows PowerShell：
 

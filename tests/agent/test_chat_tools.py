@@ -8,6 +8,7 @@ from agent_bot.agent.errors import AgentError
 from agent_bot.agent.tools.chat import ChatToolBridge
 from agent_bot.integrations.mcp import ChatMcpServer
 from agent_bot.services.chat_tools import ChatToolContext, ChatToolDefinition, ChatToolRegistry
+from agent_bot.services.tagged_memory import MemoryArguments
 from agent_bot.services.tool_sessions import ToolSessionStore
 
 
@@ -23,7 +24,7 @@ async def test_revoked_token_prevents_second_call():
             ChatToolDefinition(
                 name="memory",
                 description="Memory",
-                input_schema={"type": "object", "additionalProperties": False},
+                input_schema=MemoryArguments.model_json_schema(),
                 handler=memory,
             )
         ]
@@ -38,11 +39,15 @@ async def test_revoked_token_prevents_second_call():
     authority = ExecutionAuthority(
         entry="qq", allowed_tools=("memory",), chat_token=SecretStr(token)
     )
-    result = await bridge.call(ToolCall(call_id="one", name="memory", arguments={}), authority)
+    result = await bridge.call(
+        ToolCall(call_id="one", name="memory", arguments={"action": "tags"}), authority,
+    )
     assert json.loads(result.content) == {"session": "group:1", "user": "u1"}
     await store.revoke(token)
     with pytest.raises(AgentError) as error:
-        await bridge.call(ToolCall(call_id="two", name="memory", arguments={}), authority)
+        await bridge.call(
+            ToolCall(call_id="two", name="memory", arguments={"action": "tags"}), authority,
+        )
     assert error.value.code == "AGENT_TOOL_SESSION_EXPIRED"
     assert invoked == ["group:1"]
 

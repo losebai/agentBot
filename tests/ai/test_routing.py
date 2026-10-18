@@ -2,6 +2,7 @@
 
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -33,6 +34,9 @@ async def test_image_completion_composer_routes_through_agent(status, expected) 
             self.content = content
             self.requests = []
             self.authorities = []
+            self.catalog = SimpleNamespace(
+                get_system_prompt=AsyncMock(return_value="当前 Agent 人设"),
+            )
 
         async def complete(self, request, authority=None):
             """记录真实路由构造的请求并返回对应模型正文。"""
@@ -72,6 +76,7 @@ async def test_image_completion_composer_routes_through_agent(status, expected) 
         assert agent.authorities[0].chat_token is None
     else:
         assert agent.requests == []
+        assert ordinary.requests[0].messages[0].content == "当前 Agent 人设"
 
 
 async def test_agent_preflight_checks_preset_model_instead_of_chat_alias() -> None:

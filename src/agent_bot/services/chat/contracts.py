@@ -33,6 +33,7 @@ class ChatClient(Protocol):
         user: str | None = None,
         chat_context: ChatContext | None = None,
         image_urls: Sequence[str] = (),
+        image_material_ids: Sequence[str] = (),
         video_urls: Sequence[str] = (),
         use_agent: bool = True,
         use_web_search: bool = True,

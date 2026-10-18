@@ -10,9 +10,22 @@ from media.test_inputs import picture
 from media.test_validation import response
 
 
+async def test_video_without_current_image_uses_chat_model():
+    """视频只作为文字上下文，不能单独调用视觉模型。"""
+    client, agent, _ = client_for()
+    await client.complete(
+        model="chat", session_id="s", prompt="[视频] 请看文字说明", messages=(), request_id="r",
+        video_urls=("https://qq.com/video.mp4",), use_agent=True, use_web_search=False,
+    )
+    request = agent.complete.await_args.args[0]
+    assert request.image_urls == request.image_material_ids == ()
+    assert request.agent_code == "preset"
+
+
 def client_for():
     """只替换服务端口，保留生产请求构造与模型能力判断。"""
     agent, media = AsyncMock(), AsyncMock()
+    agent.catalog.get_system_prompt.return_value = "当前 Agent 人设"
     agent.complete.return_value = SimpleNamespace(content="看到了猫")
     media.generate.return_value = SimpleNamespace(response=response(picture()))
     client = RoutingAiClient(

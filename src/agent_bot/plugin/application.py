@@ -55,6 +55,8 @@ from agent_bot.integrations.redis_queue import build_conversation_queue
 from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
 from agent_bot.integrations.tool_operations import RedisToolOperationStore
 from agent_bot.integrations.workflow_store import WorkflowStore
+from agent_bot.materials.onebot import install_material_receivers
+from agent_bot.materials.receiver import MaterialReceiver
 from agent_bot.media.config import MediaConfig
 from agent_bot.media.resources import MediaResources
 from agent_bot.memory_store import (
@@ -168,6 +170,7 @@ _settings_store = (_context.runtime.settings_store if _context is not None else 
 _media_resources = (_context.runtime.media_resources if _context is not None else
                     MediaResources(MediaConfig.from_environment(), _database_params,
                                    connect=_database_pool.connect))
+_material_receiver = MaterialReceiver(_media_resources.materials)
 _group_member_store = GroupMemberStore(_database_params, connect=_database_pool.connect)
 _workflow_store = (_context.runtime.workflow_store if _context is not None else
                    WorkflowStore(_database_params, connect=_database_pool.connect))
@@ -324,6 +327,7 @@ _tool_session_manager = ChatToolSessionManager(
     memory_store_provider=lambda: (
         _tagged_memory_store if plugin_config.chat_tagged_memory_enabled else None
     ),
+    material_store_provider=lambda: _media_resources.materials,
     operation_store_provider=_tool_operations,
 )
 
@@ -757,6 +761,15 @@ async def _is_authorized(event: MessageEvent) -> bool:
     return await _event_context.is_authorized(event)
 
 
+_material_matchers = install_material_receivers(
+    receiver_provider=lambda: _material_receiver, config_provider=lambda: plugin_config,
+    policy_provider=lambda: access_policy, secret_provider=lambda: _session_secret,
+    is_authorized=_is_authorized,
+    session_id_provider=lambda bot, event: _event_context.session_id(bot, event),
+    runtime_lease=_runtime_lease, wait_ready=wait_channel_ready,
+)
+
+
 async def _resolve_group_name(bot: Bot, group_id: int) -> str | None:
     """读取并规范化当前群名称。"""
 
@@ -883,6 +896,7 @@ group_recent_context = _matchers.group_recent_context
 
 
 _conversation_handler = ConversationHandler(
+    material_receiver_provider=lambda: _material_receiver,
     reply_service=_reply_service,
     config_provider=lambda: plugin_config,
     chat_service_provider=lambda: chat_service,
@@ -917,6 +931,7 @@ async def _deliver_media_answer(
 
 
 _summary_handler = SummaryCommandHandler(
+    material_registrar_factory=_conversation_handler.material_registrar,
     config_provider=lambda: plugin_config,
     chat_service_provider=lambda: chat_service,
     message_counter_provider=lambda: message_counter,

@@ -299,6 +299,7 @@ describe('配置编辑', () => {
       { name: 'chat_python_agent_code', description: 'Agent 预设', kind: 'string', value: 'main' },
       { name: 'chat_memory_enabled', description: '会话记忆', kind: 'boolean', value: true },
       { name: 'chat_vision_model', description: '图片理解模型', kind: 'string', value: 'vision' },
+      { name: 'chat_image_model', description: '图片生成模型名称', kind: 'string', value: 'gpt-image-1' },
       { name: 'chat_image_recognition_enabled', description: '图片识别', kind: 'boolean', value: true },
       { name: 'chat_mention_tool_enabled', description: '群成员 AT 工具', kind: 'boolean', value: true },
       { name: 'chat_allowed_groups', description: '群访问列表', kind: 'json', value: [] },
@@ -323,7 +324,8 @@ describe('配置编辑', () => {
     expect(await screen.findByLabelText('最大会话数')).toBeInTheDocument();
     expect(screen.getByLabelText('新配置')).toBeInTheDocument();
     fireEvent.click(within(navigation).getByRole('button', { name: 'LLM设置' }));
-    for (const label of ['Agent 预设', '会话记忆', '图片理解模型', '图片识别']) {
+    // 生图模型由模型供应商提供，应与其他模型一起配置。
+    for (const label of ['Agent 预设', '会话记忆', '图片理解模型', '图片生成模型名称', '图片识别']) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
     expect(screen.queryByLabelText('图片生成')).not.toBeInTheDocument();
@@ -348,6 +350,7 @@ describe('配置编辑', () => {
     fireEvent.click(within(navigation).getByRole('button', { name: 'Comfy' }));
     expect(screen.getByLabelText('Comfy 服务地址')).toBeInTheDocument();
     expect(screen.getByLabelText('图片生成')).toBeInTheDocument();
+    expect(screen.queryByLabelText('图片生成模型名称')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('图片识别')).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole('textbox', { name: '搜索配置' }), { target: { value: '图片' } });
     expect(screen.getByLabelText('图片生成')).toBeInTheDocument();

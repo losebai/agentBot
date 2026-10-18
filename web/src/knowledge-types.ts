@@ -10,6 +10,7 @@ export interface MemoryDraft {
 export interface MemoryEntry {
   id: number; scope_id: string; scope: MemoryScope; key: string;
   content: string; tags: string[]; created_at: string;
+  material_ids?: string[];
 }
 export interface TagCount { tag: string; count: number }
 export interface MemoryScopeInfo { scope_id: string; scope: MemoryScope; count: number }

@@ -8,9 +8,11 @@ from typing import NoReturn
 
 from nonebot import logger
 from nonebot.adapters.onebot.v11 import Bot, MessageEvent
+from nonebot.adapters.onebot.v11.exception import ActionFailed, ApiNotAvailable, NetworkError
 from nonebot.matcher import Matcher
 
 from agent_bot.ai.chat_errors import ChatAiError, ChatAiImageError
+from agent_bot.ai.errors import AiError
 from agent_bot.config import RuntimeConfig
 from agent_bot.integrations.onebot.queue_processor import generated_reply_from_model
 from agent_bot.integrations.onebot.replies import OneBotReplyService
@@ -60,6 +62,7 @@ class SummaryCommandHandler:
         current_user_name_provider: Callable[[MessageEvent], str | None],
         reply_service: OneBotReplyService,
         reply_intent_factory: Callable[[Bot, MessageEvent, ReplyFacts], Awaitable[ReplyIntent]],
+        material_registrar_factory: Callable | None = None,
     ) -> None:
         """保存热更新依赖和共享回复服务。"""
 
@@ -71,6 +74,7 @@ class SummaryCommandHandler:
         self._current_user_name_provider = current_user_name_provider
         self._reply_service = reply_service
         self._reply_intent_factory = reply_intent_factory
+        self._material_registrar_factory = material_registrar_factory
 
     async def _finish_reply(
         self, matcher: type[Matcher], bot: Bot, event: MessageEvent, facts: ReplyFacts,
@@ -107,6 +111,8 @@ class SummaryCommandHandler:
                 image_recognition_enabled=config.chat_image_recognition_enabled,
                 max_images=config.chat_max_images_per_message,
                 max_prompt_chars=config.chat_max_input_chars,
+                register_material=(self._material_registrar_factory(bot, event)
+                                   if self._material_registrar_factory else None),
             )
         except ImageRecognitionDisabledError:
             await self._finish_reply(
@@ -149,16 +155,24 @@ class SummaryCommandHandler:
             await self._finish_reply(
                 matcher, bot, event, FeatureUnavailableFacts(feature="总结输入长度"),
             )
+        except (AiError, OSError, ValueError, ActionFailed, ApiNotAvailable, NetworkError) as error:
+            await self._finish_reply(
+                matcher, bot, event,
+                TaskFailedFacts(operation="保存引用素材", error_type=type(error).__name__),
+            )
 
         request_id = f"qq-summary-{uuid.uuid4().hex}"
         try:
             answer = await self._chat_service_provider().ask_once(
-                f"{self._session_id_provider(bot, event)}:quoted-summary",
+                (self._session_id_provider(bot, event) if summary_input.image_material_ids
+                 else f"{self._session_id_provider(bot, event)}:quoted-summary"),
                 summary_input.prompt,
                 system_prompt=config.chat_system_prompt,
                 user=self._llm_user_name_provider(event),
                 user_name=self._current_user_name_provider(event),
                 image_urls=summary_input.image_urls,
+                **({"image_material_ids": summary_input.image_material_ids}
+                   if summary_input.image_material_ids else {}),
                 video_urls=summary_input.video_urls,
             )
         except PromptTooLongError:

@@ -74,6 +74,110 @@ def reply_chat(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) 
     return generate
 
 
+@pytest.fixture(autouse=True)
+async def plugin_materials(request, monkeypatch, tmp_path):
+    """插件消息执行真实素材入库，只替换 QQ HTTP 下载为确定的不同图片。"""
+    if "chat_plugin" not in request.fixturenames:
+        yield None
+        return
+    import hashlib
+    from io import BytesIO
+    from types import SimpleNamespace
+
+    from PIL import Image
+
+    from agent_bot.database import initialize_database
+    from agent_bot.database_pool import create_database_pool
+    from agent_bot.materials.receiver import MaterialReceiver
+    from agent_bot.materials.store import MaterialStore
+    from agent_bot.media.files import MediaFiles
+    from agent_bot.media.inputs import ImagePreparer
+    from agent_bot.settings import DatabaseParams
+
+    params = DatabaseParams(backend="sqlite", sqlite_path=str(tmp_path / "materials.sqlite3"))
+    initialize_database(params)
+    pool = create_database_pool(params)
+    store = MaterialStore(params, connect=pool.connect, files=MediaFiles(tmp_path / "materials"))
+    await store.start()
+
+    async def download(url):
+        """相同 URL 得到相同内容，不同 URL 得到不同内容以验证 ID 关联。"""
+        output = BytesIO()
+        color = tuple(hashlib.sha256(url.encode()).digest()[:3])
+        Image.new("RGB", (2, 2), color).save(output, "PNG")
+        return ImagePreparer().prepare(output.getvalue(), "image/png")
+
+    plugin = request.getfixturevalue("chat_plugin")
+    monkeypatch.setattr(plugin, "_material_receiver", MaterialReceiver(
+        store, image_downloader=SimpleNamespace(fetch=download),
+        file_downloader=SimpleNamespace(fetch=AsyncMock(return_value=(b"document", "text/plain"))),
+    ))
+    try:
+        yield store
+    finally:
+        await store.aclose()
+        pool.close()
+
+
+@pytest.mark.integration
+async def test_receive_image_persists_without_chat_model(app, chat_plugin, plugin_materials):
+    """附件监听器只保存原件；未触发自然聊天时不调用任何回复模型。"""
+    from agent_bot.materials.contracts import MaterialSearchArguments
+    from agent_bot.media.contracts import MediaOwner
+
+    event = private_event(MessageSegment.image("https://gchat.qpic.cn/receive.png"))
+    receiver = chat_plugin._material_matchers[0]
+    async with app.test_matcher(receiver) as ctx:
+        bot = ctx.create_bot(base=Bot, adapter=nonebot.get_adapter(Adapter), self_id="90001")
+        ctx.receive_event(bot, event)
+    owner = MediaOwner(entry="qq", session_id=chat_plugin._event_context.session_id(bot, event))
+    records = (await plugin_materials.search(owner, MaterialSearchArguments())).records
+    assert len(records) == 1 and records[0].kind == "image"
+    chat_plugin.conversation_queue.enqueue.assert_not_awaited()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("group", [False, True])
+async def test_file_notice_persists_in_real_event_session(
+    app, chat_plugin, plugin_materials, group,
+):
+    """群上传和私聊离线文件通知均可保存，素材归属与对应聊天会话一致。"""
+    from nonebot.adapters.onebot.v11 import GroupUploadNoticeEvent, NoticeEvent
+
+    from agent_bot.materials.contracts import MaterialSearchArguments
+    from agent_bot.media.contracts import MediaOwner
+
+    file = {"id": "file-1", "name": "plan.txt", "size": 8}
+    if group:
+        file["busid"] = 102
+        event = GroupUploadNoticeEvent.model_validate({
+            "self_id": 90001, "time": 1, "post_type": "notice", "notice_type": "group_upload",
+            "group_id": 20001, "user_id": 10001, "file": file,
+        })
+        message_event = group_event("", user_id=10001)
+    else:
+        file["url"] = "https://files.qq.com/offline"
+        event = NoticeEvent.model_validate({
+            "self_id": 90001, "time": 1, "post_type": "notice", "notice_type": "offline_file",
+            "user_id": 10001, "file": file,
+        })
+        message_event = private_event("")
+    receiver = chat_plugin._material_matchers[1]
+    async with app.test_matcher(receiver) as ctx:
+        bot = ctx.create_bot(base=Bot, adapter=nonebot.get_adapter(Adapter), self_id="90001")
+        ctx.receive_event(bot, event)
+        if group:
+            ctx.should_call_api("get_group_file_url", {
+                "group_id": 20001, "file_id": "file-1", "busid": 102,
+            }, result={"url": "https://files.qq.com/group"})
+    owner = MediaOwner(entry="qq", session_id=chat_plugin._event_context.session_id(
+        bot, message_event,
+    ))
+    records = (await plugin_materials.search(owner, MaterialSearchArguments())).records
+    assert len(records) == 1 and records[0].name == "plan.txt"
+    assert records[0].kind == "file"
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize("message", ["", "   ", Message(MessageSegment.at(90001))])
 async def test_empty_message_reply_comes_from_llm(
@@ -488,6 +592,8 @@ def mock_response(monkeypatch: pytest.MonkeyPatch, chat_plugin, answer: str) -> 
             user_name=job.user_name,
             chat_context=job.chat_context,
             image_urls=job.image_urls,
+            image_material_ids=job.image_material_ids,
+            material_ids=job.material_ids,
             video_urls=job.video_urls,
             chat_tools=job.chat_tools,
             tool_session_token=None,
@@ -804,7 +910,9 @@ async def test_local_image_request_enqueues_without_additional_start_reply(
     start.assert_not_awaited()
     job = enqueue.await_args.args[0]
     assert job.user_id == "10086"
-    assert job.image_urls == (("https://gchat.qpic.cn/source",) if with_image else ())
+    assert job.image_urls == ()
+    assert len(job.image_material_ids) == int(with_image)
+    assert job.material_ids == job.image_material_ids
     assert job.image_start_reply is None
     assert not job.image_start_parts
     assert job.chat_tools == (
@@ -860,7 +968,9 @@ async def test_drawing_words_with_attached_media_preserve_chat_input(
     enqueue.assert_awaited_once()
     job = enqueue.await_args.args[0]
     assert prompt in job.prompt
-    assert job.image_urls == (() if with_video else ("https://gchat.qpic.cn/source",))
+    assert job.image_urls == ()
+    assert len(job.image_material_ids) == int(not with_video)
+    assert job.material_ids == job.image_material_ids
     assert job.video_urls == (("https://example.qq.com/a.mp4",) if with_video else ())
     assert job.media_output is None
 
@@ -1069,11 +1179,11 @@ async def test_natural_chat_forwards_multiple_qq_images_as_current_materials(
         ctx.should_call_send(event, Message(MessageSegment.text("识别回答")), bot=bot)
         ctx.should_finished(chat_plugin.natural_chat)
 
-    assert respond.await_args.args[1] == "比较这两张图"
-    assert respond.await_args.kwargs["image_urls"] == (
-        "https://gchat.qpic.cn/first.jpg?token=one",
-        "https://multimedia.nt.qq.com.cn/second.png?token=two",
-    )
+    assert "比较这两张图" in respond.await_args.args[1]
+    assert respond.await_args.kwargs["image_urls"] == ()
+    ids = respond.await_args.kwargs["image_material_ids"]
+    assert len(ids) == 2 and len(set(ids)) == 2
+    assert all(id in respond.await_args.args[1] for id in ids)
 
 
 @pytest.mark.integration
@@ -1120,9 +1230,9 @@ async def test_natural_chat_includes_all_quoted_content_in_current_request(
     assert "被引用者" in respond.await_args.args[1]
     assert "引用正文" in respond.await_args.args[1]
     assert "这段内容是什么意思？" in respond.await_args.args[1]
-    assert respond.await_args.kwargs["image_urls"] == (
-        "https://gchat.qpic.cn/quoted-chat.jpg",
-    )
+    assert respond.await_args.kwargs["image_urls"] == ()
+    ids = respond.await_args.kwargs["image_material_ids"]
+    assert len(ids) == 1 and ids[0] in respond.await_args.args[1]
     assert respond.await_args.kwargs["video_urls"] == (
         "https://gzc-download.ftn.qq.com/quoted-chat.mp4?token=one",
     )
@@ -1172,9 +1282,9 @@ async def test_summary_command_summarizes_current_reply_with_image_and_video(
 
     ai_summary.assert_awaited_once()
     assert "需要总结的正文" in ai_summary.await_args.args[1]
-    assert ai_summary.await_args.kwargs["image_urls"] == (
-        "https://gchat.qpic.cn/quoted-summary.jpg",
-    )
+    assert ai_summary.await_args.kwargs["image_urls"] == ()
+    ids = ai_summary.await_args.kwargs["image_material_ids"]
+    assert len(ids) == 1 and ids[0] in ai_summary.await_args.args[1]
     assert ai_summary.await_args.kwargs["video_urls"] == (
         "https://gzc-download.ftn.qq.com/quoted-summary.mp4",
     )

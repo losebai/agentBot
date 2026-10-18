@@ -184,6 +184,7 @@ def build_runtime_state(
             trigger_mode=config.chat_auto_speak_trigger_mode,
             prompt=config.chat_auto_speak_prompt,
             system_prompt=config.chat_system_prompt,
+            system_prompt_provider=ai_client.current_system_prompt,
             laya_prompt=config.chat_auto_speak_laya_prompt,
             session_secret=session_secret,
             initial_delay_seconds=config.chat_auto_speak_initial_delay_seconds,

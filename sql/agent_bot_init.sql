@@ -583,3 +583,49 @@ CREATE TABLE IF NOT EXISTS chat_knowledge_tag (
     KEY idx_knowledge_tag_lookup (tag, knowledge_id) COMMENT '按标签筛选知识和统计有效条目'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='知识条目与主题标签关联';
 
+
+-- 用途：新增持久图片/文件素材、接收来源和长期记忆素材关联。
+-- 顺序：已有 MySQL 数据库备份后显式执行；依赖 chat_tagged_memory 已存在。
+-- 数据影响：只新增表和索引，不重建旧表，不迁移或删除临时附件和历史记忆。
+CREATE TABLE IF NOT EXISTS chat_material (
+    id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '服务端生成的持久素材标识',
+    entry VARCHAR(16) NOT NULL COMMENT '可信入口 qq 或 admin',
+    session_id VARCHAR(256) COLLATE utf8mb4_bin NOT NULL COMMENT '匿名会话归属，查询及原件读取均校验',
+    name VARCHAR(255) NOT NULL COMMENT '原始文件显示名称，不参与构造磁盘路径',
+    kind VARCHAR(16) NOT NULL COMMENT '素材类别 image 或 file',
+    mime_type VARCHAR(127) NOT NULL COMMENT '已验证的文件媒体类型',
+    size_bytes BIGINT UNSIGNED NOT NULL COMMENT '实际原件字节数',
+    sha256 CHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '原件内容摘要，会话内复用相同文件',
+    storage_key CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '受限存储键，等于素材 ID',
+    description VARCHAR(1000) NOT NULL DEFAULT '' COMMENT '已有文字说明，不自动调用模型生成',
+    created_at DATETIME(6) NOT NULL COMMENT '创建时间，统一使用 UTC',
+    -- 主键作为消息和记忆引用的稳定身份。
+    PRIMARY KEY (id),
+    -- 去重限制在相同入口和会话，不能跨会话探测私有文件。
+    UNIQUE KEY uk_material_owner_digest (entry,session_id,sha256),
+    -- 支持会话内按类别和创建时间分页。
+    KEY idx_material_owner_time (entry,session_id,kind,created_at,id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='独立于临时附件生命周期的持久素材';
+
+CREATE TABLE IF NOT EXISTS chat_material_source (
+    entry VARCHAR(16) NOT NULL COMMENT '接收来源的可信入口',
+    session_id VARCHAR(256) COLLATE utf8mb4_bin NOT NULL COMMENT '来源所属匿名会话',
+    source_key CHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '机器人及原消息附件身份的 SHA256',
+    material_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '关联的持久素材 ID',
+    -- 同一来源不可绑定到不同素材，引用直接复用此关联。
+    PRIMARY KEY (entry,session_id,source_key),
+    -- 支持按素材检查来源，外键保护来源不会悬空。
+    KEY idx_material_source_material (material_id),
+    CONSTRAINT fk_material_source_material FOREIGN KEY (material_id) REFERENCES chat_material(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='收到或引用的消息附件与素材关联';
+
+CREATE TABLE IF NOT EXISTS chat_memory_material (
+    memory_id INT NOT NULL COMMENT '关联长期标签记忆主键',
+    material_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '关联持久图片或文件素材 ID',
+    -- 同一记忆不重复关联同一素材，遗忘只软删除记忆。
+    PRIMARY KEY (memory_id,material_id),
+    -- 支持反向查询，外键确保记忆与素材都真实存在。
+    KEY idx_memory_material_material (material_id),
+    CONSTRAINT fk_memory_material_memory FOREIGN KEY (memory_id) REFERENCES chat_tagged_memory(id),
+    CONSTRAINT fk_memory_material_material FOREIGN KEY (material_id) REFERENCES chat_material(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='长期记忆与图片文件素材的多对多关联';

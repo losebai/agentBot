@@ -215,6 +215,20 @@ class AgentCatalog(AiDatabase):
     async def list_mcps(self, *, limit=50, cursor=None):
         return await self._list("mcp", limit, cursor)
 
+    async def get_system_prompt(self, code: str) -> str:
+        """系统调用只读取当前启用 Agent 的人设，不加载模型、技能或授予工具能力。"""
+        def read(connection):
+            """每次读取最新已提交配置；禁用或不存在的 Agent 必须明确拒绝。"""
+            row = query(connection, "SELECT system_prompt,enabled FROM agent_bot_agent "
+                        "WHERE code=%s", (code,), one=True)
+            if row is None:
+                raise AgentError("AGENT_CONFIG_NOT_FOUND", status_code=404)
+            if not row["enabled"]:
+                raise AgentError("AGENT_CONFIG_DISABLED", status_code=409)
+            return row["system_prompt"]
+
+        return await self.run(read)
+
     async def decision_mcp(self, code):
         """只解析已启用的固定决策服务，白名单收紧为 laya_predict。"""
         def read(connection):
@@ -247,7 +261,11 @@ class AgentCatalog(AiDatabase):
                 else None
             )
             if agent:
-                has_images = bool(request.image_urls or request.attachment_ids)
+                has_images = bool(
+                    request.image_urls or request.attachment_ids or request.image_material_ids
+                )
+                if has_images and agent.vision_model_id is None:
+                    raise AgentError("AGENT_VISION_MODEL_REQUIRED", status_code=422)
                 model_id = agent.vision_model_id if has_images else None
                 model = AiCatalog._get(self, connection, "model", model_id or agent.model_id)
             else:

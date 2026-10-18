@@ -147,13 +147,32 @@ class TaggedMemoryStore:
         owners = tuple(identity.owner(scope, self._secret) for scope in scopes)
         with self._transaction() as cursor:
             if arguments.action in ("save", "forget"):
+                if arguments.material_ids:
+                    self._validate_materials(cursor, identity.session_id, arguments.material_ids)
                 result = self._write(cursor, owners[0], scopes[0], arguments)
+                if arguments.material_ids:
+                    cursor.execute("SELECT id FROM chat_tagged_memory "
+                                   "WHERE scope_id=%s AND memory_key=%s",
+                                   (owners[0], arguments.key))
+                    memory_id = cursor.fetchone()["id"]
+                    cursor.executemany(
+                        "INSERT INTO chat_memory_material (memory_id,material_id) VALUES (%s,%s)",
+                        [(memory_id, id) for id in arguments.material_ids],
+                    )
             elif arguments.action == "tags":
                 result = self._tags(cursor, owners, arguments.offset)
             else:
-                result = self._recall(cursor, owners, arguments.tags)
+                result = self._recall(cursor, owners, arguments.tags, identity.session_id)
             self._check_deadline(deadline_at)
             return result
+
+    @staticmethod
+    def _validate_materials(cursor: Any, session_id: str, ids: tuple[str, ...]) -> None:
+        """素材校验与记忆保存共用事务，不能用共享记忆扩大原件访问权限。"""
+        cursor.execute("SELECT id FROM chat_material WHERE entry='qq' AND session_id=%s "
+                       "AND id IN (" + ",".join("%s" for _ in ids) + ")", (session_id, *ids))
+        if {row["id"] for row in cursor.fetchall()} != set(ids):
+            raise ValueError("素材不存在或不属于当前会话")
 
     def _check_deadline(self, deadline_at: float | None) -> None:
         """过期操作在事务提交前回滚。"""
@@ -221,9 +240,15 @@ class TaggedMemoryStore:
         tags: dict[int, list[str]] = {id: [] for id in ids}
         for row in cursor.fetchall():
             tags[row["memory_id"]].append(row["tag"])
+        cursor.execute("SELECT memory_id,material_id FROM chat_memory_material WHERE memory_id IN ("
+                       + ",".join("%s" for _ in ids) + ") ORDER BY material_id", ids)
+        materials: dict[int, list[str]] = {id: [] for id in ids}
+        for row in cursor.fetchall():
+            materials[row["memory_id"]].append(row["material_id"])
         return tuple(MemoryView(id=row["id"], scope_id=row["scope_id"], scope=row["scope"],
                                 key=row["memory_key"], content=row["content"],
-                                tags=tuple(tags[row["id"]]), created_at=row["create_time"])
+                                tags=tuple(tags[row["id"]]), created_at=row["create_time"],
+                                material_ids=tuple(materials[row["id"]]))
                      for row in rows)
 
     def _admin_get(self, cursor: Any, id: int) -> MemoryView:
@@ -357,6 +382,7 @@ class TaggedMemoryStore:
         cursor: Any,
         owners: tuple[str, ...],
         tags: tuple[str, ...],
+        session_id: str,
     ) -> MemoryResult:
         """按标签交集数量排序，每次最多加载八条完整事实。"""
         owner_parameters = ",".join("%s" for _ in owners)
@@ -383,6 +409,13 @@ class TaggedMemoryStore:
             memory_ids,
         )
         memory_tags = cursor.fetchall()
+        cursor.execute(
+            "SELECT mm.memory_id,mm.material_id FROM chat_memory_material mm "
+            "JOIN chat_material m ON m.id=mm.material_id "
+            f"WHERE mm.memory_id IN ({memory_parameters}) AND m.entry='qq' AND m.session_id=%s "
+            "ORDER BY mm.material_id", (*memory_ids, session_id),
+        )
+        memory_materials = cursor.fetchall()
         records: list[MemoryRecord] = []
         for row in rows:
             records.append(
@@ -390,6 +423,8 @@ class TaggedMemoryStore:
                     scope=row["scope"],
                     key=row["memory_key"],
                     content=row["content"],
+                    material_ids=tuple(item["material_id"] for item in memory_materials
+                                       if item["memory_id"] == row["id"]),
                     tags=tuple(
                         item["tag"] for item in memory_tags if item["memory_id"] == row["id"]
                     ),

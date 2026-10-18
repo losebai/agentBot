@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -80,6 +81,8 @@ class ConversationJob(BaseModel):
     user_name: str | None = Field(default=None, alias="userName", max_length=128)
     chat_context: ChatContext | None = Field(default=None, alias="chatContext")
     image_urls: tuple[str, ...] = Field(default_factory=tuple, alias="imageUrls", max_length=8)
+    material_ids: tuple[str, ...] = Field(default=(), alias="materialIds", max_length=16)
+    image_material_ids: tuple[str, ...] = Field(default=(), alias="imageMaterialIds", max_length=8)
     video_urls: tuple[str, ...] = Field(default_factory=tuple, alias="videoUrls", max_length=2)
     chat_tools: tuple[ChatToolName, ...] = Field(
         default_factory=tuple,
@@ -143,6 +146,13 @@ class ConversationJob(BaseModel):
             raise ValueError("private conversation job cannot contain group delivery fields")
         if len(set(self.chat_tools)) != len(self.chat_tools):
             raise ValueError("conversation job tools cannot contain duplicates")
+        if any(not re.fullmatch(r"[a-f0-9]{32}", id) for id in self.material_ids):
+            raise ValueError("invalid queued material ID")
+        if (not set(self.image_material_ids) <= set(self.material_ids)
+                or (self.image_urls and self.image_material_ids)):
+            raise ValueError("invalid queued image material references")
+        if self.material_ids and (self.background_image or self.media_output or self.ai_job_id):
+            raise ValueError("generated jobs cannot carry received materials")
         if (self.ai_job_id is None) != (self.ai_job_reply is None):
             raise ValueError("AI job result requires both identifier and generated reply")
         if self.ai_job_id is not None:

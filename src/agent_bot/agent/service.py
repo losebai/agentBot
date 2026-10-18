@@ -23,6 +23,7 @@ from agent_bot.agent.model_routing import AgentModelRouter
 from agent_bot.agent.tools.policy import LEGACY_TOOLS
 from agent_bot.ai.contracts import TokenUsage
 from agent_bot.ai.errors import AiError
+from agent_bot.database_pool import finish_database_write
 from agent_bot.media.contracts import MediaOwner, MediaScope
 from agent_bot.media.inputs import ImagePreparer
 from agent_bot.media.store import finish_cleanup
@@ -47,6 +48,7 @@ class AgentService:
         *,
         search_code=None,
         media_store=None,
+        material_store=None,
         image_downloader=None,
         maximum_images=4,
     ):
@@ -55,6 +57,7 @@ class AgentService:
         self.providers, self.tool_runtime, self.search_code = providers, tool_runtime, search_code
         self.active = 0
         self.media_store, self.image_downloader = media_store, image_downloader
+        self.material_store = material_store
         self.maximum_images = min(maximum_images, 8)
 
     @property
@@ -90,7 +93,9 @@ class AgentService:
             authority.entry == "qq" and request.attachment_ids
         ):
             raise AgentError("MEDIA_INPUT_UNAUTHORIZED", status_code=403)
-        has_images = bool(request.image_urls or request.attachment_ids)
+        has_images = bool(
+            request.image_urls or request.attachment_ids or request.image_material_ids
+        )
         if (
             has_images
             and request.tools is not None
@@ -120,9 +125,20 @@ class AgentService:
             messages.insert(0, TurnMessage(role="system", text=snapshot.agent.system_prompt))
         images = ()
         if has_images:
-            if len(request.image_urls or request.attachment_ids) > self.maximum_images:
+            if len(request.image_urls or request.attachment_ids or request.image_material_ids
+                   ) > self.maximum_images:
                 raise AgentError("MEDIA_TOO_MANY_IMAGES", status_code=422)
-            if request.attachment_ids:
+            if request.image_material_ids:
+                if self.material_store is None:
+                    raise AgentError("MATERIAL_NOT_INITIALIZED", status_code=503)
+                prepared = []
+                for id in request.image_material_ids:
+                    async with self.material_store.open_content(id, owner=scope.owner) as file:
+                        data = await finish_database_write(file.read)
+                    prepared.append(await ImagePreparer().prepare_async(data, None))
+                    ImagePreparer().prepare_many(prepared, maximum_count=self.maximum_images)
+                images = tuple(prepared)
+            elif request.attachment_ids:
                 if self.media_store is None:
                     raise AgentError("MEDIA_NOT_READY", status_code=503)
                 images = await inputs.enter_async_context(

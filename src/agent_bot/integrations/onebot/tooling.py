@@ -66,6 +66,7 @@ class ChatToolSessionManager:
         operation_store_provider: Callable[[], ToolOperationStore | None] = lambda: None,
         memory_store_provider: Callable[[], TaggedMemoryStore | None] = lambda: None,
         image_tasks_provider: Callable[[], ImageTaskService | None] = lambda: None,
+        material_store_provider: Callable[[], object | None] = lambda: None,
     ) -> None:
         """保存热更新配置和工具依赖提供器。"""
 
@@ -79,6 +80,7 @@ class ChatToolSessionManager:
         self._operation_store_provider = operation_store_provider
         self._memory_store_provider = memory_store_provider
         self._image_tasks_provider = image_tasks_provider
+        self._material_store_provider = material_store_provider
 
     def available_tools(self, event: MessageEvent) -> tuple[ChatToolName, ...]:
         """计算当前事件可用的工具白名单。"""
@@ -240,6 +242,8 @@ class ChatToolSessionManager:
             workflow_collector=collector,
             image_tasks=self._image_tasks_provider(),
             image_urls=job.image_urls,
+            image_material_ids=job.image_material_ids,
+            material_store=self._material_store_provider(),
             workflow_request_scope=workflow_input_scope(job.job_id),
             tts_service=tts_service,
             tts_collector=speech_collector,

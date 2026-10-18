@@ -57,8 +57,7 @@ class RouteDecision:
 def select_route(request: AiRouteRequest) -> RouteDecision:
     """仅选择本地已实现的能力，未迁移请求在调用模型前明确拒绝。"""
     if (
-        request.videos
-        or request.laya
+        request.laya
         or "soloncode" in request.chat_tools
         or "laya" in request.mcp_services
     ):
@@ -144,6 +143,7 @@ class RoutingAiClient:
         web_search_max_steps: int | None = None,
         media_service=None,
         job_service=None,
+        legacy_system_prompt: str | None = None,
     ) -> None:
         """服务随运行时快照更新，媒体存储由进程负责释放。"""
         self.python_service = python_service
@@ -153,6 +153,28 @@ class RoutingAiClient:
         self.agent_max_steps, self.web_search_max_steps = agent_max_steps, web_search_max_steps
         self.media_service = media_service
         self.job_service = job_service
+        self.legacy_system_prompt = legacy_system_prompt
+
+    async def current_system_prompt(self) -> str | None:
+        """按当前预设读取人设；空字符串是明确清空，只有未选择 Agent 时返回 None。"""
+        if not self.agent_code:
+            return None
+        if self.agent_service is None:
+            raise AiError("AGENT_NOT_INITIALIZED", status_code=503)
+        return await self.agent_service.catalog.get_system_prompt(self.agent_code)
+
+    async def _system_messages(self, messages: Sequence[ChatMessage]) -> tuple[ChatMessage, ...]:
+        """系统调用继承 Agent 人设并保留任务约束，不带入技能、工具或历史会话。"""
+        role = await self.current_system_prompt()
+        if role is None:
+            return tuple(messages)
+        result = [ChatMessage(role="system", content=role)] if role.strip() else []
+        result.extend(
+            message for message in messages
+            if not (message.role == "system" and self.legacy_system_prompt is not None
+                    and message.content.strip() == self.legacy_system_prompt.strip())
+        )
+        return tuple(result)
 
     async def run_due_jobs(self):
         """执行一次本地到期任务，调度器负责功能开关与运行时租约。"""
@@ -206,6 +228,7 @@ class RoutingAiClient:
         user: str | None = None,
         chat_context: ChatContext | None = None,
         image_urls: Sequence[str] = (),
+        image_material_ids: Sequence[str] = (),
         video_urls: Sequence[str] = (),
         use_agent: bool = True,
         use_web_search: bool = True,
@@ -215,14 +238,14 @@ class RoutingAiClient:
         laya_decision: bool = False,
         allow_knowledge: bool = True,
     ) -> str:
-        """QQ Agent 超时发送已有正文；图片路由继续保留原请求授权。"""
+        """系统调用继承当前 Agent 人设，模型及工具授权仍由原路由决定。"""
         route = AiRouteRequest(
             agent=use_agent,
             web=use_web_search,
             tools=bool(chat_tools),
             mcp=bool(self.mcp_services and use_agent),
             laya=laya_decision,
-            images=bool(image_urls),
+            images=bool(image_urls or image_material_ids),
             videos=bool(video_urls),
             chat_tools=tuple(chat_tools),
         )
@@ -230,6 +253,9 @@ class RoutingAiClient:
         if tool_session_token and decision.capability == "ordinary-text":
             raise ValueError("ordinary text cannot carry tool credentials")
         try:
+            messages = tuple(messages) or (ChatMessage(role="user", content=prompt),)
+            if decision.capability in {"ordinary-text", "media"}:
+                messages = await self._system_messages(messages)
             if decision.capability in {"agent", "media"}:
                 if self.agent_service is None:
                     raise AiError("AGENT_NOT_INITIALIZED", status_code=503)
@@ -242,12 +268,13 @@ class RoutingAiClient:
                 services = tuple(self.mcp_services) if use_agent and not vision_only else ()
                 # 共享知识仍与命名 Agent 的显式工具配置取交集，不改变普通对话路径。
                 if allow_knowledge and use_agent and self.agent_code and not vision_only:
-                    names += ("knowledge_search",)
+                    names += ("knowledge_search", "material_search")
                 agent_code = None if vision_only else self.agent_code
                 request = AgentRequest(
                     agent_code=agent_code,
                     model=None if agent_code else model,
                     image_urls=tuple(image_urls),
+                    image_material_ids=tuple(image_material_ids),
                     tools=() if vision_only else None,
                     session_id=session_id,
                     prompt=prompt,

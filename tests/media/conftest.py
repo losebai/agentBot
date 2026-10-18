@@ -1,6 +1,7 @@
 """媒体测试使用本地事务替身、可控时钟和临时文件根。"""
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -39,6 +40,9 @@ def media_database(agent_database):  # noqa: F811
         execution_id TEXT, execution_kind TEXT, purpose TEXT, mime_type TEXT, size_bytes INTEGER,
         sha256 TEXT, storage_key TEXT, status TEXT, created_at TEXT, expires_at TEXT);
     """)
+    agent_database.connection.executescript(
+        Path("sql/2026-10-17-material-memory.sqlite.sql").read_text(encoding="utf-8")
+    )
     return agent_database
 
 

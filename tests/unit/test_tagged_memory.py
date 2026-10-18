@@ -160,6 +160,11 @@ def memory_store(tmp_path):
         connect=Connection,
     )
     store.initialize()
+    from pathlib import Path
+    with sqlite3.connect(tmp_path / "memory.db") as connection:
+        connection.executescript(
+            Path("sql/2026-10-17-material-memory.sqlite.sql").read_text(encoding="utf-8")
+        )
     return store
 
 

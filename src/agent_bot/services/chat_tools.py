@@ -24,6 +24,7 @@ from pydantic import (
     model_validator,
 )
 
+from agent_bot.database_pool import finish_database_write
 from agent_bot.integrations.gpt_sovits import GeneratedSpeech, GptSoVitsError
 from agent_bot.integrations.tagged_memory_store import (
     TaggedMemoryCapacityError,
@@ -31,6 +32,7 @@ from agent_bot.integrations.tagged_memory_store import (
     TaggedMemoryStoreError,
 )
 from agent_bot.integrations.workflow_store import WorkflowNotFoundError
+from agent_bot.media.contracts import MediaOwner
 from agent_bot.mentions import (
     AmbiguousMentionTargetError,
     InvalidGroupMemberDataError,
@@ -39,6 +41,7 @@ from agent_bot.mentions import (
     resolve_tool_mention,
 )
 from agent_bot.models import ChatContext
+from agent_bot.multimodal import DownloadedImage
 from agent_bot.services.chat_reply import ChatReplyCollector
 from agent_bot.services.image_tasks import (
     ImageTaskCancellation,
@@ -106,7 +109,8 @@ class _WorkflowService(Protocol):
 
     async def prepare_request(
         self, *, workflow_key: str, positive_prompt: str, negative_prompt: str,
-        image_urls: tuple[str, ...], request_scope: str,
+        image_urls: tuple[str, ...] = (), request_scope: str,
+        input_image: DownloadedImage | None = None,
     ) -> WorkflowImageRequest: ...
 
     async def generate(
@@ -220,6 +224,8 @@ class ChatToolContext:
     workflow_collector: WorkflowImageCollector | None = field(default=None, repr=False)
     image_tasks: ImageTaskService | None = field(default=None, repr=False)
     image_urls: tuple[str, ...] = field(default=(), repr=False)
+    image_material_ids: tuple[str, ...] = field(default=(), repr=False)
+    material_store: Any = field(default=None, repr=False)
     workflow_request_scope: str = field(default_factory=lambda: secrets.token_hex(16))
     tts_service: _TtsService | None = None
     tts_collector: SpeechCollector | None = field(default=None, repr=False)
@@ -647,7 +653,9 @@ async def _local_workflow_generate_image(
     signature_data = parsed.model_dump_json().encode("utf-8")
     if summary.requires_image:
         source_digest = hashlib.sha256(
-            json.dumps(tuple(dict.fromkeys(context.image_urls))).encode("utf-8"),
+            json.dumps(tuple(dict.fromkeys(
+                context.image_material_ids or context.image_urls
+            ))).encode("utf-8"),
         ).hexdigest()
         signature_data += f"\n{context.workflow_request_scope}\n{source_digest}".encode()
     signature = hashlib.sha256(signature_data).hexdigest()
@@ -669,10 +677,23 @@ async def _local_workflow_generate_image(
     try:
         call_index = await context.workflow_collector.reserve_call()
         context.ensure_active()
+        image_options = {}
+        if summary.requires_image and context.image_material_ids:
+            if len(context.image_material_ids) != 1 or context.image_urls:
+                raise ChatToolError("INVALID_ARGUMENT", "图生图必须提供唯一原图")
+            if context.material_store is None:
+                raise ChatToolError("UNAVAILABLE", "素材存储未初始化")
+            id = context.image_material_ids[0]
+            owner = MediaOwner(entry="qq", session_id=context.session_id)
+            asset = await context.material_store.describe(id, owner=owner)
+            async with context.material_store.open_content(id, owner=owner) as file:
+                data = await finish_database_write(file.read)
+            image_options["input_image"] = DownloadedImage(asset.mime_type, data)
         request = await context.workflow_service.prepare_request(
             workflow_key=workflow_key, positive_prompt=parsed.positive_prompt,
             negative_prompt=parsed.negative_prompt, image_urls=context.image_urls,
             request_scope=context.workflow_request_scope,
+            **image_options,
         )
         if (request.input_image is not None) != summary.requires_image:
             raise WorkflowExecutionError("WORKFLOW_CHANGED", "工作流类型已变更，请重新发起请求")

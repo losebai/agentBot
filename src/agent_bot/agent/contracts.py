@@ -169,6 +169,7 @@ class AgentRequest(AiModel):
     prompt: str = Field(max_length=32000)
     image_urls: tuple[str, ...] = Field(default=(), max_length=8, exclude=True, repr=False)
     attachment_ids: tuple[str, ...] = Field(default=(), max_length=8, exclude=True, repr=False)
+    image_material_ids: tuple[str, ...] = Field(default=(), max_length=8, exclude=True, repr=False)
     messages: tuple[ChatMessage, ...] = Field(default=(), max_length=100)
     session_id: str = Field(min_length=1, max_length=256)
     request_id: str = Field(min_length=1, max_length=256)
@@ -180,12 +181,17 @@ class AgentRequest(AiModel):
 
     @model_validator(mode="after")
     def validate_request(self):
-        """只有附图请求允许空提示，两个输入来源不能混用。"""
-        if self.image_urls and self.attachment_ids:
+        """只有本次附图允许空提示，远程、临时附件及持久素材三种来源不能混用。"""
+        if sum(bool(value) for value in (
+            self.image_urls, self.attachment_ids, self.image_material_ids,
+        )) > 1:
             raise ValueError("conflicting media inputs")
-        if any(not re.fullmatch(r"[a-f0-9]{32}", id) for id in self.attachment_ids):
+        if any(not re.fullmatch(r"[a-f0-9]{32}", id)
+               for id in (*self.attachment_ids, *self.image_material_ids)):
             raise ValueError("invalid attachment identifier")
-        if not self.prompt.strip() and (self.image_urls or self.attachment_ids):
+        if not self.prompt.strip() and (
+            self.image_urls or self.attachment_ids or self.image_material_ids
+        ):
             object.__setattr__(self, "prompt", DEFAULT_IMAGE_PROMPT)
         if not self.prompt.strip() or sum(len(m.content) for m in self.messages) > 120000:
             raise ValueError("invalid conversation")

@@ -18,7 +18,7 @@ type Category = typeof categories[number]['key'];
 // null 仅表示显式清除可空密钥，空字符串仍是表单输入或静态密钥的保留操作。
 type DraftValue = string | boolean | null;
 const llmSettingNames = new Set([
-  'chat_model', 'chat_vision_model', 'chat_system_prompt', 'chat_mcp_services',
+  'chat_model', 'chat_vision_model', 'chat_image_model', 'chat_system_prompt', 'chat_mcp_services',
   'chat_image_recognition_enabled', 'chat_max_images_per_message', 'chat_tagged_memory_enabled',
 ]);
 const qqSettingNames = new Set([
@@ -30,7 +30,7 @@ const replySettingNames = new Set([
   'chat_cooldown_seconds', 'chat_chunk_chars', 'chat_max_reply_chars',
 ]);
 
-/** 先区分业务功能，再归类 QQ 接入；同类冷却等字段不能只因名称相似被混放。 */
+/** 按用途分类；供应商模型归 LLM，避免生图模型因图片字段前缀混入 Comfy。 */
 function fieldCategory(field: SettingField): Category {
   const name = field.name;
   if (name.startsWith('chat_naraka_')) return 'games';
@@ -44,7 +44,7 @@ function fieldCategory(field: SettingField): Category {
     'chat_llm_', 'chat_python_', 'chat_agent_', 'chat_web_search_',
     'chat_memory_', 'chat_history_', 'chat_tts_',
   ].some(prefix => name.startsWith(prefix))) return 'llm';
-  // 识图字段已在 LLM 分类处理，剩余图片字段均用于生图。
+  // 模型名称与识图字段已归入 LLM，剩余图片字段用于生图功能控制。
   if (name.startsWith('chat_local_workflow_') || name.startsWith('chat_image_')) return 'comfy';
   return 'basic';
 }

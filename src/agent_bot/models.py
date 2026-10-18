@@ -22,6 +22,7 @@ AgentToolName = Literal[
     "soloncode",
     "job",
     "memory",
+    "material_search",
     "web_search",
     "read_url",
     "naraka_query",

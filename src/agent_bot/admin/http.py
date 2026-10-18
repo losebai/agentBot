@@ -42,7 +42,9 @@ class ManagementMiddleware:
                 ] + [(b"cache-control", b"no-store"), (b"x-request-id", request_id.encode())]
             await send(message)
 
-        is_upload = scope["method"] == "POST" and scope["path"] == "/api/v1/media/uploads"
+        is_upload = scope["method"] == "POST" and scope["path"] in {
+            "/api/v1/media/uploads", "/api/v1/materials/uploads",
+        }
         is_workflow_import = (
             scope["method"] == "POST" and scope["path"] == "/api/v1/workflows/import"
         )
@@ -56,7 +58,9 @@ class ManagementMiddleware:
                 stream_size += len(message.get("body", b""))
                 limit = (
                     6 * MAX_WORKFLOW_FILE_BYTES + 8192
-                    if is_workflow_import else 10 * 1024 * 1024
+                    if is_workflow_import else
+                    20 * 1024 * 1024 if scope["path"] == "/api/v1/materials/uploads" else
+                    10 * 1024 * 1024
                 )
                 if stream_size > limit:
                     if is_workflow_import:

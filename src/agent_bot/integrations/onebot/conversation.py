@@ -7,6 +7,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
+from dataclasses import replace
 from typing import NoReturn
 
 from nonebot import logger
@@ -21,9 +22,12 @@ from nonebot.adapters.onebot.v11.exception import ActionFailed, ApiNotAvailable,
 from nonebot.matcher import Matcher
 
 from agent_bot.ai.chat_errors import ChatAiRejectedError
+from agent_bot.ai.errors import AiError
 from agent_bot.config import RuntimeConfig
 from agent_bot.group_members import GroupMemberStoreError, GroupMemberValidationError
 from agent_bot.integrations.onebot.replies import OneBotReplyService
+from agent_bot.materials.receiver import MaterialReceiver
+from agent_bot.media.contracts import MediaOwner
 from agent_bot.mentions import (
     AmbiguousMentionTargetError,
     InvalidGroupMemberDataError,
@@ -110,6 +114,7 @@ class ConversationHandler:
         group_members_loader: GroupMemberProvider,
         group_members_refresher: GroupMemberProvider,
         reply_service: OneBotReplyService,
+        material_receiver_provider: Callable[[], MaterialReceiver | None] = lambda: None,
     ) -> None:
         """保存聊天编排需要的热更新依赖。"""
 
@@ -126,6 +131,23 @@ class ConversationHandler:
         self._group_members_loader = group_members_loader
         self._group_members_refresher = group_members_refresher
         self._reply_service = reply_service
+        self._material_receiver_provider = material_receiver_provider
+
+    def material_registrar(self, bot: Bot, event: MessageEvent):
+        """接收和引用绑定同一真实会话，模型不能指定素材归属。"""
+        receiver = self._material_receiver_provider()
+        if receiver is None:
+            return None
+        owner = MediaOwner(entry="qq", session_id=self._session_id_provider(bot, event))
+
+        async def register(segment):
+            """嵌套引用沿用外层请求授权，不相信转发内伪造的身份。"""
+            return await receiver.register(
+                bot, owner, segment,
+                group_id=event.group_id if isinstance(event, GroupMessageEvent) else None,
+            )
+
+        return register
 
     async def reply_intent(
         self,
@@ -193,14 +215,33 @@ class ConversationHandler:
         bot: Bot,
         event: MessageEvent,
     ) -> MultimodalInput:
-        """解析多模态输入并通过回复模型解释确定的校验事实。"""
+        """解析本次图片并登记持久素材，文件仅提供 ID 与元数据。"""
 
         config = self._config_provider()
         try:
-            return parse_multimodal_input(
+            parsed = parse_multimodal_input(
                 message,
                 enabled=config.chat_image_recognition_enabled,
                 max_images=config.chat_max_images_per_message,
+            )
+            register = self.material_registrar(bot, event)
+            if register is None:
+                return parsed
+            segments = [segment for segment in message if segment.type in {"image", "file"}]
+            if len(segments) > 16:
+                raise ValueError("一次最多接收十六个素材")
+            assets = [await register(segment) for segment in segments]
+            labels = "\n".join(
+                f"[{'图片' if asset.kind == 'image' else '文件'} 素材ID={asset.id} "
+                f"名称={asset.name}]" for asset in assets
+            )
+            return replace(
+                parsed, prompt="\n".join(value for value in (parsed.prompt, labels) if value),
+                image_urls=(), material_ids=tuple(dict.fromkeys(asset.id for asset in assets)),
+                image_material_ids=tuple(dict.fromkeys(
+                    asset.id for asset, segment in zip(assets, segments, strict=True)
+                    if segment.type == "image"
+                )),
             )
         except ImageRecognitionDisabledError:
             await self._finish_reply(
@@ -220,6 +261,11 @@ class ConversationHandler:
                 matcher, bot, event, InvalidInputFacts(
                     subject="图片地址", requirement="提供有效且未过期的公开图片地址",
                 ),
+            )
+        except (AiError, OSError, ValueError, ActionFailed, ApiNotAvailable, NetworkError) as error:
+            await self._finish_reply(
+                matcher, bot, event,
+                TaskFailedFacts(operation="保存素材", error_type=type(error).__name__),
             )
         raise AssertionError("matcher.finish should stop handler execution")
 
@@ -481,6 +527,7 @@ class ConversationHandler:
                     max_images=config.chat_max_images_per_message,
                     max_videos=MAX_VIDEOS_PER_MESSAGE,
                     max_prompt_chars=config.chat_max_input_chars,
+                    register_material=self.material_registrar(bot, event),
                 )
             except ImageRecognitionDisabledError:
                 await self._finish_reply(
@@ -538,6 +585,13 @@ class ConversationHandler:
                         ),
                     ),
                 )
+            except (
+                AiError, OSError, ValueError, ActionFailed, ApiNotAvailable, NetworkError,
+            ) as error:
+                await self._finish_reply(
+                    matcher, bot, event,
+                    TaskFailedFacts(operation="保存引用素材", error_type=type(error).__name__),
+                )
         if not chat_input.prompt:
             await self._finish_reply(
                 matcher, bot, event, InvalidInputFacts(
@@ -576,6 +630,8 @@ class ConversationHandler:
         try:
             await self._chat_service_provider().validate_queued(
                 normalized_prompt, image_urls=chat_input.image_urls,
+                **({"image_material_ids": chat_input.image_material_ids}
+                   if chat_input.image_material_ids else {}),
                 video_urls=chat_input.video_urls, chat_tools=tools,
             )
         except ModelGuardUnavailableError:
@@ -607,6 +663,8 @@ class ConversationHandler:
             userName=user_name,
             chatContext=chat_context,
             imageUrls=chat_input.image_urls,
+            materialIds=chat_input.material_ids,
+            imageMaterialIds=chat_input.image_material_ids,
             videoUrls=chat_input.video_urls,
             chatTools=tools,
             layaDecision=laya_decision,

@@ -6,6 +6,7 @@ from datetime import datetime
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from agent_bot.ai.contracts import AiModel
+from agent_bot.materials.contracts import MaterialId
 from agent_bot.services.tagged_memory import MemoryScope, normalize_memory_tags
 
 
@@ -84,6 +85,7 @@ class MemoryView(AiModel):
     content: str
     tags: tuple[str, ...]
     created_at: datetime
+    material_ids: tuple[MaterialId, ...] = ()
 
 
 class TagCount(AiModel):

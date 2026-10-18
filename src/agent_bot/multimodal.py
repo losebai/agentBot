@@ -70,6 +70,8 @@ class MultimodalInput:
     prompt: str
     image_urls: tuple[str, ...]
     video_urls: tuple[str, ...] = ()
+    material_ids: tuple[str, ...] = ()
+    image_material_ids: tuple[str, ...] = ()
 
 
 def validate_public_image_url(value: str) -> str:

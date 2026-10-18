@@ -5,11 +5,17 @@ import asyncio
 from fastapi import APIRouter, Query, Request
 from starlette.requests import ClientDisconnect
 
-from agent_bot.admin.media_models import MediaGenerationProbeRequest
+from agent_bot.admin.media_models import MaterialUploadView, MediaGenerationProbeRequest
 from agent_bot.admin.media_requests import run_with_disconnect
 from agent_bot.admin.streaming import ManagedStreamingResponse
 from agent_bot.ai.contracts import Page
 from agent_bot.database_pool import finish_database_write
+from agent_bot.materials.contracts import (
+    MAX_FILE_BYTES,
+    MaterialSearchArguments,
+    MaterialSearchResult,
+    MaterialView,
+)
 from agent_bot.media.config import MAX_IMAGE_BYTES, UPLOAD_SECONDS
 from agent_bot.media.contracts import (
     MediaAssetView,
@@ -52,7 +58,7 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         value.require_ready()
         return value
 
-    @router.post("/media/uploads", response_model=MediaAssetView, status_code=201)
+    @router.post("/media/uploads", response_model=MaterialUploadView, status_code=201)
     async def upload(
         request: Request,
         session_id: str = Query(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
@@ -74,12 +80,18 @@ def install_media_routes(router: APIRouter, runtime) -> None:
                         prepared = await ImagePreparer().prepare_async(
                             bytes(data), request.headers.get("content-type")
                         )
-                        return await current.store.put(
-                            owner=MediaOwner(entry="admin", session_id=f"admin_{session_id}"),
+                        owner = MediaOwner(entry="admin", session_id=f"admin_{session_id}")
+                        material = await current.materials.put(
+                            owner=owner, name="上传图片", data=prepared.data,
+                            mime_type=prepared.media_type,
+                        )
+                        temporary = await current.store.put(
+                            owner=owner,
                             purpose="input",
                             data=prepared.data,
                             mime_type=prepared.media_type,
                         )
+                        return MaterialUploadView(**temporary.model_dump(), material_id=material.id)
 
                     return await run_with_disconnect(request, persist())
 
@@ -89,6 +101,77 @@ def install_media_routes(router: APIRouter, runtime) -> None:
                     raise MediaError("MEDIA_UPLOAD_TIMEOUT", status_code=408) from error
                 except ClientDisconnect as error:
                     raise MediaError("MEDIA_CANCELLED", status_code=499) from error
+
+    @router.post("/materials/uploads", response_model=MaterialView, status_code=201)
+    async def upload_material(
+        request: Request,
+        session_id: str = Query(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+        name: str = Query(..., min_length=1, max_length=255),
+    ):
+        """认证先于原件读取；普通文件不解析、不执行，也不调用模型。"""
+        async with runtime.lease():
+            current = resources()
+            current.materials.require_ready()
+            async with current.uploads.slot():
+                async def receive():
+                    """限制实际接收量，提交取消必须等待文件和事务完成。"""
+                    data = bytearray()
+                    async for chunk in request.stream():
+                        if len(data) + len(chunk) > MAX_FILE_BYTES:
+                            raise MediaError("MEDIA_TOO_LARGE", status_code=413)
+                        data.extend(chunk)
+                    mime = request.headers.get("content-type", "application/octet-stream")
+                    return await run_with_disconnect(request, current.materials.put(
+                        owner=MediaOwner(entry="admin", session_id=f"admin_{session_id}"),
+                        name=name, data=bytes(data),
+                        mime_type=mime.split(";", 1)[0].strip().lower(),
+                    ))
+
+                try:
+                    return await asyncio.wait_for(receive(), UPLOAD_SECONDS)
+                except asyncio.TimeoutError as error:
+                    raise MediaError("MEDIA_UPLOAD_TIMEOUT", status_code=408) from error
+                except ClientDisconnect as error:
+                    raise MediaError("MEDIA_CANCELLED", status_code=499) from error
+
+    @router.get("/materials", response_model=MaterialSearchResult)
+    async def list_materials(
+        session_id: str = Query(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+        query: str = Query("", max_length=200),
+        kind: str | None = Query(None, pattern=r"^(image|file)$"),
+        limit: int = Query(20, ge=1, le=20),
+        offset: int = Query(0, ge=0, le=10000),
+    ):
+        """管理素材查询仍按所属管理会话过滤，不扩大到 QQ 素材。"""
+        async with runtime.lease():
+            return await resources().materials.search(
+                MediaOwner(entry="admin", session_id=f"admin_{session_id}"),
+                MaterialSearchArguments(query=query, kind=kind, limit=limit, offset=offset),
+            )
+
+    @router.get("/materials/{id}/content")
+    async def material_content(
+        id: str,
+        session_id: str = Query(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+    ):
+        """原件只能下载，HTML 等主动内容不在管理域内联执行。"""
+        async with runtime.lease():
+            store = resources().materials
+            owner = MediaOwner(entry="admin", session_id=f"admin_{session_id}")
+            asset = await store.describe(id, owner=owner)
+            lease = store.open_content(id, owner=owner)
+            file = await lease.__aenter__()
+
+        async def chunks():
+            """响应断开也由 MediaContentResponse 归还持有的文件锁。"""
+            while chunk := await finish_database_write(lambda: file.read(65536)):
+                yield chunk
+
+        return MediaContentResponse(
+            chunks(), lease=lease, media_type=asset.mime_type,
+            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+                     "Content-Disposition": f'attachment; filename="{asset.id}"'},
+        )
 
     @router.post("/media/generations", response_model=MediaGenerationResult)
     async def generate(body: MediaGenerationProbeRequest, request: Request):

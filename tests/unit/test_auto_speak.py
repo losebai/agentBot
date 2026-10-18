@@ -120,6 +120,7 @@ def make_service(
     on_error: Callable[[str], None] | None = None,
     available_tools: Sequence[ChatToolName] = (),
     conversation_context_provider: FakeConversationContextProvider | None = None,
+    system_prompt_provider: Callable[[], Awaitable[str | None]] | None = None,
 ) -> AutoSpeakService:
     """用离线依赖构造群聊自动发言，允许覆盖机器人人设。"""
 
@@ -138,6 +139,7 @@ def make_service(
         trigger_mode=trigger_mode,
         prompt=prompt,
         system_prompt=system_prompt,
+        system_prompt_provider=system_prompt_provider,
         laya_prompt="结合上下文判断是否应该主动发言。",
         session_secret=session_secret,
         initial_delay_seconds=initial_delay_seconds,
@@ -154,6 +156,29 @@ def decision_payload(state: str) -> dict[str, object]:
     payload = json.loads(state.partition("\n")[2])
     assert isinstance(payload, dict)
     return payload
+
+
+@pytest.mark.asyncio
+async def test_auto_speak_uses_latest_agent_prompt_and_respects_empty_role():
+    """每次判定读取当前人设，明确清空不能恢复旧全局提示词。"""
+    role = "当前 Agent 的人设"
+
+    async def current_prompt():
+        """模拟热更新目录的异步读取，不模拟判定上下文的构造。"""
+        return role
+
+    client = FakeDecisionClient([decision(False), decision(False)])
+    service = make_service(
+        job_submitter=FakeJobSubmitter(), decision_client=client,
+        context_store=FakeContextStore({"88888": "最近群聊"}), bot_provider=lambda _: FakeBot(),
+        system_prompt="旧全局人设", system_prompt_provider=current_prompt,
+    )
+    await service.run_once()
+    first = decision_payload(client.calls[0]["state"])["trusted_instructions"]
+    assert first["system_prompt"] == role
+    role = ""
+    await service.run_once()
+    assert decision_payload(client.calls[1]["state"])["trusted_instructions"]["system_prompt"] == ""
 
 
 @pytest.mark.asyncio

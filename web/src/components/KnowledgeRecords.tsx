@@ -169,6 +169,7 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
     {selected !== undefined && <DetailDialog title={`${label}详情 #${selected}`} loading={detailLoading} error={detailError} onClose={closeDetail}>
       {detail && <><h3>{recordName(detail)}</h3><p>{detail.tags.map(tag => <Tag key={tag}>{tag}</Tag>)}</p>
         {'scope' in detail && <p className="knowledge-owner">作用域：{scopeNames[detail.scope]} · {detail.scope_id}</p>}
+        {'material_ids' in detail && !!detail.material_ids?.length && <p>关联素材：{detail.material_ids.map(id => <Tag key={id}>{id}</Tag>)}</p>}
         <pre className="knowledge-content">{detail.content}</pre><p>创建时间：{detail.created_at.replace('T', ' ')}</p></>}
     </DetailDialog>}
     {deleting && <CatalogDialog title={'删除' + label} busy={deleteBusy} error={deleteError} onCancel={() => setDeleting(undefined)}>

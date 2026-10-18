@@ -115,6 +115,7 @@ def build_core_state(
 
     ai_client = RoutingAiClient(
         python_service,
+        legacy_system_prompt=config.chat_system_prompt,
         timeout_seconds=config.chat_timeout_seconds,
         default_options=LlmRequestOptions(
             **{name: getattr(config, f"chat_llm_{name}") for name in LlmRequestOptions.model_fields}
@@ -147,6 +148,7 @@ def build_core_state(
                 knowledge_store=(knowledge_store if knowledge_store is not None else
                                  KnowledgeStore(database, connect=database_pool.connect)),
                 job_tools=JobTools(job_store) if config.chat_job_enabled else None,
+                material_store=media_resources.materials if media_resources else None,
                 admin_media_tools=AdminMediaTools(
                     config,
                     workflow_service,
@@ -160,6 +162,7 @@ def build_core_state(
             ),
             search_code=config.chat_python_search_mcp_code,
             media_store=media_resources.store if media_resources else None,
+            material_store=media_resources.materials if media_resources else None,
             image_downloader=QQImageDownloader(remaining=lambda: remaining_timeout(15)),
             maximum_images=config.chat_max_images_per_message,
         ),

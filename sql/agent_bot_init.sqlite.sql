@@ -847,3 +847,63 @@ CREATE TABLE IF NOT EXISTS chat_knowledge_tag (
 -- 按标签筛选知识并统计有效条目。
 CREATE INDEX IF NOT EXISTS idx_knowledge_tag_lookup ON chat_knowledge_tag(tag, knowledge_id);
 
+
+-- 用途：新增持久图片/文件素材、接收来源和长期记忆素材关联。
+-- 顺序：已有 SQLite 数据库备份后显式执行；依赖 chat_tagged_memory 已存在。
+-- 数据影响：只新增表和索引，不重建旧表，不迁移或删除临时附件和历史记忆。
+CREATE TABLE IF NOT EXISTS chat_material (
+    -- 服务端生成的持久素材标识，消息和记忆共享稳定 ID。
+    id TEXT PRIMARY KEY,
+    -- 可信入口 qq 或 admin。
+    entry TEXT NOT NULL,
+    -- 匿名会话归属，查询及原件读取均校验。
+    session_id TEXT NOT NULL,
+    -- 原始文件显示名称，不参与构造磁盘路径。
+    name TEXT NOT NULL,
+    -- 素材类别 image 或 file。
+    kind TEXT NOT NULL,
+    -- 已验证的文件媒体类型。
+    mime_type TEXT NOT NULL,
+    -- 实际原件字节数。
+    size_bytes INTEGER NOT NULL,
+    -- 原件内容摘要，会话内复用相同文件。
+    sha256 TEXT NOT NULL,
+    -- 受限存储键，等于素材 ID。
+    storage_key TEXT NOT NULL,
+    -- 已有文字说明，不自动调用模型生成。
+    description TEXT NOT NULL DEFAULT '',
+    -- 创建时间，统一使用 UTC。
+    created_at DATETIME NOT NULL
+);
+-- 去重限制在相同入口和会话，不能跨会话探测私有文件。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_material_owner_digest
+ON chat_material(entry,session_id,sha256);
+-- 支持会话内按类别和创建时间分页。
+CREATE INDEX IF NOT EXISTS idx_material_owner_time
+ON chat_material(entry,session_id,kind,created_at,id);
+
+CREATE TABLE IF NOT EXISTS chat_material_source (
+    -- 接收来源的可信入口。
+    entry TEXT NOT NULL,
+    -- 来源所属匿名会话。
+    session_id TEXT NOT NULL,
+    -- 机器人及原消息附件身份的 SHA256。
+    source_key TEXT NOT NULL,
+    -- 关联的持久素材 ID，外键保护来源不会悬空。
+    material_id TEXT NOT NULL REFERENCES chat_material(id),
+    -- 同一来源不可绑定到不同素材，引用直接复用此关联。
+    PRIMARY KEY(entry,session_id,source_key)
+);
+-- 支持按素材检查来源。
+CREATE INDEX IF NOT EXISTS idx_material_source_material ON chat_material_source(material_id);
+
+CREATE TABLE IF NOT EXISTS chat_memory_material (
+    -- 关联长期标签记忆，遗忘只软删除记忆。
+    memory_id INTEGER NOT NULL REFERENCES chat_tagged_memory(id),
+    -- 关联持久素材，外键确保原件登记真实存在。
+    material_id TEXT NOT NULL REFERENCES chat_material(id),
+    -- 同一记忆不重复关联同一素材。
+    PRIMARY KEY(memory_id,material_id)
+);
+-- 支持按素材反查其记忆引用。
+CREATE INDEX IF NOT EXISTS idx_memory_material_material ON chat_memory_material(material_id);

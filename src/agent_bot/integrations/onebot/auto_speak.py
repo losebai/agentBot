@@ -72,8 +72,9 @@ class AutoSpeakService:
         max_reply_chars: int,
         sleep: Sleep = asyncio.sleep,
         on_error: ErrorReporter | None = None,
+        system_prompt_provider: Callable[[], Awaitable[str | None]] | None = None,
     ) -> None:
-        """保存群目标与决策依赖，机器人人设可留空，主动发言指令仍需提供。"""
+        """保存群目标与决策依赖；判定时读取当前人设，主动发言指令仍需提供。"""
 
         if (
             not bot_id
@@ -99,6 +100,7 @@ class AutoSpeakService:
         self._trigger_mode = trigger_mode
         self._prompt = prompt.strip()
         self._system_prompt = system_prompt.strip()
+        self._system_prompt_provider = system_prompt_provider
         self._laya_prompt = laya_prompt.strip()
         self._session_secret = session_secret
         self._initial_delay_seconds = initial_delay_seconds
@@ -189,9 +191,12 @@ class AutoSpeakService:
         scope = f"bot:{self._bot_id}:auto:group:{group_id}"
         session_id = external_session_id(scope, self._session_secret)
         conversation_context = await self._conversation_context_provider(session_id)
+        current_prompt = (
+            await self._system_prompt_provider() if self._system_prompt_provider else None
+        )
         state = self._context_builder.build(
             trigger_mode=self._trigger_mode,
-            system_prompt=self._system_prompt,
+            system_prompt=self._system_prompt if current_prompt is None else current_prompt,
             auto_speak_prompt=self._prompt,
             laya_prompt=self._laya_prompt,
             conversation_context=conversation_context,

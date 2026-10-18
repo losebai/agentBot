@@ -191,6 +191,8 @@ class ConversationQueueProcessor:
                             user_name=job.user_name,
                             chat_context=job.chat_context,
                             image_urls=job.image_urls,
+                            **({"image_material_ids": job.image_material_ids}
+                               if job.image_material_ids else {}),
                             video_urls=job.video_urls,
                             chat_tools=tools,
                             tool_session_token=token,

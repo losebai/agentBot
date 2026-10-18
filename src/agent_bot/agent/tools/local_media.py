@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from agent_bot.agent.errors import AgentError
 from agent_bot.jobs.contracts import JobArguments
+from agent_bot.materials.contracts import MaterialSearchArguments
 from agent_bot.services.chat_tools import (
     TtsGenerateArguments,
     WorkflowCancelArguments,
@@ -13,8 +14,11 @@ from agent_bot.services.chat_tools import (
     WorkflowTasksArguments,
     _StrictArguments,
 )
+from agent_bot.services.tagged_memory import MemoryArguments
 
 ARGUMENT_MODELS = {
+    "memory": MemoryArguments,
+    "material_search": MaterialSearchArguments,
     "job": JobArguments,
     "local_workflow_list": _StrictArguments,
     "local_workflow_generate_image": WorkflowGenerateArguments,

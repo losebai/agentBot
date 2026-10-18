@@ -5,7 +5,15 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from agent_bot.admin.models import ApiModel
+from agent_bot.materials.contracts import MaterialId
+from agent_bot.media.contracts import MediaAssetView
 from agent_bot.models import ChatMessage
+
+
+class MaterialUploadView(MediaAssetView):
+    """上传保留临时执行附件，同时返回可供记忆关联的持久素材身份。"""
+
+    material_id: MaterialId
 
 
 class MediaGenerationProbeRequest(ApiModel):

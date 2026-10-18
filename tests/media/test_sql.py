@@ -108,8 +108,9 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
             for referenced in re.findall(r"REFERENCES\s+`?(\w+)`?", declaration, re.I):
                 assert referenced in created, (name, referenced)
         created.add(name)
-    assert len(tables) == 35
-    assert {"chat_knowledge", "chat_knowledge_tag"} <= tables.keys()
+    assert len(tables) == 38
+    assert {"chat_knowledge", "chat_knowledge_tag", "chat_material", "chat_material_source",
+            "chat_memory_material"} <= tables.keys()
 
 
 def test_local_queue_increment_matches_full_initialization():

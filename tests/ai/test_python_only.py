@@ -11,6 +11,7 @@ from agent_bot.ai.routing import AiRouteRequest, select_route
     [
         (AiRouteRequest(), "ordinary-text"),
         (AiRouteRequest(agent=True), "agent"),
+        (AiRouteRequest(videos=True), "ordinary-text"),
         (AiRouteRequest(images=True), "media"),
     ],
 )
@@ -22,7 +23,7 @@ def test_default_requests_use_local_services(route_request, capability):
 
 @pytest.mark.parametrize(
     "route_request",
-    [AiRouteRequest(videos=True), AiRouteRequest(chat_tools=("soloncode",))],
+    [AiRouteRequest(chat_tools=("soloncode",))],
 )
 def test_removed_capabilities_fail_before_external_request(route_request):
     """未迁移能力明确拒绝，禁止转发至不存在的服务。"""

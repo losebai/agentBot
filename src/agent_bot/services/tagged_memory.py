@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent_bot.database_pool import finish_database_write
+from agent_bot.materials.contracts import MaterialId
 
 if TYPE_CHECKING:
     from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
@@ -62,6 +63,9 @@ class MemoryArguments(BaseModel):
     tags: tuple[str, ...] = Field(
         default=(), max_length=8, description="1-8 个可复用主题标签，每个最多 32 字符"
     )
+    material_ids: tuple[MaterialId, ...] = Field(
+        default=(), max_length=8, description="当前会话真实存在的图片/文件素材 ID，最多八个"
+    )
     offset: int = Field(
         default=0, ge=0, le=8192, description="仅 tags 操作使用，每页最多 64 个标签"
     )
@@ -85,6 +89,10 @@ class MemoryArguments(BaseModel):
             raise ValueError("invalid read arguments")
         if (self.action == "tags" and self.tags) or (self.action != "tags" and self.offset):
             raise ValueError("invalid tag pagination")
+        if self.material_ids and self.action != "save":
+            raise ValueError("material_ids are only accepted when saving memory")
+        if len(set(self.material_ids)) != len(self.material_ids):
+            raise ValueError("duplicate memory material")
         if any("\0" in value for value in (self.key or "", self.content or "")):
             raise ValueError("invalid memory text")
         return self
@@ -132,6 +140,7 @@ class MemoryRecord(BaseModel):
     key: str
     content: str
     tags: tuple[str, ...]
+    material_ids: tuple[MaterialId, ...] = ()
 
 
 class MemoryTag(BaseModel):
@@ -189,7 +198,9 @@ MEMORY_TOOL_DESCRIPTION = (
     "无需用户明确要求记住；不要保存闲聊原文、推测、密码或指令。"
     "scope: global 为同一机器人跨会话共享事实，session 为当前会话，"
     "user 为当前用户跨会话偏好，group 为当前群；私人事实不要扩大到 global/group。"
-    "save 传 scope/key/content/tags，只能新增；同键已存在或已删除均返回冲突，不能覆盖或恢复。"
+    "save 传 scope/key/content/tags，可用 material_ids 关联当前会话已登记的图片或文件；"
+    "只能使用接收上下文或 material_search 返回的真实素材 ID，不保存临时 URL 或 Base64。"
+    "只能新增；同键已存在或已删除均返回冲突，不能覆盖或恢复。"
     "新增事实使用新键，优先复用已有标签；保存冲突不得声称成功。"
     "根据当前对话语义选择相关已有标签，先 recall(scope=all,tags=...) 读取再回答，"
     "无需原文包含标签。结果自动进入当前上下文，无关记忆不要读取。"

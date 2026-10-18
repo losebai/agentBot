@@ -121,6 +121,7 @@ class ChatService:
         user_name: str | None = None,
         chat_context: ChatContext | None = None,
         image_urls: Sequence[str] = (),
+        image_material_ids: Sequence[str] = (),
         video_urls: Sequence[str] = (),
     ) -> str:
         """生成回复并在成功后写入普通聊天历史。"""
@@ -133,6 +134,7 @@ class ChatService:
             user_name=user_name,
             chat_context=chat_context,
             image_urls=image_urls,
+            image_material_ids=image_material_ids,
             video_urls=video_urls,
         )
 
@@ -146,6 +148,7 @@ class ChatService:
         user_name: str | None = None,
         chat_context: ChatContext | None = None,
         image_urls: Sequence[str] = (),
+        image_material_ids: Sequence[str] = (),
         video_urls: Sequence[str] = (),
     ) -> str:
         """专用指令可使用空机器人提示词，不读取或写入普通聊天历史。"""
@@ -159,6 +162,7 @@ class ChatService:
             user_name=user_name,
             chat_context=chat_context,
             image_urls=image_urls,
+            image_material_ids=image_material_ids,
             video_urls=video_urls,
             system_messages=(
                 (ChatMessage(role="system", content=normalized_system_prompt),)
@@ -179,6 +183,7 @@ class ChatService:
         user_name: str | None = None,
         chat_context: ChatContext | None = None,
         image_urls: Sequence[str] = (),
+        image_material_ids: Sequence[str] = (),
         video_urls: Sequence[str] = (),
         chat_tools: Sequence[ChatToolName] = (),
         tool_session_token: str | None = None,
@@ -194,6 +199,7 @@ class ChatService:
             user_name=user_name,
             chat_context=chat_context,
             image_urls=image_urls,
+            image_material_ids=image_material_ids,
             video_urls=video_urls,
             chat_tools=chat_tools,
             tool_session_token=tool_session_token,
@@ -207,13 +213,14 @@ class ChatService:
 
     async def validate_queued(
         self, prompt: str, *, image_urls: Sequence[str] = (), video_urls: Sequence[str] = (),
+        image_material_ids: Sequence[str] = (),
         chat_tools: Sequence[ChatToolName] = (),
     ) -> None:
         """自然聊天统一预检 Agent 模型，不消费额度或写入会话历史。"""
         if self._model_guard is None:
             return
         # 无工具时也由 Agent 回答，预设模型必须与实际执行保持一致。
-        category = ContentCategory.IMAGE_UNDERSTANDING if image_urls or video_urls else (
+        category = ContentCategory.IMAGE_UNDERSTANDING if image_urls or image_material_ids else (
             ContentCategory.TEXT
         )
         await self._model_guard.ensure_enabled(
@@ -237,6 +244,7 @@ class ChatService:
         user_name: str | None = None,
         chat_context: ChatContext | None = None,
         image_urls: Sequence[str] = (),
+        image_material_ids: Sequence[str] = (),
         video_urls: Sequence[str] = (),
         chat_tools: Sequence[ChatToolName] = (),
         tool_session_token: str | None = None,
@@ -262,6 +270,7 @@ class ChatService:
             user_name=user_name,
             chat_context=chat_context,
             image_urls=image_urls,
+            image_material_ids=image_material_ids,
             video_urls=video_urls,
             chat_tools=chat_tools,
             tool_session_token=tool_session_token,
@@ -508,6 +517,7 @@ class ChatService:
         user_name: str | None,
         chat_context: ChatContext | None,
         image_urls: Sequence[str],
+        image_material_ids: Sequence[str] = (),
         video_urls: Sequence[str],
         system_messages: Sequence[ChatMessage] | None = None,
         untrusted_facts: str | None = None,
@@ -579,7 +589,7 @@ class ChatService:
                 )
             category = (
                 ContentCategory.IMAGE_UNDERSTANDING
-                if image_urls or video_urls
+                if image_urls or image_material_ids
                 else ContentCategory.TEXT
             )
             model_id = self._model_router.model_for(category)
@@ -592,7 +602,7 @@ class ChatService:
                     tools=bool(chat_tools),
                     laya=laya_decision,
                     chat_tools=tuple(chat_tools),
-                    images=bool(image_urls),
+                    images=bool(image_urls or image_material_ids),
                     videos=bool(video_urls),
                 )
                 route_method = getattr(self.client, "route", None)
@@ -603,6 +613,8 @@ class ChatService:
                 if decision.capability not in {"agent", "media"}:
                     await self._model_guard.ensure_enabled(model_id, capability=decision.capability)
             context_options = {} if chat_context is None else {"chat_context": chat_context}
+            if image_material_ids:
+                context_options["image_material_ids"] = tuple(image_material_ids)
             if reply_composition:
                 # 完成通知只表达已确定事实，新增共享知识工具不能扩大原有通知能力。
                 context_options["allow_knowledge"] = False

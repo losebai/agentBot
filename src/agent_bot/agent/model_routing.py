@@ -80,20 +80,16 @@ class AgentModelRouter:
         return self.providers[self.resolved.provider.protocol]
 
     def bind_call(self, call: AgentModelCall) -> AgentModelCall:
-        """工具首次返回图片时只使用显式识图路由，跨模型前清除旧模型私有延续。"""
+        """本次直接或引用图片决定视觉路由，工具/历史图片不能触发模型切换。"""
         messages = call.messages
-        if not self.has_images and any(
-            message.images or (message.tool_result and message.tool_result.images)
-            for message in messages
-        ):
-            self.has_images = True
-            previous = self.resolved.model.id
-            target = self.snapshot.vision if not self.forwarded else None
-            self._bind(target or self.resolved)
-            if self.resolved.model.id != previous:
-                messages = tuple(
-                    message.model_copy(update={"continuation": ()}) for message in messages
-                )
+        if not self.has_images:
+            messages = tuple(
+                message.model_copy(update={
+                    "images": (),
+                    "tool_result": message.tool_result.model_copy(update={"images": ()})
+                    if message.tool_result else None,
+                }) for message in messages
+            )
         return call.model_copy(
             update={
                 "messages": messages,

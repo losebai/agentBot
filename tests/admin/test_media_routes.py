@@ -60,6 +60,42 @@ async def test_large_valid_upload_and_expired_download(media_api):
         store.clock = original
 
 
+async def test_material_upload_query_and_download_are_persistent_and_scoped(media_api):
+    """普通文件无需识图模型，管理会话间隔离，内容读取仍需认证。"""
+    api, _, _runtime, provider = media_api
+    uploaded = await api.post(
+        "/api/v1/materials/uploads?session_id=s&name=plan.txt",
+        headers={**HEADERS, "Content-Type": "text/plain"}, content=b"plan" * 20000,
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    asset = uploaded.json()
+    assert asset["kind"] == "file" and "storage_key" not in asset
+    result = await api.get("/api/v1/materials?session_id=s&query=plan", headers=HEADERS)
+    assert result.json()["records"][0]["id"] == asset["id"]
+    url = f"/api/v1/materials/{asset['id']}/content"
+    assert (await api.get(url + "?session_id=s")).status_code == 401
+    assert (await api.get(url + "?session_id=other", headers=HEADERS)).status_code == 404
+    downloaded = await api.get(url + "?session_id=s", headers=HEADERS)
+    assert downloaded.content == b"plan" * 20000
+    assert downloaded.headers["content-disposition"].startswith("attachment")
+    provider.generate.assert_not_called()
+
+
+async def test_image_upload_returns_persistent_material_id(media_api):
+    """临时上传可被消费和过期，持久原件仍可通过素材 ID 读取。"""
+    api, _, runtime, _ = media_api
+    response = await api.post(
+        "/api/v1/media/uploads?session_id=s", headers={**HEADERS, "Content-Type": "image/png"},
+        content=picture(),
+    )
+    assert response.status_code == 201
+    asset = response.json()
+    material = await runtime.media_resources.materials.describe(
+        asset["material_id"], owner=MediaOwner(entry="admin", session_id="admin_s"),
+    )
+    assert material.id != asset["id"] and material.kind == "image"
+
+
 @pytest.fixture
 async def media_api(
     admin_store, admin_runtime, media_database, media_model, agent_params, tmp_path

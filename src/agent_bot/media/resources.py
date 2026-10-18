@@ -1,11 +1,13 @@
 """媒体资源按进程所有，热刷新只更换调用配置。"""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager, suppress
 
 from agent_bot.ai.database import query
 from agent_bot.ai.errors import AiError
 from agent_bot.database_pool import finish_database_write
+from agent_bot.materials.store import MaterialStore
 from agent_bot.media.config import CLEANUP_INTERVAL_SECONDS, MAX_GENERATIONS, MAX_UPLOADS
 from agent_bot.media.contracts import MediaReadiness
 from agent_bot.media.errors import MediaError
@@ -53,6 +55,9 @@ class MediaResources:
         self.config = config
         self.files = MediaFiles(config.directory)
         self.store = MediaStore(database, connect=connect, files=self.files)
+        self.materials = MaterialStore(
+            database, connect=connect, files=MediaFiles(config.directory / "materials"),
+        )
         self.records = MediaRunStore(database, connect=connect)
         self.generations, self.uploads = MediaSlots(MAX_GENERATIONS), MediaSlots(MAX_UPLOADS)
         self.readiness = MediaReadiness()
@@ -63,6 +68,13 @@ class MediaResources:
         if self._started or self._closed:
             return
         self._started = True
+        try:
+            await self.materials.start()
+        except (AiError, OSError):
+            # 既有部署须手动升级；临时附件可继续工作，素材入口明确返回未初始化。
+            logging.getLogger(__name__).warning(
+                "持久素材不可用，请检查素材目录并显式执行 2026-10-17-material-memory 升级脚本"
+            )
         initialized = False
         try:
             await self.store.run(
@@ -126,3 +138,4 @@ class MediaResources:
         await self.generations.close()
         await self.uploads.close()
         await self.store.aclose()
+        await self.materials.aclose()

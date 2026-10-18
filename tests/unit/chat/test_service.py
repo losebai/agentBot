@@ -851,7 +851,8 @@ async def test_service_ask_once_forwards_images_without_persisting_history() -> 
 
 
 @pytest.mark.asyncio
-async def test_service_ask_once_forwards_quoted_video_to_the_vision_model() -> None:
+async def test_service_ask_once_keeps_video_context_on_chat_model() -> None:
+    """仅有视频上下文时保持聊天模型，不触发图片理解路由。"""
     client = FakeClient(["视频总结"])
     service = make_service(client)
 
@@ -863,7 +864,7 @@ async def test_service_ask_once_forwards_quoted_video_to_the_vision_model() -> N
     )
 
     assert answer == "视频总结"
-    assert client.calls[0]["model"] == "vision-model"
+    assert client.calls[0]["model"] == "chat-model"
     assert client.calls[0]["video_urls"] == (
         "https://gzc-download.ftn.qq.com/quoted.mp4?token=one",
     )

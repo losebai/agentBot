@@ -71,6 +71,32 @@ def request(*, images=False):
     )
 
 
+async def test_current_material_image_uses_vision_and_preserves_ownership(
+    media_database, agent_params, media_model, tmp_path,
+):
+    """本次收到/引用的素材 ID 读取本地原件，不再请求 QQ 的临时链接。"""
+    from agent_bot.materials.store import MaterialStore
+    from agent_bot.media.contracts import MediaOwner
+    from agent_bot.media.files import MediaFiles
+
+    service, _, _, vision, _ = await routed_service(media_database, agent_params, media_model)
+    materials = MaterialStore(agent_params, connect=media_database.connect,
+                              files=MediaFiles(tmp_path / "materials"))
+    await materials.start()
+    try:
+        asset = await materials.put(owner=MediaOwner(entry="qq", session_id="s"), name="cat.png",
+                                    mime_type="image/png", data=picture())
+        service.material_store = materials
+        call = request().model_copy(update={"image_material_ids": (asset.id,)})
+        await service.complete(call, ExecutionAuthority(entry="qq", allowed_tools=("lookup",)))
+        calls = service.providers["openai-chat"].calls
+        assert calls[0].resolved.model.id == vision.id
+        assert calls[0].messages[-1].images
+        service.image_downloader.fetch.assert_not_awaited()
+    finally:
+        await materials.aclose()
+
+
 async def test_routes_and_clear_preserve_chat_binding(media_database, agent_params, media_model):
     """遗漏按图片选路或清空语义会使带图请求继续落入错误模型。"""
     service, agent, chat, vision, backup = await routed_service(
@@ -93,15 +119,15 @@ async def test_routes_and_clear_preserve_chat_binding(media_database, agent_para
     )
     assert changed.model_id == chat.id and changed.vision_model_id is None
     assert changed.fallback_model_id is None and changed.revision == 2
-    cleared = await service.catalog.snapshot(request(images=True))
-    assert cleared.resolved.model.id == chat.id and cleared.fallback is None
+    with pytest.raises(AiError, match="AGENT_VISION_MODEL_REQUIRED"):
+        await service.catalog.snapshot(request(images=True))
 
 
 @pytest.mark.parametrize("vision_disabled", [False, True])
-async def test_mcp_screenshot_uses_explicit_vision_route_without_repeating_tool(
+async def test_mcp_screenshot_keeps_chat_model_without_repeating_tool(
     media_database, agent_params, media_model, vision_disabled,
 ):
-    """首轮文本模型请求截图后，已配置识图模型接收原工具结果，工具仅执行一次。"""
+    """没有本次直接或引用图片时，截图工具不能触发识图模型或提交图像字节。"""
     from agent.test_engine import Tools
     from agent_bot.agent.contracts import ToolResult
 
@@ -116,7 +142,7 @@ async def test_mcp_screenshot_uses_explicit_vision_route_without_repeating_tool(
                 images=(ImagePreparer().prepare(picture(), None).model_image,),
             )
 
-    service, _, chat, vision, backup = await routed_service(
+    service, _, chat, vision, _backup = await routed_service(
         media_database, agent_params, media_model,
     )
     if vision_disabled:
@@ -132,10 +158,11 @@ async def test_mcp_screenshot_uses_explicit_vision_route_without_repeating_tool(
     )
     calls = service.providers["openai-chat"].calls
     assert [call.resolved.model.id for call in calls] == [
-        chat.id, backup.id if vision_disabled else vision.id,
+        chat.id, chat.id,
     ]
     assert result.content == "最终回答" and len(tools.invoked) == 1
-    assert calls[1].messages[-1].tool_result.images
+    assert not calls[1].messages[-1].tool_result.images
+    assert calls[1].messages[-1].tool_result.content == "截图完成"
     steps = await service.records.list_steps(result.execution_id)
     assert "images" not in str([step.model_dump() for step in steps.items])
 
@@ -337,25 +364,34 @@ async def test_qq_images_reach_only_vision_model(media_database, agent_params, m
     assert all(sum(len(message.images) for message in call.messages) == 1 for call in calls)
 
 
-async def test_vision_precheck_can_forward_before_download(
+async def test_missing_vision_route_is_rejected_before_download(
     media_database,
     agent_params,
     media_model,
 ):
-    """没有专用图片路由时，显式识图备用可接管能力拒绝，图片不被移除。"""
+    """没有专用图片路由时明确拒绝，不能借备用模型绕过缺失配置。"""
     service, agent, _, _, _ = await routed_service(media_database, agent_params, media_model)
     await service.catalog.update_agent(
         agent.id, AgentUpdate(expected_revision=1, vision_model_id=None)
     )
-    result = await service.complete(
-        request(images=True),
-        ExecutionAuthority(entry="qq", allowed_tools=("lookup",)),
+    with pytest.raises(AiError, match="AGENT_VISION_MODEL_REQUIRED"):
+        await service.complete(
+            request(images=True), ExecutionAuthority(entry="qq", allowed_tools=("lookup",)),
+        )
+    assert service.providers["openai-chat"].calls == []
+    service.image_downloader.fetch.assert_not_awaited()
+
+
+async def test_vision_capable_chat_model_does_not_replace_missing_image_route(
+    media_database, agent_params, media_model,
+):
+    """聊天模型即使支持视觉，也不能隐式代替未配置的多模态路由。"""
+    service, agent, _, vision, _ = await routed_service(media_database, agent_params, media_model)
+    await service.catalog.update_agent(
+        agent.id, AgentUpdate(expected_revision=1, model_id=vision.id, vision_model_id=None),
     )
-    calls = service.providers["openai-chat"].calls
-    assert [call.resolved.model.alias for call in calls] == ["backup", "backup"]
-    assert calls[0].messages[-1].images
-    steps = (await service.records.list_steps(result.execution_id)).items
-    assert any("MEDIA_VISION_UNSUPPORTED" in step.summary for step in steps)
+    with pytest.raises(AiError, match="AGENT_VISION_MODEL_REQUIRED"):
+        await service.catalog.snapshot(request(images=True))
 
 
 async def test_no_backup_retains_original_error(media_database, agent_params, media_model):

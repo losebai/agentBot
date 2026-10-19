@@ -21,7 +21,7 @@ def unified_db(ai_database):
 
 
 async def test_new_calls_share_table_and_keep_field_meanings(ai_params, unified_db):
-    """普通记录与统一记录同时保存，正文只在详情返回。"""
+    """普通调用仅写统一记录，正文只在详情返回。"""
     old = AiSessionStore(ai_params, connect=unified_db.connect)
     await old.save(
         SessionWrite(
@@ -231,8 +231,8 @@ async def test_jsonl_repeated_import_and_redaction(ai_params, unified_db, tmp_pa
     assert (await store.list_calls(type="auto_speak")).items[0].status == "failed"
 
 
-async def test_missing_unified_table_rolls_back_old_write(ai_params, unified_db):
-    """新表写失败时旧会话也不能单独提交，保证调用方获知保存失败。"""
+async def test_missing_unified_table_does_not_write_old_table(ai_params, unified_db):
+    """统一归档不可用时明确失败，不再向旧表写入独立副本。"""
     unified_db.connection.execute("DROP TABLE agent_bot_call_record")
     store = AiSessionStore(ai_params, connect=unified_db.connect)
     with pytest.raises(AiError):

@@ -7,7 +7,7 @@ from agent_bot.settings import DatabaseParams
 def test_mysql_schema_validation_is_read_only_using_sqlite_metadata_adapter(tmp_path):
     """用真实临时表模拟 MySQL 元数据，逐条拒绝任何启动 DDL。"""
     from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
-    from agent_bot.memory_store import ChatMemorySchema
+    from agent_bot.session_schema import SessionContextSchema
 
     params = DatabaseParams(backend="sqlite", sqlite_path=str(tmp_path / "schema.sqlite3"))
     initialize_database(params)
@@ -59,6 +59,6 @@ def test_mysql_schema_validation_is_read_only_using_sqlite_metadata_adapter(tmp_
         return ReadOnlyConnection(connect_database(params, **kwargs))
 
     mysql = DatabaseParams(backend="mysql", database="offline")
-    ChatMemorySchema(mysql, connect=connect).validate()
+    SessionContextSchema(mysql, connect=connect).validate()
     TaggedMemoryStore(mysql, secret="test-session-secret" * 3, connect=connect).validate()
     assert statements and all(statement.lstrip().startswith("SELECT") for statement in statements)

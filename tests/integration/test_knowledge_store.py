@@ -88,7 +88,11 @@ def test_incremental_schema_matches_initialization_and_preserves_data(knowledge_
         old.executescript(initial)
         old.execute("DROP TABLE chat_knowledge_tag")
         old.execute("DROP TABLE chat_knowledge")
-        old.execute("INSERT INTO chat_memory_scope VALUES (?,?)", ("a" * 64, "user"))
+        old.execute("INSERT INTO chat_tagged_memory "
+                    "(scope_id,scope,memory_key,content,tags_json,material_ids_json,"
+                    "create_time,update_time) VALUES (?,?,?,?,?,?,?,?)",
+                    ("a" * 64, "user", "旧事实", "保留内容", '["旧标签"]', '[]',
+                     "2026-10-01 00:00:00", "2026-10-01 00:00:00"))
         old.executescript(migration)
         for table in ("chat_knowledge", "chat_knowledge_tag"):
             assert (
@@ -99,7 +103,7 @@ def test_incremental_schema_matches_initialization_and_preserves_data(knowledge_
                 old.execute(f"PRAGMA index_list({table})").fetchall()
                 == fresh.execute(f"PRAGMA index_list({table})").fetchall()
             )
-        assert old.execute("SELECT scope_id FROM chat_memory_scope").fetchone() == ("a" * 64,)
+        assert old.execute("SELECT scope_id FROM chat_tagged_memory").fetchone() == ("a" * 64,)
 
 
 async def test_tag_write_failure_rolls_back_entry(knowledge_database):

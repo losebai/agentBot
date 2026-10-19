@@ -43,6 +43,37 @@ async def test_agent_crud_requires_admin_and_cas(agent_api):
     assert (await api.get("/api/v1/agents/1", headers=HEADERS)).json()["tools"] == []
 
 
+async def test_management_accepts_shared_model_roles(agent_api, media_model):
+    """管理 API 可保存三种角色共用同一模型，不再返回重复模型错误。"""
+    api, _, _ = agent_api
+    model = media_model[2]
+    response = await api.patch("/api/v1/agents/1", headers=HEADERS, json={
+        "expected_revision": 1, "model_id": model.id,
+        "vision_model_id": model.id, "fallback_model_id": model.id,
+    })
+    assert response.status_code == 200
+    assert response.json()["vision_model_id"] == response.json()["fallback_model_id"] == model.id
+
+
+@pytest.mark.parametrize("vision_id,expected_status,expected_code,expected_message", [
+    (1, 422, "MEDIA_VISION_UNSUPPORTED", "请在“供应商与模型”中开启后重试"),
+    (99999, 404, "AI_CONFIG_NOT_FOUND", "请刷新列表后重新选择"),
+])
+async def test_management_model_validation_explains_failure_and_preserves_config(
+    agent_api, vision_id, expected_status, expected_code, expected_message,
+):
+    """能力不足或引用失效必须返回可操作中文原因，失败时不写入部分模型配置。"""
+    api, _, _ = agent_api
+    response = await api.patch("/api/v1/agents/1", headers=HEADERS, json={
+        "expected_revision": 1, "vision_model_id": vision_id,
+    })
+    assert response.status_code == expected_status
+    assert response.json()["code"] == expected_code
+    assert expected_message in response.json()["message"]
+    saved = (await api.get("/api/v1/agents/1", headers=HEADERS)).json()
+    assert saved["revision"] == 1 and saved["vision_model_id"] is None
+
+
 async def test_mcp_tool_discovery_requires_admin_and_does_not_change_whitelist(agent_api):
     """读取完整工具目录不执行工具、不启用停用服务，也不改写已保存的工具集合。"""
     from agent.mcp_server import peer

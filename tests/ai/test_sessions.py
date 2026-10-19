@@ -8,6 +8,70 @@ from agent_bot.ai.sessions import AiSessionStore
 from ai.mysql_identifiers import reject_unquoted_usage
 
 
+def merged_record(**updates) -> SessionWrite:
+    """构造仅用于隔离归档测试的普通调用，不连接模型。"""
+    values = {
+        "execution_id": "a" * 32, "session_id": "session", "request_id": "request",
+        "configured_model": "alias", "model": "upstream", "status": "completed",
+        "duration_ms": 15, "usage": TokenUsage(total_tokens=7),
+        "created_at": datetime(2026, 10, 20, 1, 2, 3, 123456),
+        "prompt": "输入", "content": "输出",
+    }
+    return SessionWrite(**(values | updates))
+
+
+async def test_ordinary_records_work_after_legacy_table_is_removed(ai_params, ai_database):
+    """删除旧普通表后保存、列表和详情只依赖统一归档，完整保留 UTC 微秒。"""
+    ai_database.connection.execute("DROP TABLE agent_bot_ai_session")
+    store = AiSessionStore(ai_params, connect=ai_database.connect)
+    record = merged_record()
+    await store.save(record)
+    detail = await store.get_record(record.execution_id)
+    assert detail.model_dump() == record.model_dump(exclude={"request_context"})
+    assert (await store.list_records()).items[0].created_at == record.created_at
+    assert ai_database.connection.execute(
+        "SELECT COUNT(*) FROM agent_bot_call_record",
+    ).fetchone()[0] == 1
+
+
+async def test_microsecond_paging_keeps_original_order_and_excludes_other_sources(
+    ai_params, ai_database,
+):
+    """同秒调用按 UTC 微秒排序，普通接口不会混入 Agent 或其他来源。"""
+    ai_database.connection.execute("DROP TABLE agent_bot_ai_session")
+    store = AiSessionStore(ai_params, connect=ai_database.connect)
+    await store.save(merged_record(execution_id="f" * 32))
+    await store.save(merged_record(
+        execution_id="b" * 32, created_at=datetime(2026, 10, 20, 1, 2, 3, 123457),
+    ))
+    first = await store.list_records(limit=1)
+    second = await store.list_records(limit=1, cursor=first.next_cursor)
+    assert [first.items[0].execution_id, second.items[0].execution_id] == ["b" * 32, "f" * 32]
+    assert second.next_cursor is None
+
+
+async def test_full_text_and_256_character_identities_survive_unified_storage(
+    ai_params, ai_database,
+):
+    """统一表兼容扩展中的长正文和身份可还原，列表按完整会话标识精确过滤。"""
+    ai_database.connection.execute("DROP TABLE agent_bot_ai_session")
+    store = AiSessionStore(ai_params, connect=ai_database.connect)
+    record = merged_record(
+        session_id="s" * 256, request_id="r" * 256,
+        prompt="长输入" * 30000, content="长输出" * 30000,
+        status="failed", error_code="AI_TIMEOUT",
+    )
+    await store.save(record)
+    detail = await store.get_record(record.execution_id)
+    assert detail.model_dump() == record.model_dump(exclude={"request_context"})
+    summary = (await store.list_records(session_id=record.session_id, status="failed")).items[0]
+    assert summary.session_id == record.session_id
+    assert summary.request_id == record.request_id
+    assert summary.usage == record.usage
+    assert not (await store.list_records(session_id=record.session_id[:255])).items
+    assert record.prompt not in summary.model_dump_json()
+
+
 async def test_record_paging_and_redaction(ai_params, ai_database):
     store = AiSessionStore(ai_params, connect=ai_database.connect)
     for execution_id in ("a" * 32, "b" * 32):

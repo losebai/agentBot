@@ -121,6 +121,7 @@ def make_service(
     available_tools: Sequence[ChatToolName] = (),
     conversation_context_provider: FakeConversationContextProvider | None = None,
     system_prompt_provider: Callable[[], Awaitable[str | None]] | None = None,
+    group_shared_session: bool = False,
 ) -> AutoSpeakService:
     """用离线依赖构造群聊自动发言，允许覆盖机器人人设。"""
 
@@ -147,6 +148,7 @@ def make_service(
         max_reply_chars=max_reply_chars,
         sleep=sleep,
         on_error=on_error,
+        group_shared_session=group_shared_session,
     )
 
 
@@ -352,6 +354,93 @@ async def test_auto_speak_keeps_anonymous_group_session_for_normal_chat_history(
     assert expected_session.startswith("qq_")
     assert "90009" not in expected_session
     assert "88888" not in expected_session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger_mode", ["interval", "message"])
+@pytest.mark.parametrize("group_shared_session", [True, False])
+async def test_auto_speak_material_owner_matches_shared_group_only(
+    tmp_path, trigger_mode, group_shared_session,
+) -> None:
+    """共享群的主动发言可被普通后续消息读取，非共享群仍保持用户与私聊隔离。"""
+    import sqlite3
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
+
+    from agent_bot.database import database_connector
+    from agent_bot.integrations.onebot.context import EventContextService
+    from agent_bot.materials.store import MaterialStore
+    from agent_bot.media.contracts import MediaOwner
+    from agent_bot.media.errors import MediaError
+    from agent_bot.media.files import MediaFiles
+    from agent_bot.settings import DatabaseParams
+
+    bot = FakeBot()
+    secret = "auto-speak-shared-session-secret"
+    submitter, context_provider = FakeJobSubmitter(), FakeConversationContextProvider()
+    client = FakeDecisionClient([decision(True)])
+    service = make_service(
+        job_submitter=submitter, decision_client=client,
+        context_store=FakeContextStore({"88888": "群聊上下文"}), bot_provider=lambda _: bot,
+        session_secret=secret, conversation_context_provider=context_provider,
+        trigger_mode=trigger_mode, group_shared_session=group_shared_session,
+    )
+    if trigger_mode == "interval":
+        assert (await service.run_once()).sent == 1
+    else:
+        assert await service.handle_group_message(bot, "88888", "群聊上下文")
+    job = submitter.jobs[0]
+    expected_scope = (
+        "bot:90009:group:88888" if group_shared_session else "bot:90009:auto:group:88888"
+    )
+    expected_session = external_session_id(expected_scope, secret)
+    assert job.session_id == expected_session
+    assert context_provider.calls == [expected_session]
+    assert client.calls[0]["session_id"] == expected_session
+
+    event_context = EventContextService(
+        config_provider=lambda: SimpleNamespace(chat_group_shared_session=group_shared_session),
+        access_policy_provider=lambda: None, session_secret_provider=lambda: secret,
+        group_member_store_provider=lambda: None, recent_context_store_provider=lambda: None,
+    )
+    event = GroupMessageEvent(
+        time=1, self_id=90009, post_type="message", sub_type="normal", user_id=10001,
+        message_type="group", message_id=1, message=Message("这张图"),
+        original_message=Message("这张图"), raw_message="这张图", font=0,
+        sender={"user_id": 10001, "nickname": "用户", "role": "member"}, group_id=88888,
+    )
+    followup_owner = MediaOwner(entry="qq", session_id=event_context.session_id(bot, event))
+    database_path = tmp_path / "scope.sqlite3"
+    schema = await asyncio.to_thread(
+        Path("sql/agent_bot_init.sqlite.sql").read_text, encoding="utf-8",
+    )
+    with sqlite3.connect(database_path) as database:
+        database.executescript(schema)
+    params = DatabaseParams(backend="sqlite", sqlite_path=str(database_path))
+    store = MaterialStore(params, connect=database_connector(params),
+                          files=MediaFiles(tmp_path / "materials"))
+    await store.start()
+    try:
+        asset = await store.put(
+            owner=MediaOwner(entry="qq", session_id=job.session_id), name="主动发言.txt",
+            mime_type="text/plain", data=b"proactive attachment",
+        )
+        if group_shared_session:
+            assert followup_owner.session_id == job.session_id
+            assert (await store.describe(asset.id, owner=followup_owner)).id == asset.id
+        else:
+            assert followup_owner.session_id != job.session_id
+            with pytest.raises(MediaError, match="MATERIAL_NOT_FOUND"):
+                await store.describe(asset.id, owner=followup_owner)
+        private_owner = MediaOwner(entry="qq", session_id=external_session_id(
+            "bot:90009:private:10001", secret,
+        ))
+        with pytest.raises(MediaError, match="MATERIAL_NOT_FOUND"):
+            await store.describe(asset.id, owner=private_owner)
+    finally:
+        await store.aclose()
 
 
 @pytest.mark.asyncio

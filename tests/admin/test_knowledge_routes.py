@@ -95,3 +95,32 @@ async def test_missing_knowledge_schema_does_not_break_status(knowledge_api):
     assert response.json()["code"] == "KNOWLEDGE_NOT_INITIALIZED"
     assert (await api.get("/api/v1/status", headers=HEADERS)).status_code == 200
     assert (await api.get("/api/v1/memories", headers=HEADERS)).status_code == 200
+
+
+async def test_memory_scope_titles_use_known_directory_and_update_without_rewriting(knowledge_api):
+    """管理员标题来自已知目录；昵称变化只改变显示，不改记忆和匿名授权标识。"""
+    api, params = knowledge_api
+    with sqlite3.connect(params.sqlite_path) as db:
+        db.execute(
+            "INSERT INTO chat_group_member (bot_id,group_id,user_id,group_name,nickname,card) "
+            "VALUES (?,?,?,?,?,?)", ("10001", "20001", "30001", "读书群", "小明", "群名片"),
+        )
+    response = await api.post("/api/v1/memories", headers=HEADERS, json={
+        "scope": "user", "bot_id": "10001", "target": "30001",
+        "key": "语言", "content": "喜欢中文", "tags": ["语言"],
+    })
+    assert response.status_code == 201
+    item = response.json()
+    assert item["scope_title"] == "小明 (30001) · 机器人 10001"
+    scopes = (await api.get("/api/v1/memory-scopes", headers=HEADERS)).json()
+    assert scopes[0]["scope_title"] == item["scope_title"]
+    assert (await api.get("/api/v1/memories", headers=HEADERS)).json()["items"][0][
+        "scope_title"
+    ] == item["scope_title"]
+    with sqlite3.connect(params.sqlite_path) as db:
+        db.execute("UPDATE chat_group_member SET nickname=?", ("新昵称",))
+    detail = (await api.get(f"/api/v1/memories/{item['id']}", headers=HEADERS)).json()
+    assert detail["scope_title"] == "新昵称 (30001) · 机器人 10001"
+    assert detail["scope_id"] == item["scope_id"] and detail["content"] == item["content"]
+    unauthorized = await api.get("/api/v1/memory-scopes")
+    assert unauthorized.status_code == 401 and "新昵称" not in unauthorized.text

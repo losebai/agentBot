@@ -63,6 +63,25 @@ async def test_concurrent_same_key_has_one_success(managed_memory):
     assert len(store.admin_list().items) == 1
 
 
+async def test_concurrent_different_keys_cannot_exceed_scope_capacity(managed_memory):
+    """最后一个名额由同作用域事务独占领取，不同事实键也不能越过 256 条限制。"""
+    from agent_bot.integrations.tagged_memory_store import TaggedMemoryCapacityError
+
+    store, _ = managed_memory
+    for index in range(255):
+        store.admin_create(MemoryCreate(
+            scope="global", bot_id="10001", key=f"old-{index}", content="事实", tags=["主题"],
+        ))
+    results = await asyncio.gather(*(
+        asyncio.to_thread(store.admin_create, MemoryCreate(
+            scope="global", bot_id="10001", key=f"new-{index}", content="事实", tags=["主题"],
+        )) for index in range(8)
+    ), return_exceptions=True)
+    assert sum(not isinstance(item, Exception) for item in results) == 1
+    assert sum(isinstance(item, TaggedMemoryCapacityError) for item in results) == 7
+    assert store.admin_scopes()[0].count == 256
+
+
 def test_admin_deleted_memory_retains_history(managed_memory):
     """删除只隐藏原行，同键即使删除也不恢复，已有作用域可继续新增另一键。"""
     store, params = managed_memory
@@ -83,7 +102,7 @@ def test_admin_deleted_memory_retains_history(managed_memory):
             "原文",
             1,
         )
-        assert db.execute("SELECT tag FROM chat_memory_tag").fetchone() == ("原标签",)
+        assert db.execute("SELECT tags_json FROM chat_tagged_memory").fetchone() == ('["原标签"]',)
     second = store.admin_create(
         MemoryCreate(
             scope="user", scope_id=item.scope_id, key="新偏好", content="新文", tags=["新标签"]

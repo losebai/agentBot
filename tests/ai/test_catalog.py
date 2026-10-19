@@ -65,10 +65,16 @@ async def test_invalid_patch_and_uninitialized(catalog, ai_database):
         await catalog.update_provider(
             provider.id, ProviderUpdate(expected_revision=1, base_url=None)
         )
-    ai_database.connection.execute("DROP TABLE agent_bot_ai_session")
+    ai_database.connection.execute("DROP TABLE agent_bot_call_record")
     assert not (await catalog.readiness()).initialized
     with pytest.raises(AiError):
         await catalog.list_providers(limit=101)
+
+
+async def test_readiness_uses_unified_records_without_legacy_session(catalog, ai_database):
+    """旧普通表退出后仍可就绪；结构验证必须依赖新归档字段。"""
+    ai_database.connection.execute("DROP TABLE agent_bot_ai_session")
+    assert (await catalog.readiness()).initialized
 
 
 async def test_schema_validation_and_config_timestamps(catalog, ai_database):

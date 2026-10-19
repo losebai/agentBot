@@ -36,6 +36,7 @@ def test_robot_system_prompt_may_be_empty(prompt: str) -> None:
 
 
 def test_config_has_safe_operational_defaults() -> None:
+    """保留模型与群背景默认值，会话上下文不再暴露过期配置。"""
     config = make_config()
 
     assert config.chat_model == "Qwen/Qwen3-8B"
@@ -43,7 +44,7 @@ def test_config_has_safe_operational_defaults() -> None:
     assert config.chat_image_model == "gpt-image-1"
     assert config.chat_image_model != config.chat_vision_model
     assert config.chat_history_turns == 6
-    assert config.chat_history_ttl_seconds == 604_800
+    assert "chat_history_ttl_seconds" not in type(config).model_fields
     assert config.chat_group_recent_context_enabled is False
     assert config.chat_group_recent_context_messages == 10
     assert config.chat_group_recent_context_max_chars == 4000
@@ -764,7 +765,6 @@ def test_runtime_config_accepts_large_persistent_memory_windows() -> None:
         ("chat_memory_max_chars", 8001),
         ("chat_memory_compression_max_tokens", 63),
         ("chat_memory_compression_max_tokens", 4097),
-        ("chat_history_ttl_seconds", 0),
         ("chat_max_sessions", 0),
         ("chat_max_concurrent_requests", 0),
         ("chat_chunk_chars", 0),

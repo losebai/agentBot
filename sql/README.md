@@ -21,6 +21,22 @@ uv run agent-bot settings init
 `agent_bot_init.sql` 和 `agent_bot_init.sqlite.sql`，使两个后端始终包含当前完整的新库结构。既有库升级另提供独立增量脚本，
 并核对升级后的有效结构与初始化脚本一致；保留的历史兼容列应在升级说明中注明。
 
+## 版本发布的 SQL 交付
+
+每次发布必须同时提供 MySQL 和 SQLite 的完整初始化 SQL 与适用的独立迁移 SQL：
+
+- 新数据库使用 `agent_bot_init.sql` 或 `agent_bot_init.sqlite.sql`；本地队列使用
+  `agent_bot_queue_init.sqlite.sql`。
+- 已有数据库按该版本升级说明执行对应增量，说明须包含适用的升级起点、执行顺序和数据影响；
+  不以完整初始化脚本替代迁移，不自动执行全部历史脚本。
+- 完整脚本与迁移后的有效结构必须一致。普通启动不会自动升级数据库。
+
+日期命名的 `.sql`、`.md` 是允许保留的本地材料，由 `.gitignore` 忽略，已跟踪的同类文件
+也应撤销跟踪，不能删除本地升级材料。Git 忽略只控制版本跟踪，不控制发布资源：
+`pyproject.toml` 继续显式收集 SQL 目录与迁移脚本，wheel 和 Windows 安装包中的正式 SQL
+位于 `agent_bot/resources/` 与 `_internal/agent_bot/resources/`。发布前必须检查完整脚本和
+本次所需迁移均已入包；缺少迁移源文件时先补齐再构建，不能跳过缺失脚本。
+
 `legacy/` 仅作为原始 SQL 基线归档，保留原始名称和内容，不用于当前项目初始化。
 
 从源码或 editable 安装开发时直接使用仓库 `sql/` 中的脚本。安装 wheel 后可通过

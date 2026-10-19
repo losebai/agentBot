@@ -50,7 +50,7 @@ async def test_python_failure_never_falls_back():
         )
     request, authority = agent.complete.call_args.args
     assert request.agent_code == "helper" and request.model is None
-    assert authority.allowed_tools == ("knowledge_search", "material_search")
+    assert authority.allowed_tools == ("knowledge_search", "material_search", "material_get")
     await client.aclose()
     agent.aclose.assert_awaited_once()
     plain.aclose.assert_awaited_once()

@@ -194,23 +194,36 @@ async def test_backup_reference_blocks_model_deletion(media_database, agent_para
         await ai.delete_model(backup.id, changed.revision)
 
 
-async def test_backup_cannot_repeat_a_primary_route(media_database, agent_params, media_model):
-    """相同主备模型无法实现接管，保存时应明确拒绝，不能静默忽略。"""
+@pytest.mark.parametrize("shared", ["chat", "vision", "all"])
+async def test_model_roles_can_share_models_without_self_fallback(
+    media_database, agent_params, media_model, shared,
+):
+    """模型角色可复用；只按本次实际选中模型跳过自我兜底，创建与更新规则一致。"""
     service, agent, chat, vision, _ = await routed_service(
         media_database,
         agent_params,
         media_model,
     )
-    for model in (chat, vision):
-        with pytest.raises(AiError, match="AGENT_MODEL_ROUTE_INVALID"):
-            await service.catalog.update_agent(
-                agent.id,
-                AgentUpdate(
-                    expected_revision=1,
-                    fallback_model_id=model.id,
-                ),
-            )
-    assert (await service.catalog.get_agent(agent.id)).revision == 1
+    primary = vision if shared == "all" else chat
+    fallback = chat if shared == "chat" else vision
+    values = dict(model_id=primary.id, vision_model_id=vision.id, fallback_model_id=fallback.id)
+    changed = await service.catalog.update_agent(
+        agent.id, AgentUpdate(expected_revision=1, **values),
+    )
+    assert changed.revision == 2 and changed.fallback_model_id == fallback.id
+    created = await service.catalog.create_agent(AgentCreate(
+        code="shared", name="共享模型助手", enabled=True, **values,
+    ))
+    for code in (agent.code, created.code):
+        for images in (False, True):
+            call = request(images=images).model_copy(update={"agent_code": code})
+            snapshot = await service.catalog.snapshot(call)
+            selected = vision if images else primary
+            assert snapshot.resolved.model.id == selected.id
+            if selected.id == fallback.id:
+                assert snapshot.fallback is None
+            else:
+                assert snapshot.fallback.model.id == fallback.id
 
 
 class FailingProvider(Provider):

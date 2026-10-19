@@ -89,6 +89,7 @@ async def test_model_import_conflict_is_atomic_and_duplicates_are_skipped(python
         },
     )
     assert response.status_code == 409
+    assert response.json()["code"] == "AI_MODEL_ALIAS_CONFLICT"
     assert len((await api.get("/api/v1/ai/models", headers=HEADERS)).json()["items"]) == 1
     response = await api.post(
         "/api/v1/ai/providers/1/models/import",
@@ -104,6 +105,83 @@ async def test_model_import_conflict_is_atomic_and_duplicates_are_skipped(python
     assert response.status_code == 200
     assert response.json()["skipped"] == ["exact/model"]
     assert response.json()["imported"][0]["enabled"] is False
+
+
+async def test_model_sync_reports_alias_conflicts_and_imports_other_models(python_api):
+    """自动同步保留同名记录，明确返回冲突并允许用新别名登记。"""
+    api, _, _ = python_api
+    created = await api.post(
+        "/api/v1/ai/providers",
+        headers=HEADERS,
+        json={"name": "second", "protocol": "ollama", "base_url": "http://second.invalid"},
+    )
+    provider_id = created.json()["id"]
+    path = f"/api/v1/ai/providers/{provider_id}/models/import"
+    response = await api.post(
+        path,
+        headers=HEADERS,
+        json={
+            "expected_revision": 1,
+            "skip_alias_conflicts": True,
+            "models": [
+                {"alias": "local", "upstream_model": "exact/model"},
+                {"alias": "other", "upstream_model": "other"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["conflicts"] == [{"alias": "local", "upstream_model": "exact/model"}]
+    assert [item["alias"] for item in body["imported"]] == ["other"]
+    assert body["skipped"] == []
+    models = (await api.get("/api/v1/ai/models", headers=HEADERS)).json()["items"]
+    original = next(item for item in models if item["alias"] == "local")
+    assert original["provider_id"] == 1 and original["enabled"] is True
+    resolved = await api.post(
+        path,
+        headers=HEADERS,
+        json={
+            "expected_revision": 1,
+            "models": [{"alias": "second-local", "upstream_model": "exact/model"}],
+        },
+    )
+    assert resolved.status_code == 200 and resolved.json()["conflicts"] == []
+    assert resolved.json()["imported"][0]["alias"] == "second-local"
+    assert resolved.json()["imported"][0]["enabled"] is False
+    # 重新同步跳过已登记的上游模型，不覆盖管理员手动设置的别名。
+    repeated = await api.post(
+        path,
+        headers=HEADERS,
+        json={
+            "expected_revision": 1,
+            "skip_alias_conflicts": True,
+            "models": [{"alias": "local", "upstream_model": "exact/model"}],
+        },
+    )
+    assert repeated.json()["skipped"] == ["exact/model"]
+    assert repeated.json()["conflicts"] == []
+
+
+async def test_model_sync_conflict_reporting_preserves_provider_revision_check(python_api):
+    """允许报告别名冲突不能绕过供应商版本检查或导入旧配置的模型。"""
+    api, _, _ = python_api
+    saved = await api.patch(
+        "/api/v1/ai/providers/1",
+        headers=HEADERS,
+        json={"expected_revision": 1, "enabled": False},
+    )
+    assert saved.status_code == 200
+    response = await api.post(
+        "/api/v1/ai/providers/1/models/import",
+        headers=HEADERS,
+        json={
+            "expected_revision": 1,
+            "skip_alias_conflicts": True,
+            "models": [{"alias": "new", "upstream_model": "new"}],
+        },
+    )
+    assert response.status_code == 409 and response.json()["code"] == "AI_CONFIG_CONFLICT"
+    assert len((await api.get("/api/v1/ai/models", headers=HEADERS)).json()["items"]) == 1
 
 
 @pytest.fixture
@@ -303,8 +381,8 @@ async def test_statistics_database_error_is_reported_without_secrets(python_api,
     assert "private-database-secret" not in response.text
 
 
-async def test_status_keeps_readiness_when_archive_schema_needs_upgrade(python_api):
-    """未升级归档表的已有部署仍可查看服务状态，统计必须明确提示不可用。"""
+async def test_status_keeps_queue_readiness_when_archive_schema_needs_upgrade(python_api):
+    """队列就绪不受归档影响，普通目录和调用统计各自报告缺失结构。"""
     api, _, runtime = python_api
     sessions = runtime.ai_service.sessions
     await sessions.run(lambda c: c.db.connection.execute("DROP TABLE agent_bot_call_record"),

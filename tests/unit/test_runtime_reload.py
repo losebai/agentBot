@@ -11,11 +11,11 @@ import pytest
 from agent_bot.config import RuntimeConfig
 from agent_bot.content_classifier import ContentCategory
 from agent_bot.memory_store import (
-    MySqlConversationMemoryStore,
     MySqlRecentGroupContextStore,
 )
 from agent_bot.models import ChatMessage
 from agent_bot.runtime_reload import SettingsReloader
+from agent_bot.session_context import SessionContextStore
 from agent_bot.settings import (
     SettingsValidationError,
     VersionedSettings,
@@ -442,6 +442,7 @@ async def test_runtime_state_hot_reloads_memory_limits_safely(
     chat_plugin,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """构建候选状态不提前改变共享策略，发布后才更新统一上下文窗口。"""
     current = chat_plugin._runtime_state
     token_values = runtime_config_to_plain_values(current.config)
     token_values["chat_memory_compression_max_tokens"] = 256
@@ -459,7 +460,7 @@ async def test_runtime_state_hot_reloads_memory_limits_safely(
         assert token_replacement.conversation_store is current.conversation_store
         assert token_service_options["memory_compression_max_tokens"] == 256
         assert limit_replacement.conversation_store is current.conversation_store
-        assert isinstance(limit_replacement.conversation_store, MySqlConversationMemoryStore)
+        assert isinstance(limit_replacement.conversation_store, SessionContextStore)
         assert (
             limit_replacement.conversation_store.policy.max_memory_chars
             == current.config.chat_memory_max_chars
@@ -540,17 +541,19 @@ async def test_runtime_state_builds_group_only_laya_auto_speak(chat_plugin) -> N
 
 
 @pytest.mark.asyncio
-async def test_memory_schema_initialization_runs_outside_event_loop(
+async def test_memory_schema_validation_runs_outside_event_loop(
     chat_plugin,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """启动结构校验在线程执行，不阻塞事件循环也不自动升级表。"""
     event_loop_thread = threading.get_ident()
     call_threads: list[int] = []
 
     def initialize() -> None:
+        """记录结构校验所在的线程。"""
         call_threads.append(threading.get_ident())
 
-    monkeypatch.setattr(chat_plugin._memory_schema, "initialize", initialize)
+    monkeypatch.setattr(chat_plugin._memory_schema, "validate", initialize)
 
     await chat_plugin.initialize_chat_memory()
 

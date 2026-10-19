@@ -50,7 +50,8 @@ async def test_new_qq_call_sorts_before_beijing_history(ai_params, ai_database):
     second = await store.list_calls(limit=1, cursor=first.next_cursor)
     assert second.items[0].source == 'legacy' and second.next_cursor is None
     assert ai_database.connection.execute(
-        'SELECT created_at FROM agent_bot_ai_session'
+        'SELECT created_at_utc FROM agent_bot_call_record '
+        'WHERE source=\'python:agent_bot_ai_session\''
     ).fetchone()[0] == '2026-10-13 09:51:23'
 
 

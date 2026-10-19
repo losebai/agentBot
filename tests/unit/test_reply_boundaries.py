@@ -21,8 +21,9 @@ QUEUE_PROCESSOR = Path("integrations/onebot/queue_processor.py")
 PROVENANCE_OWNERS = {
     (Path("services/replies.py"), "LlmReplyComposer.compose"),
     (QUEUE_PROCESSOR, "generated_reply_from_model"),
-    (QUEUE_PROCESSOR, "ConversationQueueProcessor.deliver_start_part"),
-    (QUEUE_PROCESSOR, "ConversationQueueProcessor.deliver_part"),
+    # 公共入口只绑定发送作用域，私有投递器从已验证的队列结果恢复生成来源。
+    (QUEUE_PROCESSOR, "ConversationQueueProcessor._deliver_start_part"),
+    (QUEUE_PROCESSOR, "ConversationQueueProcessor._deliver_part"),
 }
 SEND_APIS = {"send_group_msg", "send_private_msg", "send_msg"}
 

@@ -12,6 +12,8 @@ import pytest
 from pydantic import ValidationError
 from test_conversation_processor import onebot_mock, queued_job
 from test_workflow_inputs import i2i_definition, uploaded_image
+from websockets.exceptions import ConnectionClosedError
+from websockets.frames import Close
 from workflow_fakes import TextWorkflowServiceStub
 
 from agent_bot.ai.chat_errors import ChatAiUnavailableError
@@ -97,11 +99,16 @@ async def test_i2i_upload_then_failed_notice_or_enqueue_never_generates_or_reupl
 
 
 @pytest.mark.parametrize("fixed", [False, True])
+@pytest.mark.parametrize("source", ["url", "material"])
 async def test_i2i_background_preserves_typed_reference_without_urls(
-    monkeypatch, chat_plugin, image_stores, fixed,
+    monkeypatch, chat_plugin, image_stores, fixed, source,
 ):
-    """真实提交、序列化与生成边界保持原图归属，不能拿其他任务的图。"""
-    parent = queued_job(jobId="i2i-parent", imageUrls=("https://gchat.qpic.cn/source",))
+    """父消息的链接与素材引用不进入后台任务，已准备原图的归属和生成参数保持不变。"""
+    references = (
+        {"imageUrls": ("https://gchat.qpic.cn/source",)} if source == "url"
+        else {"materialIds": ("a" * 32, "b" * 32), "imageMaterialIds": ("a" * 32,)}
+    )
+    parent = queued_job(jobId="i2i-parent", **references)
     uploaded = None if fixed else uploaded_image(
         subfolder="chat-i2i/" + workflow_input_scope(parent.job_id),
     )
@@ -125,6 +132,11 @@ async def test_i2i_background_preserves_typed_reference_without_urls(
     restored = ConversationJob.model_validate_json(serialized)
     assert restored.workflow_request.input_image == uploaded
     assert restored.image_urls == restored.video_urls == ()
+    assert restored.material_ids == restored.image_material_ids == ()
+    # 子任务清理接收素材时不能改写父消息，避免后续历史和记忆丢失素材关联。
+    if source == "material":
+        assert parent.material_ids == ("a" * 32, "b" * 32)
+        assert parent.image_material_ids == ("a" * 32,)
     assert "https://" not in serialized and "base64" not in serialized
     assert len(serialized.encode()) < 128 * 1024
     await processor.generate(restored)
@@ -331,10 +343,14 @@ async def test_image_enqueue_deduplicates_concurrent_retries_after_completion(im
     assert tuple(map(int, next_id.split("-"))) > tuple(map(int, ids[0].split("-")))
 
 
+@pytest.mark.parametrize("delivery_error", [
+    ConnectionError("offline"),
+    ConnectionClosedError(Close(1011, "private disconnect detail"), None),
+])
 async def test_background_image_restart_and_delivery_retry_reuse_result(
-    monkeypatch, chat_plugin, image_stores,
+    monkeypatch, chat_plugin, image_stores, delivery_error, caplog,
 ):
-    """结果保存后重启并遇到图片发送重试，复用图片并继续发送模型完成文案。"""
+    """重启后遇到网络或 WebSocket 断连时复用图片重投，再发送完成文案，不重复生成。"""
 
     store = image_stores[1]
     monkeypatch.setattr(chat_plugin, "_redis_client", store._redis)
@@ -344,7 +360,7 @@ async def test_background_image_restart_and_delivery_retry_reuse_result(
     )))
     monkeypatch.setattr(chat_plugin, "workflow_service", workflow)
     bot = onebot_mock()
-    bot.call_api.side_effect = [ConnectionError("offline"), {"message_id": 1}, {"message_id": 2}]
+    bot.call_api.side_effect = [delivery_error, {"message_id": 1}, {"message_id": 2}]
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
     commit = AsyncMock()
     monkeypatch.setattr(chat_plugin.chat_service, "commit_queued", commit)
@@ -376,6 +392,10 @@ async def test_background_image_restart_and_delivery_retry_reuse_result(
     completion.assert_awaited_once()
     commit.assert_not_awaited()
     assert await replacement.source_length() == 0
+    assert await replacement.dead_letter_length() == 0
+    if isinstance(delivery_error, ConnectionClosedError):
+        assert "ws_received_code=1011 ws_sent_code=None" in caplog.text
+        assert "private disconnect detail" not in caplog.text
 
 
 @pytest.mark.parametrize("cloud", [False, True])

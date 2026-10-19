@@ -28,6 +28,20 @@ def test_read_never_discloses_secrets(admin_store, admin_runtime):
     assert snapshot.database_revision == snapshot.applied_revision == 1
 
 
+def test_removed_search_setting_is_absent_and_existing_binding_is_preserved(
+    admin_store, admin_runtime,
+):
+    """移除设置入口不清空已有搜索绑定，更新其他配置仍保留原值。"""
+    admin_store.save({"chat_python_search_mcp_code": "search"}, expected_revision=1)
+    manager = service(admin_store, admin_runtime)
+    assert "chat_python_search_mcp_code" not in {
+        item.name for item in manager.read().fields
+    }
+    result = manager.update(update(2, chat_llm_temperature=0.4))
+    assert "chat_python_search_mcp_code" not in {item.name for item in result.fields}
+    assert admin_store.load().config.chat_python_search_mcp_code == "search"
+
+
 def test_structured_values_use_json_kind_without_confusing_generic_element_types(
     admin_store, admin_runtime,
 ):
@@ -98,6 +112,7 @@ def test_static_fields_are_read_only_and_api_rejects_changes(admin_store, admin_
         {"chat_plain_ai_backend": "java"},
         {"chat_agent_backend": "java"},
         {"chat_media_backend": "java"},
+        {"chat_python_search_mcp_code": "search"},
         {"chat_naraka_default_role_id": "**********"},
         {"chat_llm_temperature": -1},
         {"onebot_v11_access_token": None},

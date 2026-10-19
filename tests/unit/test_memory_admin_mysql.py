@@ -24,6 +24,7 @@ class RepeatableReadConnection:
         self.result = None
         self.lastrowid = 257
         self.inserted = False
+        self.events = []
 
     def cursor(self):
         """事务使用一个受控字典游标。"""
@@ -38,8 +39,13 @@ class RepeatableReadConnection:
 
     def execute(self, sql, args=()):
         """只有首次非锁定读取建立旧快照，当前读始终看到并发提交。"""
-        if sql.startswith("SELECT scope FROM"):
-            self.snapshot = "FOR UPDATE" not in sql
+        self.events.append(sql)
+        if sql.startswith("SELECT GET_LOCK("):
+            self.snapshot = False
+            self.result = {"acquired": 1}
+        elif sql.startswith("SELECT RELEASE_LOCK("):
+            self.result = {"released": 1}
+        elif sql.startswith("SELECT scope FROM"):
             self.result = {"scope": "user"}
         elif sql.startswith("SELECT id, is_deleted"):
             self.result = (
@@ -102,3 +108,5 @@ def test_existing_scope_observes_concurrent_commit_before_admission(mode, error)
             MemoryCreate(scope="user", scope_id="a" * 64, key="新键", content="事实", tags=["主题"])
         )
     assert not connection.inserted
+    assert connection.events[0].startswith("SELECT GET_LOCK(")
+    assert connection.events[-1].startswith("SELECT RELEASE_LOCK(")

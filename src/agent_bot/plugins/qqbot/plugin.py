@@ -83,6 +83,15 @@ class QQBotPlugin:
             if isinstance(bot, Bot)
         ]
 
+    def queue_stores(self):
+        """维护功能只借用本插件已初始化的文本和绘图队列，不创建第二套连接。"""
+        if self._module is None or self._closed:
+            return ()
+        queues = (self._module.conversation_queue, self._module.image_queue)
+        if any(queue is None for queue in queues):
+            return ()
+        return tuple(queue.store for queue in queues)
+
     @property
     def state(self):
         """热刷新通过明确的参与者接口访问 QQ 快照。"""

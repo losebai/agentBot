@@ -64,7 +64,7 @@ class MediaResources:
         self._started, self._closed, self._cleaner = False, False, None
 
     async def start(self):
-        """启动时检查一次；缺表与目录故障只关闭媒体能力。"""
+        """启动时检查素材及合并记忆结构；缺失时提供明确的显式升级指引。"""
         if self._started or self._closed:
             return
         self._started = True
@@ -73,7 +73,8 @@ class MediaResources:
         except (AiError, OSError):
             # 既有部署须手动升级；临时附件可继续工作，素材入口明确返回未初始化。
             logging.getLogger(__name__).warning(
-                "持久素材不可用，请检查素材目录并显式执行 2026-10-17-material-memory 升级脚本"
+                "持久素材不可用，请检查素材目录、2026-10-17 素材结构及 "
+                "2026-10-20 长期记忆合并迁移"
             )
         initialized = False
         try:

@@ -9,6 +9,7 @@ from pydantic import SecretStr
 
 from agent_bot.admin.models import (
     BOOTSTRAP_SETTING_NAMES,
+    HIDDEN_SETTING_NAMES,
     NATIVE_ONLY_STARTUP_SETTING_NAMES,
     STARTUP_SETTING_NAMES,
     SettingField,
@@ -117,7 +118,7 @@ class SettingsService:
     def _snapshot(
         self, stored: VersionedSettings, *, startup_snapshot: StartupSettingsSnapshot | None = None,
     ) -> SettingsSnapshot:
-        """公开最新文件值与待重启状态；结构值判为 JSON，所有秘密继续脱敏。"""
+        """公开可管理字段与待重启状态；隐藏旧入口，结构值判为 JSON，秘密继续脱敏。"""
         startup = startup_snapshot
         if startup is None and self.startup is not None:
             startup = self.startup.read()
@@ -135,6 +136,8 @@ class SettingsService:
         visible = configured.model_dump(mode="json", exclude=SECRET_SETTING_NAMES)
         fields = []
         for name, definition in RuntimeConfig.model_fields.items():
+            if name in HIDDEN_SETTING_NAMES:
+                continue
             nullable = type(None) in get_args(definition.annotation)
             if name in SECRET_SETTING_NAMES:
                 value = getattr(configured, name)

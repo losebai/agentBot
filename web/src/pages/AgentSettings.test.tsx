@@ -21,13 +21,15 @@ const snapshot: SettingsSnapshot = { database_revision: 4, applied_revision: 4, 
 ] };
 
 it('机器人配置将模型和 Agent 归入 LLM，提及授权归入 QQ，端口在基础设置只读', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json(snapshot)));
+  vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).includes('/ai/models?')
+    ? { items: [], next_cursor: null } : snapshot)));
   render(<Settings token="offline" />);
   expect(await screen.findByLabelText('监听端口')).toBeDisabled();
   for (const field of agentFields) expect(screen.queryByLabelText(field.description)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
   expect(screen.getByLabelText('聊天模型')).toBeVisible();
-  for (const field of agentFields.filter(field => field.name !== 'chat_mention_tool_enabled')) {
+  expect(screen.queryByLabelText('搜索 MCP 服务')).not.toBeInTheDocument();
+  for (const field of agentFields.filter(field => !['chat_mention_tool_enabled', 'chat_python_search_mcp_code'].includes(field.name))) {
     expect(screen.getByLabelText(field.description)).toBeVisible();
   }
   fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
@@ -52,7 +54,8 @@ it('在机器人配置修改 Agent 运行字段，保存保留原有版本边界
   fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
   expect(await screen.findByLabelText('默认 Agent 预设')).toBeVisible();
   expect(screen.queryByLabelText('启用 QQ Agent')).not.toBeInTheDocument();
-  for (const field of agentFields.filter(field => field.name !== 'chat_mention_tool_enabled')) {
+  expect(screen.queryByLabelText('搜索 MCP 服务')).not.toBeInTheDocument();
+  for (const field of agentFields.filter(field => !['chat_mention_tool_enabled', 'chat_python_search_mcp_code'].includes(field.name))) {
     expect(screen.getByLabelText(field.description)).toBeVisible();
   }
   expect(screen.getByLabelText('聊天模型')).toBeVisible();

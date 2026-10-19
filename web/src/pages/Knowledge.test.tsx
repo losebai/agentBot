@@ -4,6 +4,13 @@ import { Knowledge } from './Knowledge';
 
 const item = {id: 1, title: '部署规则', content: '完整知识正文', tags: ['部署'], created_at: '2026-10-14T12:00:00'};
 
+it('素材库与知识、记忆并列，只提供浏览入口', async () => {
+  setup(); render(<Knowledge token="offline" />);
+  fireEvent.click(screen.getByRole('tab', {name: '素材库'}));
+  expect(await screen.findByRole('heading', {name: '素材库'})).toBeVisible();
+  expect(screen.queryByRole('button', {name: /新增|上传|删除/})).not.toBeInTheDocument();
+});
+
 /** 只替换 HTTP 边界，页面和对话框使用真实组件。 */
 function setup(fail = false) {
   let saved = false;

@@ -68,6 +68,10 @@ class ConversationJob(BaseModel):
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
 
     version: Literal[2] = 2
+    history_generation_id: str | None = Field(
+        default=None, alias="historyGenerationId", pattern=r"^[a-f0-9]{32}$",
+        exclude_if=lambda value: value is None,
+    )
     job_id: str = Field(alias="jobId", pattern=_IDENTIFIER_PATTERN)
     request_id: str = Field(alias="requestId", min_length=1, max_length=128)
     created_at: float = Field(alias="createdAt", ge=0, allow_inf_nan=False)
@@ -411,6 +415,14 @@ class ConversationProcessor(Protocol):
 
 class ConversationQueueStore(Protocol):
     """持久化队列编排所需的存储端口。"""
+
+    async def dead_letter_length(self) -> int:
+        """统计当前队列保留的失败记录，不读取任务正文。"""
+        ...
+
+    async def clear_dead_letters(self) -> int:
+        """只删除当前队列失败记录，返回实际清除条数。"""
+        ...
 
     @property
     def transient_errors(self) -> tuple[type[Exception], ...]:

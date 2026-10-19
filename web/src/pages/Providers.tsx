@@ -1,11 +1,11 @@
 import { Alert, Button, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AiApi, changes } from '../ai-api';
-import { errorMessage } from '../api';
+import { ApiFailure, errorMessage } from '../api';
 import { CatalogDialog } from '../components/CatalogDialog';
 import { CredentialInput } from '../components/CredentialInput';
 import { Models } from './Models';
-import type { Page, Provider, ProviderDraft, ProviderProtocol } from '../ai-types';
+import type { ModelImportItem, Page, Provider, ProviderDraft, ProviderProtocol } from '../ai-types';
 
 const empty: ProviderDraft = { name: '', protocol: 'openai-responses', base_url: '', enabled: false, description: '' };
 
@@ -20,8 +20,10 @@ export function Providers({ token }: { token: string }) {
   const [editing, setEditing] = useState<Provider | null>();
   const [draft, setDraft] = useState<ProviderDraft>(empty);
   const [modelRefresh, setModelRefresh] = useState(0);
+  const [modelConflicts, setModelConflicts] = useState<{ providerId: number; items: ModelImportItem[] }>();
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [noticeType, setNoticeType] = useState<'success' | 'warning'>('success');
   const [busy, setBusy] = useState(false);
   const controller = useRef<AbortController>();
   // 离开供应商页后停止模型同步，已完成的批次可在下次手动刷新时续接。
@@ -43,13 +45,32 @@ export function Providers({ token }: { token: string }) {
   }
   useEffect(() => { void load(); }, [api, cursor]);
 
+  /** 按身份重读最新供应商，含当前分页外的新记录；只更新快照，不重试原写入。 */
+  async function reloadProvider(id: number, signal: AbortSignal) {
+    setBusy(true);
+    try {
+      let after: string | undefined;
+      let latest: Provider | undefined;
+      do {
+        const next = await api.providers(after, signal);
+        latest = next.items.find(item => item.id === id);
+        after = next.next_cursor ?? undefined;
+      } while (!latest && after);
+      signal.throwIfAborted();
+      if (!latest) throw new ApiFailure('所选供应商已删除，请刷新供应商列表', 404, 'AI_CONFIG_NOT_FOUND');
+      const saved = latest;
+      setPage(value => ({ ...value, items: value.items.map(item => item.id === id ? saved : item) }));
+      setSavedSelection(saved);
+    } finally { if (!signal.aborted) setBusy(false); }
+  }
+
   /** 从公开字段生成编辑草稿，保留数据库中的旧密钥。 */
   function fields(item: Provider): ProviderDraft {
     return { name: item.name, protocol: item.protocol, base_url: item.base_url, enabled: item.enabled, description: item.description };
   }
   /** 新增和编辑都使用弹窗，打开时清空上次输入和提示。 */
   function edit(item: Provider | null) {
-    setEditing(item); setDraft(item ? fields(item) : { ...empty }); setError(''); setNotice('');
+    setEditing(item); setDraft(item ? fields(item) : { ...empty }); setError(''); setNotice(''); setNoticeType('success');
   }
   /** 关闭时释放未提交的供应商密钥。 */
   function cancel() {
@@ -67,11 +88,16 @@ export function Providers({ token }: { token: string }) {
         saved = Object.keys(patch).length ? await api.updateProvider(editing.id, editing.revision, patch) : editing;
       } else saved = await api.createProvider(draft);
       if (current.signal.aborted) return;
-      setDraft({ ...empty }); setEditing(undefined); setNotice('供应商已保存，正在同步全部模型…');
+      setDraft({ ...empty }); setEditing(undefined); setNoticeType('success'); setNotice('供应商已保存，正在同步全部模型…');
       let syncError = '';
       try {
         const result = await api.syncModels(saved.id, saved.revision, current.signal);
-        if (!current.signal.aborted) setNotice('供应商已保存，已同步 ' + result.total + ' 个模型，新增 ' + result.added + ' 个。新模型默认停用。');
+        if (!current.signal.aborted) {
+          setModelConflicts({ providerId: saved.id, items: result.conflicts });
+          setNoticeType(result.conflicts.length ? 'warning' : 'success');
+          setNotice('供应商已保存，已检查 ' + result.total + ' 个模型，新增 ' + result.added + ' 个。'
+            + (result.conflicts.length ? '另有 ' + result.conflicts.length + ' 个别名冲突，请在模型区处理。' : '新模型默认停用。'));
+        }
       } catch (failure) {
         syncError = '供应商已保存，模型同步失败：' + errorMessage(failure) + '。可点击刷新模型继续。';
         if (!current.signal.aborted) setNotice('');
@@ -104,7 +130,7 @@ export function Providers({ token }: { token: string }) {
       <p>在左侧选择供应商，在右侧管理该供应商的模型。</p></div>
       <Button disabled={busy} onClick={() => edit(null)}>新增供应商</Button></div>
     {error && editing === undefined && <Alert type="error" showIcon className="notice" message={error} />}
-    {notice && <Alert type="success" showIcon className="notice" message={notice} />}
+    {notice && <Alert type={noticeType} showIcon className="notice" message={notice} />}
     <div className="provider-layout">
       <aside className="panel provider-list"><h2>供应商</h2>
         <div role="tablist" aria-label="供应商列表" aria-orientation="vertical" className="provider-tabs">
@@ -127,7 +153,10 @@ export function Providers({ token }: { token: string }) {
         </div>
       </aside>
       <section id="provider-model-panel" role="tabpanel" aria-labelledby={selected ? 'provider-tab-' + selected.id : undefined} className="provider-model-panel">
-        {selected ? <Models key={selected.id + ':' + selected.revision + ':' + modelRefresh} token={token} provider={selected} />
+        {selected ? <Models key={selected.id + ':' + modelRefresh} token={token} provider={selected}
+          initialConflicts={modelConflicts?.providerId === selected.id ? modelConflicts.items : undefined}
+          onConflictsChange={items => { setModelConflicts({ providerId: selected.id, items }); setNotice(''); }}
+          onReloadProvider={signal => reloadProvider(selected.id, signal)} />
           : <div className="panel empty-list">新增供应商后，即可在这里管理模型。</div>}
       </section>
     </div>

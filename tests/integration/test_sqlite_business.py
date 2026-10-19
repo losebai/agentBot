@@ -17,14 +17,13 @@ from agent_bot.integrations.workflow_store import WorkflowStore
 from agent_bot.jobs.contracts import JobCommand, JobScope
 from agent_bot.jobs.store import JobStore
 from agent_bot.memory_store import (
-    ChatMemorySchema,
-    ConversationMemoryPolicy,
     GroupContextPolicy,
-    MySqlConversationMemoryStore,
     MySqlRecentGroupContextStore,
 )
 from agent_bot.services.tagged_memory import MemoryArguments, MemoryIdentity
 from agent_bot.services.workflows import WorkflowDefinition
+from agent_bot.session_context import SessionContextPolicy, SessionContextStore
+from agent_bot.session_schema import SessionContextSchema
 from agent_bot.settings import DatabaseParams
 
 
@@ -112,24 +111,23 @@ async def test_job_deduplication_and_single_due_claim(database):
 
 def test_memory_and_workflow_startup_validate_initialized_schema(database):
     """SQLite 启动不执行 MySQL DDL，记忆写入和重放使用真实约束。"""
-    ChatMemorySchema(database).initialize()
+    SessionContextSchema(database).validate()
     TaggedMemoryStore(database, secret="offline").initialize()
     workflows = WorkflowStore(database)
     workflows.prepare_for_startup()
     workflows.migrate()
     assert workflows.list_all() == ()
-    store = MySqlConversationMemoryStore(
+    store = SessionContextStore(
         database,
-        policy=ConversationMemoryPolicy(
+        policy=SessionContextPolicy(
             history_turns=2,
             max_history_chars=1000,
-            ttl_seconds=3600,
             memory_enabled=False,
             max_memory_chars=100,
         ),
     )
     store.commit_exchange("session", "你好", "回应", request_id="request")
-    store.commit_exchange("session", "重复", "重复", request_id="request")
+    store.commit_exchange("session", "你好", "回应", request_id="request")
     assert [message.content for message in store.context("session").messages] == ["你好", "回应"]
 
 

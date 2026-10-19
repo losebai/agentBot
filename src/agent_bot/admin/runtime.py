@@ -46,6 +46,14 @@ class PluginRuntimeProvider:
         return self.plugin.acquire_runtime()
 
     @property
+    def queue_stores(self):
+        """兼容入口只借用已经装配的两个队列，不从环境另建存储。"""
+        queues = (self.plugin.conversation_queue, self.plugin.image_queue)
+        if any(queue is None for queue in queues):
+            return ()
+        return tuple(queue.store for queue in queues)
+
+    @property
     def agent_service(self):
         """从当前快照获取 Agent，避免缓存热刷新前的客户端。"""
         return self.plugin.get_runtime_state().ai_client.agent_service

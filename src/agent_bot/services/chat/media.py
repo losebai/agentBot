@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING
 
 from agent_bot.content_classifier import ContentCategory
@@ -13,7 +13,7 @@ from agent_bot.models import ChatContext, ChatMediaResponse, ChatMessage, MediaO
 from agent_bot.services.chat.contracts import ChatClient
 from agent_bot.services.chat.prompting import ChatPromptBuilder
 from agent_bot.services.chat.request_control import ChatRequestCoordinator
-from agent_bot.state import ConversationStoreProtocol
+from agent_bot.state import ConversationContext, ConversationStoreProtocol
 
 if TYPE_CHECKING:
     from agent_bot.ai.routing import RoutedModelGuard
@@ -31,8 +31,9 @@ class ChatMediaGenerator:
         request_coordinator: ChatRequestCoordinator,
         model_router: ContentModelRouter,
         model_guard: RoutedModelGuard | None,
+        context_provider: Callable[..., Awaitable[ConversationContext]] | None = None,
     ) -> None:
-        """初始化媒体生成依赖。"""
+        """初始化媒体依赖，对话音频与普通回复读取同一份已发送上下文。"""
 
         self._client = client
         self._store = store
@@ -40,6 +41,7 @@ class ChatMediaGenerator:
         self._request_coordinator = request_coordinator
         self._model_router = model_router
         self._model_guard = model_guard
+        self._context_provider = context_provider
 
     async def generate(
         self,
@@ -77,9 +79,10 @@ class ChatMediaGenerator:
             messages: Sequence[ChatMessage] = ()
             media_prompt: str | None = normalized
             if output_type == "AUDIO":
-                conversation_context = await asyncio.to_thread(
-                    self._store.context,
-                    session_id,
+                conversation_context = (
+                    await self._context_provider(session_id, exclude_request_id=request_id)
+                    if self._context_provider is not None
+                    else await asyncio.to_thread(self._store.context, session_id)
                 )
                 messages = self._prompt_builder.messages(
                     current_prompt,

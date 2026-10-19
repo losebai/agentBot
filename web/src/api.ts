@@ -1,4 +1,4 @@
-import type { BotInfo, ChatMessage, ChatResponse, JsonValue, NapCatStatus, PluginInfo, ServiceStatus, SettingsSnapshot } from './types';
+import type { BotInfo, ChatMessage, ChatResponse, DeadLetterClearResult, DeadLetterStatus, JsonValue, NapCatStatus, PluginInfo, ServiceStatus, SettingsSnapshot } from './types';
 import { readChatEvents } from './stream';
 
 export class ApiFailure extends Error {
@@ -42,6 +42,10 @@ export class ApiClient {
   openNapcatLogin() { return this.request<{ accepted: boolean }>('napcat/login', 'POST', {}); }
   /** 页面卸载时取消读取，避免过期响应覆盖插件草稿。 */
   settings(signal?: AbortSignal) { return this.request<SettingsSnapshot>('settings', 'GET', undefined, signal); }
+  /** 只读查询运行中的 QQ 队列；离开维护区时取消等待。 */
+  deadLetters(signal?: AbortSignal) { return this.request<DeadLetterStatus>('queues/dead-letters', 'GET', undefined, signal); }
+  /** 仅清除死信记录，复用管理认证与错误处理，不提交任何配置。 */
+  clearDeadLetters(signal?: AbortSignal) { return this.request<DeadLetterClearResult>('queues/dead-letters', 'DELETE', undefined, signal); }
   /** 插件目录返回已保存选择及当前进程状态，不触发平台连接。 */
   plugins(signal?: AbortSignal) { return this.request<PluginInfo[]>('plugins', 'GET', undefined, signal); }
   /** 运行草稿使用数据库版本；包含静态修改时另传启动文件版本防止覆盖外部编辑。 */

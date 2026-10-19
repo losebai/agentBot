@@ -63,7 +63,7 @@ def build_core_state(
     chat_bridge: ChatToolBridge | None = None,
     knowledge_store: KnowledgeStore | None = None,
 ) -> CoreRuntimeState:
-    """只装配显式公共依赖，不创建消息队列或 QQ 自动发言服务。"""
+    """QQ 与管理工具共用公共生图服务，消息队列仍由 QQ 宿主独立装配。"""
     chat_tool_bridge = chat_bridge
     catalog = AiCatalog(database, connect=database_pool.connect)
     agent_catalog = AgentCatalog(database, connect=database_pool.connect)
@@ -113,6 +113,9 @@ def build_core_state(
             max_concurrent_requests=config.chat_queue_media_workers,
         )
 
+    media_service = MediaGenerationService(
+        catalog, CredentialResolver(), MediaProvider(), media_resources,
+    ) if media_resources is not None else None
     ai_client = RoutingAiClient(
         python_service,
         legacy_system_prompt=config.chat_system_prompt,
@@ -121,11 +124,7 @@ def build_core_state(
             **{name: getattr(config, f"chat_llm_{name}") for name in LlmRequestOptions.model_fields}
         ),
         mcp_services=config.chat_mcp_services,
-        media_service=MediaGenerationService(
-            catalog, CredentialResolver(), MediaProvider(), media_resources
-        )
-        if media_resources is not None
-        else None,
+        media_service=media_service,
         agent_code=config.chat_python_agent_code,
         agent_max_steps=config.chat_agent_max_steps,
         web_search_max_steps=config.chat_web_search_max_steps,
@@ -149,6 +148,7 @@ def build_core_state(
                                  KnowledgeStore(database, connect=database_pool.connect)),
                 job_tools=JobTools(job_store) if config.chat_job_enabled else None,
                 material_store=media_resources.materials if media_resources else None,
+                media_store=media_resources.store if media_resources else None,
                 admin_media_tools=AdminMediaTools(
                     config,
                     workflow_service,
@@ -156,6 +156,7 @@ def build_core_state(
                     media_resources.store,
                     comfy_client=comfy_client,
                     resources=media_resources,
+                    image_service=media_service,
                 )
                 if media_resources is not None
                 else None,

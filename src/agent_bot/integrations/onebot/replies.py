@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn
 
@@ -12,6 +12,7 @@ from nonebot.adapters.onebot.v11 import Bot, Message, MessageSegment
 from nonebot.matcher import Matcher
 
 from agent_bot.config import RuntimeConfig
+from agent_bot.integrations.onebot.outgoing import OutgoingRecorder
 from agent_bot.model_guard import MODEL_CONFIGURATION_ERROR_MESSAGE
 from agent_bot.services.replies import GeneratedReply, LlmReplyComposer, ReplyIntent
 from agent_bot.state import split_reply
@@ -30,14 +31,19 @@ class ReplyDeliveryReceipt:
 class OneBotReplyGateway:
     """统一消息投递；模型正文与配置、忙碌状态的受限系统通知分别校验。"""
 
-    def __init__(self, config_provider: Callable[[], RuntimeConfig]) -> None:
-        """保存运行时配置提供器，以便普通回复使用最新分段限制。"""
+    def __init__(
+        self, config_provider: Callable[[], RuntimeConfig], *,
+        recorder: OutgoingRecorder | None = None,
+    ) -> None:
+        """保存最新配置和统一上下文登记器；独立端口测试可省略持久化依赖。"""
 
         self._config_provider = config_provider
+        self.recorder = recorder
 
     async def finish_busy_error(self, matcher: Matcher) -> NoReturn:
         """额度满时直接拒绝，不调用模型生成解释或把请求加入等待。"""
-        await matcher.send(Message(CHAT_BUSY_MESSAGE))
+        message = Message(CHAT_BUSY_MESSAGE)
+        await self._recorded_message(message, lambda: matcher.send(message), key="busy")
         await matcher.finish()
         raise AssertionError("matcher.finish must stop execution")
 
@@ -58,7 +64,8 @@ class OneBotReplyGateway:
             "catalog": "模型目录暂时不可用，请检查数据库或稍后重试。",
             "agent": "AI 接入配置不可用，请检查 Agent、工具与模型配置。",
         }
-        await matcher.send(Message(messages[kind]))
+        message = Message(messages[kind])
+        await self._recorded_message(message, lambda: matcher.send(message), key="configuration")
         await matcher.finish()
         raise AssertionError("matcher.finish must stop execution")
 
@@ -80,17 +87,26 @@ class OneBotReplyGateway:
         encoded = base64.b64encode(reply.text.encode("utf-8")).decode("ascii")
         name = "reply-" + hashlib.sha256(reply.request_id.encode("utf-8")).hexdigest()[:16]
         # 文件名由请求摘要生成，模型内容和外部标识不能指定本地路径。
-        if scene == "group":
-            return await bot.call_api(
-                "upload_group_file", group_id=int(target_id), file=f"base64://{encoded}",
-                name=f"{name}.txt",
-            )
-        if scene == "private":
-            return await bot.call_api(
-                "upload_private_file", user_id=int(target_id), file=f"base64://{encoded}",
-                name=f"{name}.txt",
-            )
-        raise ValueError("unsupported OneBot scene")
+        async def send_file():
+            """上传目标和文件字节均来自已经校验的回复，不接受模型路径。"""
+            if scene == "group":
+                return await bot.call_api(
+                    "upload_group_file", group_id=int(target_id), file=f"base64://{encoded}",
+                    name=f"{name}.txt",
+                )
+            if scene == "private":
+                return await bot.call_api(
+                    "upload_private_file", user_id=int(target_id), file=f"base64://{encoded}",
+                    name=f"{name}.txt",
+                )
+            raise ValueError("unsupported OneBot scene")
+
+        if self.recorder is None:
+            return await send_file()
+        return await self.recorder.send_file(
+            name=f"{name}.txt", data=reply.text.encode("utf-8"), text=reply.text,
+            request_id=reply.request_id, sender=send_file,
+        )
 
     async def send_file_mention(self, bot: Bot, *, target_id: str, member_id: str) -> None:
         """文件上传确认后发送原生群提醒，队列独立记录进度，重试不重传已确认文件。"""
@@ -105,13 +121,16 @@ class OneBotReplyGateway:
         *,
         prefix: MessageSegment | None = None,
     ) -> None:
-        """按当前长度配置向 Matcher 依次发送生成回复。"""
+        """按实际分段发送并登记上下文；每段使用稳定的投递键。"""
 
         self._require_generated(reply)
         self._require_at_prefix(prefix)
         for index, part in enumerate(self._parts(reply)):
             message = self._text_message(part, prefix if index == 0 else None)
-            await matcher.send(message)
+            await self._recorded_message(
+                message, lambda message=message: matcher.send(message), key=f"text:{index}",
+                request_id=reply.request_id,
+            )
 
     async def finish_matcher(
         self,
@@ -148,6 +167,7 @@ class OneBotReplyGateway:
                 scene=scene,
                 target_id=target_id,
                 message=self._text_message(part, prefix if index == 0 else None),
+                request_id=reply.request_id, key=f"text:{index}",
             )
             delivered.append(f" {part}" if index == 0 and prefix is not None else part)
         return ReplyDeliveryReceipt(text="".join(delivered), response=response)
@@ -187,6 +207,7 @@ class OneBotReplyGateway:
         return await self._send_bot_message(
             bot, scene=scene, target_id=target_id,
             message=self._text_message(reply.text, prefix),
+            request_id=reply.request_id, key="exact-text",
         )
 
     async def send_tool_reply(
@@ -194,16 +215,20 @@ class OneBotReplyGateway:
         reply: GeneratedReply, prefix: MessageSegment | None = None,
         image: MessageSegment | None = None,
     ) -> dict[str, Any]:
-        """把工具增强对话的最终正文、原生 At 和可选图片合并为一次平台发送。"""
+        """图片与最终正文分别投递，避免主动发言或工具结果把图片挤进文字消息。"""
         self._require_generated(reply)
         self._require_at_prefix(prefix)
         message = self._text_message(reply.text, prefix)
         if image is not None:
             if image.type != "image":
                 raise ValueError("tool reply attachment must be an image")
-            message.append(image)
+            await self._send_bot_message(
+                bot, scene=scene, target_id=target_id, message=Message(image),
+                request_id=reply.request_id, key="tool-image",
+            )
         return await self._send_bot_message(
             bot, scene=scene, target_id=target_id, message=message,
+            request_id=reply.request_id, key="tool-text",
         )
 
     async def send_media_matcher(
@@ -215,7 +240,8 @@ class OneBotReplyGateway:
     ) -> None:
         """向 Matcher 发送一个结构化媒体段和可选的真实 At 前缀。"""
 
-        await matcher.send(self._media_message(segment, prefix))
+        message = self._media_message(segment, prefix)
+        await self._recorded_message(message, lambda: matcher.send(message), key="media")
 
     async def send_media_bot(
         self,
@@ -240,14 +266,31 @@ class OneBotReplyGateway:
         scene: Literal["private", "group"],
         target_id: str,
         message: Message,
+        request_id: str | None = None,
+        key: str = "message",
     ) -> dict[str, Any]:
-        """仅在网关内部发送已经通过文字来源或媒体类型校验的消息。"""
+        """投递前登记发送意图，成功后保存可见内容和素材引用。"""
 
         if scene == "group":
-            return await bot.send_group_msg(group_id=int(target_id), message=message)
-        if scene == "private":
-            return await bot.send_private_msg(user_id=int(target_id), message=message)
-        raise ValueError("unsupported OneBot scene")
+            async def sender():
+                """保留原群目标与平台响应，实际调用只由登记器放行一次。"""
+                return await bot.send_group_msg(group_id=int(target_id), message=message)
+        elif scene == "private":
+            async def sender():
+                """私聊目标保持原始认证会话提供的 QQ 号。"""
+                return await bot.send_private_msg(user_id=int(target_id), message=message)
+        else:
+            raise ValueError("unsupported OneBot scene")
+        return await self._recorded_message(message, sender, key=key, request_id=request_id)
+
+    async def _recorded_message(
+        self, message: Message, sender: Callable[[], Awaitable[Any]], *, key: str,
+        request_id: str | None = None,
+    ) -> Any:
+        """独立网关测试可注入发送边界；生产宿主统一启用消息登记器。"""
+        if self.recorder is None:
+            return await sender()
+        return await self.recorder.send(message, sender, key=key, request_id=request_id)
 
     def _media_message(
         self,

@@ -110,8 +110,16 @@ def call_record_time(value: datetime | str) -> datetime:
     return stamp.astimezone(_RECORD_TIMEZONE).replace(tzinfo=None, microsecond=0)
 
 
+def source_record_time(value: datetime | str) -> datetime:
+    """统一为无时区 UTC 并保留微秒，供普通执行接口和原始时间排序使用。"""
+    stamp = datetime.fromisoformat(value) if isinstance(value, str) else value
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def python_record(row, type, context=None):
-    """转换输入输出和归档时间，并为显式指令附加分类标记，保留模型调用类型。"""
+    """归档输入输出及分类，普通调用同时保留取代旧执行表的原始 UTC 微秒。"""
     data = {
         key: json_value(row[key]) if key in {"usage", "revisions"} else row[key]
         for key in ("usage", "revisions", "configured_model", "backend", "entry", "error_code")
@@ -138,6 +146,8 @@ def python_record(row, type, context=None):
             "source_id": row["execution_id"],
             "execution_id": row["execution_id"],
             "status": row["status"],
+            **({"created_at_utc": source_record_time(row["created_at"])}
+               if type == "ordinary" else {}),
         }
     )
 
@@ -379,10 +389,11 @@ class CallRecordStore(AiDatabase):
         return await self.run(write, write=True)
 
     async def get_call(self, id: int):
-        """详情附带统一用量，原生 Agent 同时提供该执行的脱敏工具负载。"""
+        """详情提供用量及脱敏工具负载，内部 UTC 字段不改变已有接口契约。"""
+        columns = sql_columns(set(CallDetail.model_fields) - {"tool_steps", "system_kind", "usage"})
         row = await self.run(
             lambda c: query(
-                c, f"SELECT *, {_SYSTEM_KIND} AS system_kind, {_usage_columns()} "
+                c, f"SELECT {columns}, {_SYSTEM_KIND} AS system_kind, {_usage_columns()} "
                 f"FROM {_TABLE} WHERE id=%s",
                 (id,), one=True,
             )

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.tools.knowledge import KnowledgeSearchTool
 from agent_bot.agent.tools.local_media import validate_local_call
-from agent_bot.agent.tools.materials import MaterialSearchTool
+from agent_bot.agent.tools.materials import MaterialGetTool, MaterialSearchTool
 from agent_bot.agent.tools.policy import ADMIN_MEDIA_TOOLS, CHAT_TOOLS, ToolPolicy
 from agent_bot.agent.tools.public_http import PublicPageReader
 from agent_bot.agent.tools.read_url import ReadUrlTool
@@ -29,7 +29,9 @@ class BoundTools:
         ToolSchema.validate_arguments(definition, call.arguments)
         if definition.source == "builtin" and definition.name == "knowledge_search":
             KnowledgeSearchTool.validate(call.arguments)
-        if definition.source == "builtin" and definition.name == "material_search":
+        if definition.source == "builtin" and definition.name in {
+            "material_search", "material_get",
+        }:
             validate_local_call(call)
         if definition.source in {"chat", "media"}:
             validate_local_call(call)
@@ -47,7 +49,7 @@ class ToolRuntime:
     """QQ 和管理入口使用各自媒体适配器，禁止混用身份。"""
 
     def __init__(self, connector, chat_bridge=None, reader=None, *, admin_media_tools=None,
-                 job_tools=None, knowledge_store=None, material_store=None):
+                 job_tools=None, knowledge_store=None, material_store=None, media_store=None):
         """本地适配器引用当前运行时的客户端与任务存储。"""
         self.connector, self.chat_bridge = connector, chat_bridge
         self.reader = reader or PublicPageReader()
@@ -55,6 +57,7 @@ class ToolRuntime:
         self.job_tools = job_tools
         self.knowledge_store = knowledge_store
         self.material_store = material_store
+        self.media_store = media_store
 
     @asynccontextmanager
     async def open(self, snapshot, request, authority, *, media_scope=None, images=()):
@@ -83,6 +86,9 @@ class ToolRuntime:
                 builtin_tools.append(KnowledgeSearchTool(self.knowledge_store))
             if self.material_store is not None and media_scope is not None:
                 builtin_tools.append(MaterialSearchTool(self.material_store, media_scope.owner))
+                builtin_tools.append(MaterialGetTool(
+                    self.material_store, media_scope, self.media_store,
+                ))
             for tool in builtin_tools:
                 definitions.append(tool.definition)
                 if tool.definition.name in handlers:

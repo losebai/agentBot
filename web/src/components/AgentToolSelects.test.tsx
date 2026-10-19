@@ -10,13 +10,15 @@ function Editor({ initialTools = [] as string[], initialMcps = [] as number[] })
     <output aria-label="工具草稿">{JSON.stringify(tools)}</output><output aria-label="MCP 草稿">{JSON.stringify(mcps)}</output></>;
 }
 
-it('知识库检索不会自动勾选，用户明确选择后写入工具草稿', async () => {
+it.each([
+  ['知识库检索', 'knowledge_search'], ['素材读取', 'material_get'],
+])('%s 不会自动勾选，用户明确选择后写入工具草稿', async (label, name) => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({items: [], next_cursor: null})));
   render(<Editor />);
   expect(screen.getByLabelText('工具草稿')).toHaveTextContent('[]');
   fireEvent.mouseDown(screen.getByRole('combobox', {name: '允许工具'}));
-  fireEvent.click(await screen.findByText('知识库检索 · knowledge_search'));
-  expect(screen.getByLabelText('工具草稿')).toHaveTextContent('["knowledge_search"]');
+  fireEvent.click(await screen.findByText(label + ' · ' + name));
+  expect(screen.getByLabelText('工具草稿')).toHaveTextContent(JSON.stringify([name]));
 });
 
 it('MCP 下拉覆盖所有分页，关联后自动使用工具而无需逐个勾选', async () => {

@@ -3,7 +3,7 @@ export interface ProviderDraft { name: string; protocol: ProviderProtocol; base_
 export interface Provider extends Omit<ProviderDraft, 'credential'> { id: number; revision: number; credential_set: boolean; credential_available: boolean }
 export interface UpstreamModels { provider_id: number; revision: number; models: string[] }
 export interface ModelImportItem { alias: string; upstream_model: string }
-export interface ModelImportResult { provider_id: number; revision: number; imported: AiModel[]; skipped: string[] }
+export interface ModelImportResult { provider_id: number; revision: number; imported: AiModel[]; skipped: string[]; conflicts: ModelImportItem[] }
 export interface ModelDraft { alias: string; upstream_model: string; provider_id: number; enabled: boolean; media?:import('./media-types').ModelMediaCapabilities }
 export interface AiModel extends ModelDraft { id: number; revision: number; media_initialized?:boolean }
 export interface Page<T> { items: T[]; next_cursor: string | null }

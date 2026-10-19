@@ -7,6 +7,7 @@ import hashlib
 from redis.asyncio import Redis
 
 from agent_bot.services.tool_operations import (
+    DeliveryEffect,
     EffectToolName,
     ImageEffect,
     ImageTaskEffect,
@@ -57,6 +58,11 @@ class RedisToolOperationStore:
         key = self._key(job_id, tool)
         self._validate_result(tool, result)
         record = ToolOperation(signature=signature, status="COMPLETED", result=result)
+        if tool == "outgoing_message" and await self._redis.set(
+            key, record.model_dump_json(), ex=self._ttl, nx=True,
+        ):
+            # 平台确认后的首次回执不需要另一个执行占位，主库日志已负责防止重复发送。
+            return
         async with self._redis.pipeline(transaction=True) as pipeline:
             await pipeline.watch(key)
             raw = await pipeline.get(key)
@@ -88,16 +94,20 @@ class RedisToolOperationStore:
             or (tool == "mention_member" and not isinstance(result, MentionEffect))
             or (tool == "local_workflow_generate_image"
                 and not isinstance(result, (ImageEffect, ImageTaskEffect)))
+            or (tool == "image_generate" and not isinstance(result, ImageTaskEffect))
+            or (tool == "outgoing_message" and not isinstance(result, DeliveryEffect))
             or (tool == "tts_generate" and not isinstance(result, SpeechEffect))
         ):
             raise ValueError("tool operation result type is invalid")
 
     def _key(self, job_id: str, tool: EffectToolName) -> str:
-        """限制任务标识并使用摘要组成固定大小的内部键。"""
+        """限制任务和已登记工具标识，直接生图回执也按任务独立持久化。"""
 
         if not job_id or len(job_id) > 128 or tool not in {
             "send_reply", "mention_member", "local_workflow_generate_image", "tts_generate",
             "image_start_reply", "image_completion_reply",
+            "image_generate",
+            "outgoing_message",
         }:
             raise ValueError("tool operation identity is invalid")
         digest = hashlib.sha256(job_id.encode("utf-8")).hexdigest()

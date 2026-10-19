@@ -121,11 +121,7 @@ class AgentCatalog(AiDatabase):
         return await self.run(write, write=True)
 
     def _validate_models(self, connection, values: dict) -> None:
-        """引用必须存在；停用配置仍可编辑，实际启用状态在使用时检查。"""
-        if values["fallback_model_id"] is not None and values["fallback_model_id"] in {
-            values["model_id"], values["vision_model_id"],
-        }:
-            raise AgentError("AGENT_MODEL_ROUTE_INVALID", status_code=422)
+        """各角色可复用模型；引用和图片能力仍须有效，启用状态在执行时检查。"""
         for field in ("model_id", "vision_model_id", "fallback_model_id"):
             if values[field] is not None:
                 model = AiCatalog._get(self, connection, "model", values[field], lock=True)
@@ -251,7 +247,7 @@ class AgentCatalog(AiDatabase):
         return item
 
     async def snapshot(self, request: AgentRequest, *, search_code=None) -> AgentSnapshot:
-        """根据输入选主模型，并固定明确配置的识图与备用快照，支持工具后续返回图片。"""
+        """按本次图片输入选路，固定识图与备用快照，备用与当前模型相同则不自我接管。"""
 
         def read(connection):
             """一致性读取不持有行锁，避免与目录配置写入形成反向锁序。"""

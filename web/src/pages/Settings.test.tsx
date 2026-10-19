@@ -315,7 +315,10 @@ describe('配置编辑', () => {
       { name: 'chat_image_generation_enabled', description: '图片生成', kind: 'boolean', value: true },
     ].map(field => ({ nullable: false, secret_is_set: false, restart_required: false,
       scope: 'runtime', read_only: false, ...field }));
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...snapshot, fields })));
+    vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).includes('/ai/models?')
+      ? { items: [{ id: 1, alias: 'vision', enabled: true },
+        { id: 2, alias: 'gpt-image-1', enabled: true }], next_cursor: null }
+      : { ...snapshot, fields })));
     render(<Settings token="offline-token" />);
     const navigation = screen.getByRole('navigation', { name: '机器人配置分类' });
     expect(within(navigation).getAllByRole('button').map(button => button.textContent)).toEqual([
@@ -325,10 +328,9 @@ describe('配置编辑', () => {
     expect(screen.getByLabelText('新配置')).toBeInTheDocument();
     fireEvent.click(within(navigation).getByRole('button', { name: 'LLM设置' }));
     // 生图模型由模型供应商提供，应与其他模型一起配置。
-    for (const label of ['Agent 预设', '会话记忆', '图片理解模型', '图片生成模型名称', '图片识别']) {
+    for (const label of ['Agent 预设', '会话记忆', '图片理解模型', '图片生成模型名称', '图片识别', '图片生成']) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
-    expect(screen.queryByLabelText('图片生成')).not.toBeInTheDocument();
     fireEvent.click(within(navigation).getByRole('button', { name: 'QQ' }));
     for (const label of ['群成员 AT 工具', '群访问列表']) {
       expect(screen.getByLabelText(label)).toBeEnabled();
@@ -349,11 +351,11 @@ describe('配置编辑', () => {
     expect(screen.queryByLabelText('自动发言')).not.toBeInTheDocument();
     fireEvent.click(within(navigation).getByRole('button', { name: 'Comfy' }));
     expect(screen.getByLabelText('Comfy 服务地址')).toBeInTheDocument();
-    expect(screen.getByLabelText('图片生成')).toBeInTheDocument();
+    expect(screen.queryByLabelText('图片生成')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('图片生成模型名称')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('图片识别')).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole('textbox', { name: '搜索配置' }), { target: { value: '图片' } });
-    expect(screen.getByLabelText('图片生成')).toBeInTheDocument();
+    expect(screen.queryByLabelText('图片生成')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('图片理解模型')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Comfy 服务地址')).not.toBeInTheDocument();
   });

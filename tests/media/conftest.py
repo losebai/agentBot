@@ -1,5 +1,6 @@
 """媒体测试使用本地事务替身、可控时钟和临时文件根。"""
 
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -27,7 +28,7 @@ class FakeClock:
 
 @pytest.fixture
 def media_database(agent_database):  # noqa: F811
-    """复用既有数据库替身；SQL 中文说明另外核对 MySQL 脚本。"""
+    """复用媒体替身，持久素材与合并记忆使用当前初始化结构避免依赖退役表。"""
     agent_database.connection.executescript("""
     CREATE TABLE agent_bot_ai_model_media(model_id INTEGER PRIMARY KEY
         REFERENCES agent_bot_ai_model(id) ON DELETE CASCADE,
@@ -40,9 +41,13 @@ def media_database(agent_database):  # noqa: F811
         execution_id TEXT, execution_kind TEXT, purpose TEXT, mime_type TEXT, size_bytes INTEGER,
         sha256 TEXT, storage_key TEXT, status TEXT, created_at TEXT, expires_at TEXT);
     """)
-    agent_database.connection.executescript(
-        Path("sql/2026-10-17-material-memory.sqlite.sql").read_text(encoding="utf-8")
+    schema = Path("sql/agent_bot_init.sqlite.sql").read_text(encoding="utf-8")
+    tables = r"(?:chat_material|chat_material_source|chat_tagged_memory)\b"
+    statements = re.findall(
+        rf"CREATE (?:TABLE IF NOT EXISTS {tables}|(?:UNIQUE )?INDEX IF NOT EXISTS "
+        rf"\w+\s+ON {tables})[\s\S]*?;", schema,
     )
+    agent_database.connection.executescript("\n".join(statements))
     return agent_database
 
 

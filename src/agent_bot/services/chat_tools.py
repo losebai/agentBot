@@ -406,6 +406,19 @@ class MentionArguments(_StrictArguments):
     text: str = Field(min_length=1, max_length=500)
 
 
+class ImageGenerateArguments(_StrictArguments):
+    """直接模型生图只接收画面描述及开画文案，不允许选择服务、模型或身份。"""
+
+    prompt: str = Field(
+        min_length=1, max_length=2000,
+        description="完整图片生成描述，只写画面要求，不附分析或聊天答复。",
+    )
+    start_reply: str = Field(
+        min_length=1, max_length=1000,
+        description="面向用户的一句开画答复；送达后才排队，不能声称图片已完成。",
+    )
+
+
 class WorkflowGenerateArguments(_StrictArguments):
     start_reply: str = Field(
         min_length=1, max_length=1000,
@@ -638,6 +651,27 @@ async def _local_workflow_list(
     }
 
 
+async def _image_generate(arguments: dict[str, object], context: ChatToolContext) -> object:
+    """直接生图提交已有持久队列；恢复回执时不重复提交计费任务。"""
+    parsed = ImageGenerateArguments.model_validate(arguments)
+    collector = context.workflow_collector
+    if collector is None or collector.submit_image is None:
+        raise ChatToolError("TEMPORARILY_UNAVAILABLE", "直接生图队列未配置")
+    signature = hashlib.sha256(parsed.model_dump_json().encode("utf-8")).hexdigest()
+    cached = await context.begin_effect("image_generate", signature)
+    if cached is not None:
+        if not isinstance(cached, ImageTaskEffect):
+            raise ChatToolError("INVALID_RESULT", "持久化图片任务无效")
+        await context.restore_effect(cached)
+        return {"status": "queued", "task_id": cached.task_id}
+    await collector.reserve_call()
+    context.ensure_active()
+    task_id = await collector.submit_image(parsed.prompt, parsed.start_reply)
+    collector.queued_task_id = task_id
+    await context.complete_effect("image_generate", signature, ImageTaskEffect(task_id=task_id))
+    return {"status": "queued", "task_id": task_id}
+
+
 async def _local_workflow_generate_image(
     arguments: dict[str, object],
     context: ChatToolContext,
@@ -858,6 +892,18 @@ def build_chat_tool_registry() -> ChatToolRegistry:
                 ),
                 input_schema=WorkflowCancelArguments.model_json_schema(),
                 handler=_local_workflow_cancel,
+            ),
+            ChatToolDefinition(
+                name="image_generate",
+                description=(
+                    "直接使用管理员配置的图片生成模型生成一张图片，无需 Comfy 工作流。"
+                    "prompt 写完整画面要求，start_reply 写面向用户的开画答复。"
+                    "QQ 先发送开画答复再提交后台队列；queued 只表示已排队，不能声称已完成。"
+                    "单次请求最多生成一张图片，与工作流生图共享额度。"
+                    "此工具仅支持文生图，不能将当前图片作为编辑输入。"
+                ),
+                input_schema=ImageGenerateArguments.model_json_schema(),
+                handler=_image_generate,
             ),
             ChatToolDefinition(
                 name="local_workflow_list",

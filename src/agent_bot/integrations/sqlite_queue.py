@@ -338,6 +338,12 @@ class SqliteConversationQueueStore:
             "SELECT COUNT(*) FROM chat_queue_deadletters WHERE namespace = ?", (self._namespace,),
         ).fetchone()[0])
 
+    async def clear_dead_letters(self) -> int:
+        """仅删除当前命名空间的死信并返回实际条数，保留源任务、结果和去重回执。"""
+        return await run_sqlite(self.path, lambda connection: connection.execute(
+            "DELETE FROM chat_queue_deadletters WHERE namespace = ?", (self._namespace,),
+        ).rowcount)
+
 
 @dataclass(frozen=True, slots=True)
 class SqliteConversationQueueResources:

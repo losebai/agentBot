@@ -165,9 +165,10 @@ class ModelImportItem(AiModel):
 
 
 class ModelImportRequest(AiModel):
-    """一个供应商的一批导入，在版本检查后原子写入。"""
+    """一批模型共用供应商版本；同步可显式要求报告并跳过别名冲突。"""
 
     expected_revision: int = Field(ge=1)
+    skip_alias_conflicts: bool = False
     models: tuple[ModelImportItem, ...] = Field(min_length=1, max_length=100)
 
     @model_validator(mode="after")
@@ -181,12 +182,13 @@ class ModelImportRequest(AiModel):
 
 
 class ModelImportResult(AiModel):
-    """明确区分新登记和已经登记的上游模型。"""
+    """区分新登记、已登记和需要管理员另设别名的模型。"""
 
     provider_id: int
     revision: int
     imported: tuple[ModelView, ...]
     skipped: tuple[str, ...]
+    conflicts: tuple[ModelImportItem, ...] = ()
 
 
 class Page(AiModel, Generic[T]):
@@ -328,6 +330,6 @@ class SessionDetail(SessionSummary):
 
 
 class SessionWrite(SessionDetail):
-    """写入统一记录的请求快照，旧会话表仍使用原列集合。"""
+    """普通调用写入统一归档；请求快照不进入旧版执行详情响应。"""
 
     request_context: dict | None = None

@@ -2,26 +2,30 @@ import { ApiClient } from './api';
 import type { AiModel, ModelDraft, Page, Provider, ProviderDraft, UpstreamModels, ModelImportItem, ModelImportResult, SessionDetail, SessionSummary } from './ai-types';
 
 export class AiApi extends ApiClient {
-  providers(cursor?: string) { return this.request<Page<Provider>>(`ai/providers?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`); }
+  /** 供应商版本冲突后允许取消目录重读，避免旧面板继续更新选择。 */
+  providers(cursor?: string, signal?: AbortSignal) { return this.request<Page<Provider>>(`ai/providers?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, 'GET', undefined, signal); }
   models(cursor?: string, providerId?: number, signal?: AbortSignal) { return this.request<Page<AiModel>>(`ai/models?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${providerId ? `&provider_id=${providerId}` : ''}`, 'GET', undefined, signal); }
   // 模型发现只传供应商身份与版本，实际 Key 留在服务器端。
   upstreamModels(id: number, revision: number, signal?: AbortSignal) { return this.request<UpstreamModels>(`ai/providers/${id}/upstream-models?expected_revision=${revision}`, 'GET', undefined, signal); }
-  importModels(id: number, revision: number, models: ModelImportItem[], signal?: AbortSignal) { return this.request<ModelImportResult>(`ai/providers/${id}/models/import`, 'POST', {expected_revision: revision, models}, signal); }
-  /** 新模型直接使用上游名称作别名；已有项保留配置，同名冲突由服务端明确拒绝。 */
+  /** 严格导入保留事务回滚语义；自动同步显式要求返回冲突项并继续处理其他模型。 */
+  importModels(id: number, revision: number, models: ModelImportItem[], signal?: AbortSignal, skipAliasConflicts = false) { return this.request<ModelImportResult>(`ai/providers/${id}/models/import`, 'POST', {expected_revision: revision, models, ...(skipAliasConflicts ? { skip_alias_conflicts: true } : {})}, signal); }
+  /** 新模型沿用上游名称；已登记项保留配置，别名冲突交由管理员显式处理。 */
   async syncModels(id: number, revision: number, signal?: AbortSignal) {
     const discovered = await this.upstreamModels(id, revision, signal);
     let added = 0;
+    const conflicts: ModelImportItem[] = [];
     // 导入接口每批最多 100 项；中断时停止后续批次，手动刷新可继续同步。
     for (let offset = 0; offset < discovered.models.length; offset += 100) {
       signal?.throwIfAborted();
       const models = discovered.models.slice(offset, offset + 100).map(upstream_model => ({
         upstream_model, alias: upstream_model,
       }));
-      const result = await this.importModels(id, discovered.revision, models, signal);
+      const result = await this.importModels(id, discovered.revision, models, signal, true);
       added += result.imported.length;
+      conflicts.push(...result.conflicts);
     }
     signal?.throwIfAborted();
-    return { total: discovered.models.length, added };
+    return { total: discovered.models.length, added, conflicts };
   }
   createProvider(body: ProviderDraft) { return this.request<Provider>('ai/providers', 'POST', body); }
   updateProvider(id: number, revision: number, changes: Partial<ProviderDraft>) { return this.request<Provider>(`ai/providers/${id}`, 'PATCH', { expected_revision: revision, ...changes }); }

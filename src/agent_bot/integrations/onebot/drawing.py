@@ -114,7 +114,7 @@ class DrawingCommandHandler:
         self, bot: Bot, event: MessageEvent, argument: Message,
         *, matcher: type[Matcher], session_id: str,
     ) -> None:
-        """确认开画答复送达后提交独立任务，不等待绘图或图片投递。"""
+        """发送前固定历史代际，后台结果仍可投递但不能写回已重置的新会话。"""
 
         prompt = argument.extract_plain_text().strip()
         usage = CommandUsageFacts(command="/画图", usage="/画图 <提示词>")
@@ -146,6 +146,10 @@ class DrawingCommandHandler:
             await matcher.finish()
 
         request_id = f"qq-draw-{uuid.uuid4().hex}"
+        generation = (
+            await chat_service.history_generation(session_id)
+            if self._reply_service.gateway.recorder is not None else None
+        )
         chat_context = await self._chat_context_provider(bot, event)
         try:
             answer = await chat_service.generate_image_start_queued(
@@ -177,6 +181,7 @@ class DrawingCommandHandler:
             user=self._llm_user_name_provider(event),
             userName=self._current_user_name_provider(event), chatContext=chat_context,
             backgroundImage=True,
+            historyGenerationId=generation,
             workflowRequest=WorkflowImageRequest(
                 workflow_key=config.chat_local_workflow_default_key,
                 positive_prompt=normalized_prompt,

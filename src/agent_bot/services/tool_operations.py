@@ -7,9 +7,20 @@ from typing import Annotated, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 EffectToolName = Literal[
+    "outgoing_message",
+    "image_generate",
     "send_reply", "mention_member", "local_workflow_generate_image", "tts_generate",
     "image_start_reply", "image_completion_reply",
 ]
+
+
+class DeliveryEffect(BaseModel):
+    """平台已经确认的发送回执；上下文库恢复时只补记日志，不重新发送。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["delivery"] = "delivery"
+    signature: str = Field(pattern=r"^[a-f0-9]{64}$")
+    message_id: str | None = Field(default=None, max_length=128)
 
 
 class ReplyEffect(BaseModel):
@@ -58,7 +69,7 @@ class SpeechEffect(BaseModel):
 
 
 ToolEffect = Annotated[
-    ReplyEffect | MentionEffect | ImageEffect | ImageTaskEffect | SpeechEffect,
+    ReplyEffect | MentionEffect | ImageEffect | ImageTaskEffect | SpeechEffect | DeliveryEffect,
     Field(discriminator="kind"),
 ]
 

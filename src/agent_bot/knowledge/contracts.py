@@ -76,11 +76,12 @@ class MemoryCreate(TaggedText):
 
 
 class MemoryView(AiModel):
-    """管理员可查看匿名归属，模型仍不能选择这些管理字段。"""
+    """管理员查看匿名归属与已知目录标题，模型仍不能选择这些管理字段。"""
 
     id: int
     scope_id: str
     scope: MemoryScope
+    scope_title: str | None = None
     key: str
     content: str
     tags: tuple[str, ...]
@@ -96,11 +97,12 @@ class TagCount(AiModel):
 
 
 class ScopeView(AiModel):
-    """不可逆作用域及有效记忆数，不附加猜测的 QQ 名称。"""
+    """作用域目录附带已知 QQ 名称，仅用于管理员显示，不改变身份标识。"""
 
     scope_id: str
     scope: MemoryScope
     count: int
+    scope_title: str | None = None
 
 
 class KnowledgeSearchArguments(AiModel):

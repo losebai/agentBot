@@ -1,15 +1,24 @@
 """持久素材原件与元数据的事务存储，按真实入口及会话隔离。"""
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import re
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import BinaryIO
 from uuid import uuid4
 
+from agent_bot.ai.contracts import AiModel, Page
 from agent_bot.ai.database import AiDatabase, query
 from agent_bot.database_pool import finish_database_write
 from agent_bot.materials.contracts import (
     MAX_FILE_BYTES,
+    MaterialId,
+    MaterialLibraryArguments,
+    MaterialLibraryView,
     MaterialSearchArguments,
     MaterialSearchResult,
     MaterialView,
@@ -21,6 +30,15 @@ from agent_bot.media.inputs import ImagePreparer
 from agent_bot.media.store import finish_cleanup, utc_now
 
 PUBLIC_COLUMNS = "id,name,kind,mime_type,size_bytes,sha256,description,created_at"
+LIBRARY_COLUMNS = PUBLIC_COLUMNS + ",entry,session_id"
+
+
+class _LibraryCursor(AiModel):
+    """游标只携带排序边界及筛选摘要，不携带 SQL 或存储地址。"""
+
+    created_at: datetime
+    id: MaterialId
+    filters: str
 
 
 class MaterialStore(AiDatabase):
@@ -38,8 +56,8 @@ class MaterialStore(AiDatabase):
         await self.run(lambda c: query(c, f"SELECT {PUBLIC_COLUMNS} FROM chat_material LIMIT 0"))
         await self.run(lambda c: query(c, "SELECT source_key,material_id "
                                       "FROM chat_material_source LIMIT 0"))
-        await self.run(lambda c: query(c, "SELECT memory_id,material_id "
-                                      "FROM chat_memory_material LIMIT 0"))
+        await self.run(lambda c: query(c, "SELECT material_ids_json "
+                                      "FROM chat_tagged_memory LIMIT 0"))
         await finish_database_write(self.files.start)
         self.ready = True
 
@@ -193,19 +211,89 @@ class MaterialStore(AiDatabase):
         )
 
     @asynccontextmanager
-    async def open_content(self, id: str, *, owner: MediaOwner):
+    async def open_content(self, id: str, *, owner: MediaOwner) -> AsyncIterator[BinaryIO]:
         """读者持有同一存储锁，关闭或文件发布不会抢先释放目录。"""
         async with self._lock:
             asset = await self.describe(id, owner=owner)
-            holder = []
+            async with self._open_file(asset) as file:
+                yield file
 
-            def open_file():
-                """即使等待被取消也保留句柄，以便 finally 关闭。"""
-                holder.append(self.files.open(id, size=asset.size_bytes, digest=asset.sha256))
-
+    async def list_library(
+        self, arguments: MaterialLibraryArguments, *, cursor: str | None = None,
+    ) -> Page[MaterialLibraryView]:
+        """管理员专用跨来源目录，以创建时间和 ID 游标分页且绑定原筛选。"""
+        self.require_ready()
+        fingerprint = hashlib.sha256(
+            arguments.model_dump_json(exclude={"limit"}).encode()
+        ).hexdigest()
+        boundary = None
+        if cursor is not None:
             try:
-                await finish_database_write(open_file)
-                yield holder[0]
-            finally:
-                for file in holder:
-                    file.close()
+                boundary = _LibraryCursor.model_validate_json(
+                    base64.b64decode(cursor, altchars=b"-_", validate=True)
+                )
+                if boundary.filters != fingerprint or boundary.created_at.tzinfo is not None:
+                    raise ValueError("invalid material cursor")
+            except (ValueError, TypeError, UnicodeError, binascii.Error) as error:
+                raise MediaError("MATERIAL_INVALID_PAGE", status_code=422) from error
+
+        conditions, args = [], []
+        for column in ("kind", "entry", "session_id"):
+            value = getattr(arguments, column)
+            if value:
+                conditions.append(f"{column}=%s")
+                args.append(value)
+        if arguments.query:
+            pattern = "%" + arguments.query.replace("!", "!!").replace(
+                "%", "!%"
+            ).replace("_", "!_") + "%"
+            conditions.append("(name LIKE %s ESCAPE '!' OR description LIKE %s ESCAPE '!')")
+            args.extend((pattern, pattern))
+        if boundary is not None:
+            conditions.append("(created_at<%s OR (created_at=%s AND id<%s))")
+            args.extend((boundary.created_at, boundary.created_at, boundary.id))
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        rows = await self.run(lambda c: query(
+            c, f"SELECT {LIBRARY_COLUMNS} FROM chat_material" + where
+            + " ORDER BY created_at DESC,id DESC LIMIT %s", (*args, arguments.limit + 1)))
+        items = [MaterialLibraryView.model_validate(row) for row in rows[:arguments.limit]]
+        next_cursor = None
+        if len(rows) > arguments.limit:
+            payload = _LibraryCursor(
+                created_at=items[-1].created_at, id=items[-1].id, filters=fingerprint,
+            )
+            next_cursor = base64.urlsafe_b64encode(payload.model_dump_json().encode()).decode()
+        return Page[MaterialLibraryView](items=items, next_cursor=next_cursor)
+
+    async def describe_for_library(self, id: str) -> MaterialLibraryView:
+        """仅管理认证路由调用；与会话授权查询分开，避免意外放宽工具权限。"""
+        self.require_ready()
+        row = await self.run(lambda c: query(
+            c, f"SELECT {LIBRARY_COLUMNS} FROM chat_material WHERE id=%s", (id,), one=True))
+        if row is None:
+            raise MediaError("MATERIAL_NOT_FOUND", status_code=404)
+        return MaterialLibraryView.model_validate(row)
+
+    @asynccontextmanager
+    async def open_library_content(self, id: str) -> AsyncIterator[BinaryIO]:
+        """管理员跨来源读取仍持有文件租约并校验大小与摘要。"""
+        async with self._lock:
+            asset = await self.describe_for_library(id)
+            async with self._open_file(asset) as file:
+                yield file
+
+    @asynccontextmanager
+    async def _open_file(self, asset: MaterialView) -> AsyncIterator[BinaryIO]:
+        """调用方持锁并完成权限检查；取消也等待句柄创建再可靠关闭。"""
+        holder: list[BinaryIO] = []
+
+        def open_file() -> None:
+            """保留已经创建的句柄，避免线程返回前取消导致资源泄漏。"""
+            holder.append(self.files.open(asset.id, size=asset.size_bytes, digest=asset.sha256))
+
+        try:
+            await finish_database_write(open_file)
+            yield holder[0]
+        finally:
+            for file in holder:
+                file.close()

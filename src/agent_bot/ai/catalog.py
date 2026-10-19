@@ -15,7 +15,6 @@ from agent_bot.ai.contracts import (
     ProviderUpdate,
     ProviderView,
     ResolvedModel,
-    SessionWrite,
 )
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
@@ -48,7 +47,7 @@ class AiCatalog(AiDatabase):
     """模型目录与关联能力共享版本和提交边界。"""
 
     async def readiness(self, model: str | None = None) -> CatalogReadiness:
-        """检查纯文本结构；统一记录的请求快照不属于旧会话表字段。"""
+        """检查目录和统一调用归档，普通执行旧表退出后不再影响就绪。"""
         try:
             await self.run(
                 lambda connection: [
@@ -63,8 +62,11 @@ class AiCatalog(AiDatabase):
                             {*_COLUMNS["model"], "id", "revision", "created_at", "updated_at"},
                         ),
                         (
-                            "agent_bot_ai_session",
-                            set(SessionWrite.model_fields) - {"request_context"},
+                            "agent_bot_call_record",
+                            {"id", "source", "source_id", "execution_id", "session_Id",
+                             "request_id", "model", "status", "duration", "data",
+                             "created_at_utc", "create_time", "content", "replay_context",
+                             "request_context"},
                         ),
                     ]
                 ]
@@ -154,7 +156,7 @@ class AiCatalog(AiDatabase):
         return await self.run(read)
 
     async def import_models(self, provider_id, body):
-        """整批导入使用一个事务；已登记项跳过，别名冲突不留下部分结果。"""
+        """事务内保留已登记项；同步可显式报告别名冲突，严格导入仍整批回滚。"""
 
         def write(connection):
             """沿用目录写入的供应商加锁顺序，保护导入依据的版本。"""
@@ -162,7 +164,7 @@ class AiCatalog(AiDatabase):
             provider = self._get(connection, "provider", provider_id, lock=True)
             if provider.revision != body.expected_revision:
                 raise AiError("AI_CONFIG_CONFLICT", status_code=409)
-            imported, skipped = [], []
+            imported, skipped, conflicts = [], [], []
             stamp = datetime.now(timezone.utc).replace(tzinfo=None)
             for item in body.models:
                 exists = query(
@@ -173,6 +175,18 @@ class AiCatalog(AiDatabase):
                 )
                 if exists:
                     skipped.append(item.upstream_model)
+                    continue
+                # 别名全局唯一，供应商同名模型只能由管理员指定不同别名，不能自动改名。
+                occupied = query(
+                    connection,
+                    "SELECT id FROM agent_bot_ai_model WHERE alias=%s",
+                    (item.alias,),
+                    one=True,
+                )
+                if occupied:
+                    if not body.skip_alias_conflicts:
+                        raise AiError("AI_MODEL_ALIAS_CONFLICT", status_code=409)
+                    conflicts.append(item)
                     continue
                 with connection.cursor() as cursor:
                     cursor.execute(
@@ -188,6 +202,7 @@ class AiCatalog(AiDatabase):
                 revision=provider.revision,
                 imported=tuple(imported),
                 skipped=tuple(skipped),
+                conflicts=tuple(conflicts),
             )
 
         return await self.run(write, write=True)

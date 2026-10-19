@@ -93,7 +93,7 @@ class ChatToolSessionManager:
         return self._available_tools(group=True)
 
     def _available_tools(self, *, group: bool) -> tuple[ChatToolName, ...]:
-        """按会话场景和当前运行时依赖计算最小工具白名单。"""
+        """按运行开关与真实服务授权，直接生图仅依赖持久队列而不依赖 Comfy。"""
 
         config = self._config_provider()
         if not config.chat_mcp_enabled or self._store_provider() is None:
@@ -107,6 +107,8 @@ class ChatToolSessionManager:
             tools.extend(("naraka_query", "naraka_search"))
         if group and config.chat_mention_tool_enabled:
             tools.append("mention_member")
+        if config.chat_image_generation_enabled and self._image_tasks_provider() is not None:
+            tools.append("image_generate")
         if (
             config.chat_local_workflow_enabled
             and self._workflow_service_provider() is not None
@@ -127,7 +129,7 @@ class ChatToolSessionManager:
         *,
         image_urls: tuple[str, ...] = (),
     ) -> AsyncIterator[ChatToolSessionLease]:
-        """为同步聊天请求打开临时工具会话。"""
+        """为同步请求绑定工具身份，所有绘图工具共享请求级额度。"""
 
         tools = self.available_tools(event)
         config = self._config_provider()
@@ -136,7 +138,7 @@ class ChatToolSessionManager:
             yield ChatToolSessionLease(tools=(), token=None)
             return
 
-        workflow_enabled = "local_workflow_generate_image" in tools
+        workflow_enabled = bool({"image_generate", "local_workflow_generate_image"} & set(tools))
         collector = WorkflowImageCollector() if workflow_enabled else None
         speech_collector = SpeechCollector() if "tts_generate" in tools else None
 
@@ -194,7 +196,7 @@ class ChatToolSessionManager:
         self,
         job: ConversationJob,
     ) -> AsyncIterator[ChatToolSessionLease]:
-        """按入队时固化的白名单恢复工具会话。"""
+        """恢复固化白名单及绘图回执，避免重启后再次生成已提交的图片。"""
 
         if not job.chat_tools and not job.laya_decision:
             yield ChatToolSessionLease(tools=(), token=None)
@@ -214,7 +216,9 @@ class ChatToolSessionManager:
 
         bot = self.queued_bot(job.bot_id)
         group_id = int(job.group_id) if job.group_id is not None else None
-        workflow_enabled = "local_workflow_generate_image" in job.chat_tools
+        workflow_enabled = bool(
+            {"image_generate", "local_workflow_generate_image"} & set(job.chat_tools)
+        )
         collector = WorkflowImageCollector() if workflow_enabled else None
         speech_collector = (
             SpeechCollector() if "tts_generate" in job.chat_tools else None
@@ -262,7 +266,7 @@ class ChatToolSessionManager:
                 # 升级前 mention_member 已经发送的任务不得在恢复时再次发送。
                 previous = await context.operation_store.completed(job.job_id, "mention_member")
                 context.reply_collector.already_delivered = isinstance(previous, MentionEffect)
-            for tool in ("local_workflow_generate_image", "tts_generate"):
+            for tool in ("image_generate", "local_workflow_generate_image", "tts_generate"):
                 if tool in job.chat_tools:
                     saved = await context.operation_store.completed(job.job_id, tool)
                     if saved is not None:

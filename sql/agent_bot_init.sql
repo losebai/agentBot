@@ -1,6 +1,7 @@
 -- 用途：统一初始化 agentBot 0.5.0 的业务表与可选本地队列表，供新独立数据库使用。
 -- 执行顺序：管理员先创建并选中数据库，再执行本文件，最后用 settings import-env 导入配置。
 -- 数据影响：仅创建不存在的表，不插入配置、不覆盖模型、不清空或迁移现有数据。
+-- 统一会话仅建 chat_session_context；既有部署校验迁移与备份后使用 2026-10-20-retire-legacy-session-context.sql 清理旧表。
 -- 记忆及工作流索引使用 chat 前缀；既有表遗留 dispatch 索引名时执行 2026-10-13-chat-index-names.sql。
 -- 旧服务模型目录 ai_model 已退出运行时，新库不再创建；本脚本不会删除已有旧表。
 -- 聊天相关表统一使用 chat_ 前缀；配置键使用 chat_*，对应环境变量为 CHAT_*。
@@ -53,47 +54,6 @@ CREATE TABLE IF NOT EXISTS `chat_group_member` (
 
 -- 聊天记忆、幂等回执与群上下文
 
-CREATE TABLE IF NOT EXISTS `chat_memory_session` (
-        `session_id` VARCHAR(128) NOT NULL COMMENT 'HMAC 会话标识',
-        `generation_id` CHAR(32) NOT NULL COMMENT '会话代际标识，重建时重新生成',
-        `memory_summary` MEDIUMTEXT NOT NULL COMMENT '压缩后的会话摘要',
-        `memory_revision` BIGINT NOT NULL DEFAULT 0 COMMENT '摘要乐观锁版本',
-        `compacted_through_turn_id` BIGINT NOT NULL DEFAULT 0 COMMENT '已压缩最大轮次 ID',
-        `expires_at` DATETIME(6) NOT NULL COMMENT '滑动过期时间',
-        `create_time` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
-        `update_time` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
-            ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
-        -- 主键定义记录身份，防止同一业务记录重复创建。
-        PRIMARY KEY (`session_id`),
-        -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-        KEY `idx_chat_memory_session_expires` (`expires_at`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 持久会话记忆';
-
-CREATE TABLE IF NOT EXISTS `chat_memory_turn` (
-        `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '轮次主键',
-        `session_id` VARCHAR(128) NOT NULL COMMENT 'HMAC 会话标识',
-        `request_id` VARCHAR(128) COLLATE utf8mb4_bin NULL COMMENT '幂等请求标识，旧轮次为空',
-        `user_content` MEDIUMTEXT NOT NULL COMMENT '用户历史文本',
-        `assistant_content` MEDIUMTEXT NOT NULL COMMENT '已投递助手内容',
-        `create_time` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
-        -- 主键定义记录身份，防止同一业务记录重复创建。
-        PRIMARY KEY (`id`),
-        -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-        KEY `idx_chat_memory_turn_session_id` (`session_id`, `id`),
-        -- 唯一索引约束业务标识，支持并发写入时的重复检查。
-        UNIQUE KEY `uk_chat_memory_turn_request` (`session_id`, `request_id`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 最近会话轮次';
-
-CREATE TABLE IF NOT EXISTS `chat_memory_receipt` (
-        `session_id` VARCHAR(128) NOT NULL COMMENT 'HMAC 会话标识',
-        `request_id` VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '幂等请求标识',
-        `expires_at` DATETIME(6) NOT NULL COMMENT '独立重试去重截止时间',
-        -- 主键定义记录身份，防止同一业务记录重复创建。
-        PRIMARY KEY (`session_id`, `request_id`),
-        -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-        KEY `idx_chat_memory_receipt_expires` (`expires_at`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='chat 已提交请求回执';
-
 CREATE TABLE IF NOT EXISTS `chat_group_context` (
         `scope_id` VARCHAR(128) NOT NULL COMMENT 'HMAC Bot/群作用域',
         `messages_json` MEDIUMTEXT NOT NULL COMMENT '强类型最近群文本 JSON',
@@ -109,12 +69,7 @@ CREATE TABLE IF NOT EXISTS `chat_group_context` (
 
 -- 标签记忆：由应用事务维护关联，不添加外键
 
-CREATE TABLE IF NOT EXISTS chat_memory_scope (
-    scope_id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '匿名作用域键',
-    scope VARCHAR(16) NOT NULL COMMENT '记忆作用域：全局、会话、用户或群组',
-    -- 主键定义记录身份，防止同一业务记录重复创建。
-    PRIMARY KEY (scope_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='标签记忆作用域与写锁';
+-- 旧关联表已合入 chat_tagged_memory，不再单独创建。
 
 CREATE TABLE IF NOT EXISTS chat_tagged_memory (
     id INT NOT NULL AUTO_INCREMENT COMMENT '记忆自增主键',
@@ -124,6 +79,9 @@ CREATE TABLE IF NOT EXISTS chat_tagged_memory (
     is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除标记',
     create_time DATETIME NOT NULL COMMENT '创建时间',
     update_time DATETIME NOT NULL COMMENT '更新时间',
+    scope VARCHAR(16) NOT NULL COMMENT 'global/session/user/group',
+    tags_json JSON NOT NULL COMMENT '规范化主题标签数组',
+    material_ids_json JSON NOT NULL COMMENT '引用素材标识数组',
     -- 主键定义记录身份，防止同一业务记录重复创建。
     PRIMARY KEY (id),
     -- 唯一索引约束业务标识，支持并发写入时的重复检查。
@@ -132,14 +90,7 @@ CREATE TABLE IF NOT EXISTS chat_tagged_memory (
     KEY idx_tagged_memory_scope_time (scope_id, is_deleted, update_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM 自主保存的标签记忆';
 
-CREATE TABLE IF NOT EXISTS chat_memory_tag (
-    memory_id INT NOT NULL COMMENT '关联记忆',
-    tag VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '规范化主题标签',
-    -- 主键定义记录身份，防止同一业务记录重复创建。
-    PRIMARY KEY (memory_id, tag),
-    -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-    KEY idx_memory_tag_lookup (tag, memory_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='记忆与标签多对多关联';
+-- 旧关联表已合入 chat_tagged_memory，不再单独创建。
 
 -- 本地 ComfyUI 工作流：包含图生图字段和内容唯一索引
 
@@ -213,23 +164,7 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_model (
   CONSTRAINT fk_agent_bot_model_provider FOREIGN KEY (provider_id) REFERENCES agent_bot_ai_provider (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模型别名目录';
 
-CREATE TABLE IF NOT EXISTS agent_bot_ai_session (
-  execution_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '执行标识，三十二位十六进制',
-  session_id VARCHAR(256) COLLATE utf8mb4_bin NOT NULL COMMENT '区分大小写的会话标识',
-  request_id VARCHAR(256) NOT NULL COMMENT '调用方请求标识',
-  configured_model VARCHAR(200) NOT NULL COMMENT '请求指定的模型别名',
-  model VARCHAR(255) NOT NULL COMMENT '实际使用的模型标识',
-  status VARCHAR(16) NOT NULL COMMENT '执行状态：运行中、完成、失败或取消',
-  duration_ms BIGINT UNSIGNED NOT NULL COMMENT '执行耗时，单位毫秒',
-  `usage` JSON NOT NULL COMMENT '令牌用量统计',
-  created_at DATETIME(6) NOT NULL COMMENT '创建时间，协调世界时',
-  error_code VARCHAR(100) NULL COMMENT '稳定错误代码',
-  prompt MEDIUMTEXT NOT NULL COMMENT '用户输入文本',
-  content MEDIUMTEXT NOT NULL COMMENT '模型输出文本',
-  PRIMARY KEY (execution_id),
-  KEY idx_session_created (session_id, created_at, execution_id),
-  KEY idx_created (created_at, execution_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='普通文本调用记录';
+-- 普通调用统一保存在 agent_bot_call_record，不再创建旧执行表。
 
 -- Python Agent、Skill、MCP 与运行记录：被引用表先创建
 
@@ -482,6 +417,7 @@ CREATE TABLE IF NOT EXISTS agent_bot_call_record (
   `content` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin COMMENT '用户输入正文',
   `replay_context` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin COMMENT '模型回复正文',
   `create_time` DATETIME DEFAULT NULL COMMENT '调用记录时间，保留源时间',
+  `created_at_utc` DATETIME(6) DEFAULT NULL COMMENT '普通执行原始UTC时间，保留微秒；其他历史来源可空',
   `duration` INT DEFAULT NULL COMMENT '调用耗时，单位 ms',
   `user_certificate` VARCHAR(255) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '用户凭据摘要，不保存原始凭据',
   `model` VARCHAR(255) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '实际调用模型',
@@ -495,6 +431,7 @@ CREATE TABLE IF NOT EXISTS agent_bot_call_record (
   `status` VARCHAR(16) COLLATE utf8mb4_bin NOT NULL COMMENT '执行状态，缺失历史状态为 unknown',
   PRIMARY KEY (`id`),
   KEY idx_call_time (`create_time`, `id`) COMMENT '按调用时间稳定分页',
+  KEY idx_call_source_created (`source`, `created_at_utc`, `execution_id`) COMMENT '普通来源按原始UTC微秒和执行标识分页',
   UNIQUE KEY uk_call_source (`source`, `source_id`) COMMENT '来源内去重，避免不同系统主键冲突',
   KEY idx_call_type (`type`, `create_time`, `id`) COMMENT '按类型分页',
   KEY idx_call_session (`session_Id`, `create_time`, `id`) COMMENT '按会话分页',
@@ -619,13 +556,20 @@ CREATE TABLE IF NOT EXISTS chat_material_source (
     CONSTRAINT fk_material_source_material FOREIGN KEY (material_id) REFERENCES chat_material(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='收到或引用的消息附件与素材关联';
 
-CREATE TABLE IF NOT EXISTS chat_memory_material (
-    memory_id INT NOT NULL COMMENT '关联长期标签记忆主键',
-    material_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '关联持久图片或文件素材 ID',
-    -- 同一记忆不重复关联同一素材，遗忘只软删除记忆。
-    PRIMARY KEY (memory_id,material_id),
-    -- 支持反向查询，外键确保记忆与素材都真实存在。
-    KEY idx_memory_material_material (material_id),
-    CONSTRAINT fk_memory_material_memory FOREIGN KEY (memory_id) REFERENCES chat_tagged_memory(id),
-    CONSTRAINT fk_memory_material_material FOREIGN KEY (material_id) REFERENCES chat_material(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='长期记忆与图片文件素材的多对多关联';
+-- 旧关联表已合入 chat_tagged_memory，不再单独创建。
+
+-- 用途：统一保存当前会话接收和发送上下文，每个 session 仅一行，不设置过期时间。
+-- 顺序：已有 MySQL 部署先停止服务并备份，再执行本脚本及显式历史迁移工具。
+-- 数据影响：仅新增表，不删除旧会话、轮次、出站记录，不覆盖已有统一上下文。
+CREATE TABLE IF NOT EXISTS chat_session_context (
+    session_id VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '会话唯一标识，同一会话并发更新同一行',
+    generation_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '仅显式清空时切换，隔离旧后台任务',
+    messages_json MEDIUMTEXT NOT NULL COMMENT '按消息时间和稳定序号排列的双向上下文 JSON',
+    memory_summary MEDIUMTEXT NOT NULL COMMENT '超出近期窗口后的历史摘要',
+    memory_revision BIGINT NOT NULL DEFAULT 0 COMMENT '摘要快照序号，仅防止旧压缩结果覆盖新摘要',
+    deliveries_json MEDIUMTEXT NOT NULL COMMENT '请求去重、发送占位及回执 JSON，不另存发送正文表',
+    create_time DATETIME(6) NOT NULL COMMENT '会话创建时间，UTC',
+    update_time DATETIME(6) NOT NULL COMMENT '最近合并时间，UTC，不用于自动过期',
+    -- 主键保证每个 session 仅一行，并为短事务合并提供行锁。
+    PRIMARY KEY (session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='无过期的统一会话上下文';

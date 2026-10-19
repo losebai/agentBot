@@ -7,6 +7,7 @@ import time
 
 from agent_bot.integrations.sqlite_queue_database import run_sqlite
 from agent_bot.services.tool_operations import (
+    DeliveryEffect,
     EffectToolName,
     ImageEffect,
     ImageTaskEffect,
@@ -19,6 +20,8 @@ from agent_bot.services.tool_operations import (
 )
 
 _RESULT_TYPES = {
+    "outgoing_message": (DeliveryEffect,),
+    "image_generate": (ImageTaskEffect,),
     "send_reply": (ReplyEffect,),
     "image_start_reply": (ReplyEffect,),
     "image_completion_reply": (ReplyEffect,),
@@ -105,6 +108,14 @@ class SqliteToolOperationStore:
             """检查和更新同属一个写事务，其他竞争者不能替换执行权。"""
             self._purge(connection)
             existing = self._read(connection, identity)
+            if existing is None and tool == "outgoing_message":
+                # 出站日志已独占执行权；平台确认后直接保存回执，不建立第二个待发送占位。
+                connection.execute(
+                    "INSERT INTO chat_tool_operations "
+                    "(namespace,job_id,tool,payload,expires_at) VALUES (?,?,?,?,?)",
+                    (*identity, operation.model_dump_json(), time.time() + self.ttl),
+                )
+                return
             if existing is None or existing.signature != signature:
                 raise ToolOperationConflict("工具执行状态不可用")
             connection.execute(

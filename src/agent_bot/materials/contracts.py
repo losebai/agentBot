@@ -24,6 +24,31 @@ class MaterialView(AiModel):
     created_at: datetime
 
 
+class MaterialLibraryView(MaterialView):
+    """仅管理员素材库披露来源与会话，不包含文件位置和临时下载地址。"""
+
+    entry: Literal["admin", "qq"]
+    session_id: str = Field(min_length=1, max_length=256)
+
+
+class MaterialLibraryArguments(AiModel):
+    """管理员只读目录的筛选；不能用于模型或 OneBot 的会话工具。"""
+
+    query: str = Field(default="", max_length=200)
+    kind: Literal["image", "file"] | None = None
+    entry: Literal["admin", "qq"] | None = None
+    session_id: str = Field(default="", max_length=256)
+    limit: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("query", "session_id")
+    @classmethod
+    def valid_text(cls, value: str) -> str:
+        """搜索采用字面匹配，拒绝 NUL 并去除筛选两端的空白。"""
+        if "\0" in value:
+            raise ValueError("invalid material filter")
+        return value.strip()
+
+
 class MaterialSearchArguments(AiModel):
     """查询只能选择素材条件，不能指定入口、会话或任意磁盘路径。"""
 
@@ -40,6 +65,12 @@ class MaterialSearchArguments(AiModel):
         if "\0" in value:
             raise ValueError("invalid material query")
         return value.strip()
+
+
+class MaterialGetArguments(AiModel):
+    """读取参数仅接受真实素材 ID，归属与文件位置均由服务端确定。"""
+
+    id: MaterialId
 
 
 class MaterialSearchResult(AiModel):

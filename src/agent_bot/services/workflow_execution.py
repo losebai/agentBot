@@ -140,7 +140,7 @@ class WorkflowImageCollector:
         max_images: int = MAX_WORKFLOW_IMAGES,
         max_total_bytes: int = MAX_WORKFLOW_TOTAL_BYTES,
     ) -> None:
-        """创建不能超过全局硬上限的请求级收集器。"""
+        """创建请求级共享绘图额度，直接模型生图和工作流不能各自重复提交。"""
 
         if not 1 <= max_calls <= MAX_WORKFLOW_CALLS:
             raise ValueError("workflow call limit is invalid")
@@ -156,6 +156,7 @@ class WorkflowImageCollector:
         self._images: list[GeneratedWorkflowImage] = []
         self._lock = asyncio.Lock()
         self.submit: Callable[[WorkflowImageRequest, str], Awaitable[str]] | None = None
+        self.submit_image: Callable[[str, str], Awaitable[str]] | None = None
         self.queued_task_id: str | None = None
 
     @property

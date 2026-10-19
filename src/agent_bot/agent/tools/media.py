@@ -15,6 +15,7 @@ from agent_bot.agent.tools.policy import ADMIN_MEDIA_TOOLS
 from agent_bot.database_pool import finish_database_write
 from agent_bot.media.inputs import ImagePreparer
 from agent_bot.media.store import finish_cleanup
+from agent_bot.models import ChatMediaRequest
 from agent_bot.multimodal import DownloadedImage
 from agent_bot.services.chat_tools import build_chat_tool_registry
 from agent_bot.services.image_task_context import active_image_task
@@ -65,8 +66,9 @@ class AdminMediaTools:
         *,
         comfy_client=None,
         resources=None,
+        image_service=None,
     ):
-        """这里只引用运行时资源，不另建连接或伪造聊天令牌。"""
+        """引用公共生图服务及本地工作流资源，不另建连接或伪造 QQ 身份。"""
         self.config, self.workflow, self.tts, self.store = (
             config,
             workflow_service,
@@ -75,13 +77,16 @@ class AdminMediaTools:
         )
         self.comfy = comfy_client
         self.resources = resources
+        self.image_service = image_service
 
     @property
     def allowed_tools(self):
-        """关闭的服务不向模型宣传对应工具。"""
+        """直接模型生图与 Comfy 独立授权，关闭的能力不向模型宣传。"""
         if self.resources is not None and not self.resources.readiness.storage_available:
             return frozenset()
         names = set()
+        if self.image_service is not None and self.config.chat_image_generation_enabled:
+            names.add("image_generate")
         if self.config.chat_local_workflow_enabled and self.workflow is not None:
             names.update({"local_workflow_list", "local_workflow_generate_image"})
         if self.config.chat_tts_enabled and self.tts is not None:
@@ -102,6 +107,11 @@ class AdminMediaToolSession:
         """为当前执行构造独立额度与有限工具说明。"""
         self.owner, self.scope, self.images, self.used = owner, scope, images, set()
         descriptions = {
+            "image_generate": (
+                "直接使用管理员配置的图片生成模型生成一张图片，无需 Comfy 工作流。"
+                "prompt 写完整画面要求，start_reply 写开画文案；结果保存为当前会话附件。"
+                "只支持文生图，不能把当前附图作为编辑输入。与工作流生图共享一次额度。"
+            ),
             "local_workflow_list": "列出已配置且可执行的本地工作流，绘图前必须先选择工作流。",
             "local_workflow_generate_image": (
                 "使用所选工作流生成一张图片并保存为本次会话附件。每次请求最多一次。"
@@ -129,7 +139,7 @@ class AdminMediaToolSession:
         validate_local_call(call)
 
     async def call(self, call):
-        """完成授权和额度检查后执行，结果仅返回有限摘要和附件元数据。"""
+        """先检查共享绘图额度，直接模型生图和工作流不能各自生成一张。"""
         self.validate(call)
         parsed = ARGUMENT_MODELS[call.name].model_validate(call.arguments)
         if call.name == "local_workflow_list":
@@ -141,10 +151,16 @@ class AdminMediaToolSession:
                     {"workflows": [asdict(w) for w in workflows]}, ensure_ascii=False
                 ),
             )
-        if call.name in self.used:
+        quota = (
+            "image" if call.name in {"image_generate", "local_workflow_generate_image"}
+            else call.name
+        )
+        if quota in self.used:
             raise AgentError("AGENT_TOOL_LIMIT", status_code=422)
-        self.used.add(call.name)
-        if call.name == "local_workflow_generate_image":
+        self.used.add(quota)
+        if call.name == "image_generate":
+            asset = await self._direct_image(parsed)
+        elif call.name == "local_workflow_generate_image":
             asset = await self._image(parsed)
         else:
             speech = await self.owner.tts.generate(parsed.text)
@@ -179,6 +195,21 @@ class AdminMediaToolSession:
                 {"status": "ready", "mime_type": asset.mime_type, "bytes": asset.size_bytes}
             ),
         )
+
+    async def _direct_image(self, parsed):
+        """模型、预算和会话身份来自服务端，附件关联当前 Agent 执行以供历史查询。"""
+        config = self.owner.config
+        request = ChatMediaRequest(
+            model=config.chat_image_model, session_id=self.scope.owner.session_id,
+            request_id=f"agent-{self.scope.execution_id}", user="admin", output_type="IMAGE",
+            prompt=parsed.prompt, image_format=config.chat_image_response_format,
+            timeout_seconds=max(1, int(min(120, config.chat_image_timeout_seconds))),
+            max_bytes=config.chat_image_max_bytes,
+        )
+        result = await self.owner.image_service.generate(
+            request, self.scope.owner, scope=self.scope,
+        )
+        return result.attachments[0]
 
     async def _image(self, parsed):
         """图生图只取本执行绑定的唯一原图，并跟踪自己的上游提交。"""

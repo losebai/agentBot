@@ -21,7 +21,7 @@ from nonebot.adapters.onebot.v11 import (
     MessageEvent,
     MessageSegment,
 )
-from nonebot.matcher import Matcher
+from nonebot.matcher import Matcher, current_bot, current_event
 from nonebot.plugin import PluginMetadata
 from nonebot.typing import T_State
 
@@ -50,6 +50,7 @@ from agent_bot.integrations.onebot import (
     SummaryCommandHandler,
 )
 from agent_bot.integrations.onebot.ai_jobs import AiJobPoller, AiJobRunner
+from agent_bot.integrations.onebot.outgoing import DeliveryScope, OutgoingRecorder
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway, OneBotReplyService
 from agent_bot.integrations.redis_queue import build_conversation_queue
 from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
@@ -60,9 +61,7 @@ from agent_bot.materials.receiver import MaterialReceiver
 from agent_bot.media.config import MediaConfig
 from agent_bot.media.resources import MediaResources
 from agent_bot.memory_store import (
-    ChatMemorySchema,
     ChatMemoryStoreError,
-    ConversationMemoryPolicy,
     GroupContextPolicy,
 )
 from agent_bot.models import ChatContext, ChatMediaResponse
@@ -100,6 +99,9 @@ from agent_bot.services.replies import LlmReplyComposer
 from agent_bot.services.tool_operations import ToolOperationStore
 from agent_bot.services.tool_sessions import ToolSessionStore
 from agent_bot.services.workflows import WorkflowCatalogImporter
+from agent_bot.session_context import SessionContextPolicy
+from agent_bot.session_delivery import SessionDeliveryStore
+from agent_bot.session_schema import SessionContextSchema
 from agent_bot.settings import SettingsStore, VersionedSettings
 
 _MEMORY_CLEANUP_INTERVAL_SECONDS = 3600
@@ -171,10 +173,14 @@ _media_resources = (_context.runtime.media_resources if _context is not None els
                     MediaResources(MediaConfig.from_environment(), _database_params,
                                    connect=_database_pool.connect))
 _material_receiver = MaterialReceiver(_media_resources.materials)
+_session_delivery_store = SessionDeliveryStore(
+    lambda: conversation_store, receipts_provider=lambda: _tool_operations(),
+    live_receipts_provider=lambda: _outgoing_recorder.confirmed_receipts,
+)
 _group_member_store = GroupMemberStore(_database_params, connect=_database_pool.connect)
 _workflow_store = (_context.runtime.workflow_store if _context is not None else
                    WorkflowStore(_database_params, connect=_database_pool.connect))
-_memory_schema = ChatMemorySchema(_database_params, connect=_database_pool.connect)
+_memory_schema = SessionContextSchema(_database_params, connect=_database_pool.connect)
 _tagged_memory_store = TaggedMemoryStore(
     _database_params, connect=_database_pool.connect,
     secret=plugin_config.chat_session_secret.get_secret_value(),
@@ -204,6 +210,7 @@ def _build_runtime_state(
         media_resources=_media_resources,
         core_state=(core_state if core_state is not None else
                     _context.runtime.state if _context is not None else None),
+        session_delivery=_session_delivery_store,
     )
 
 
@@ -217,10 +224,9 @@ def _publish_runtime_state(state: _RuntimeState) -> None:
     global comfy_client, workflow_service, tts_client
 
     state.conversation_store.update_policy(
-        ConversationMemoryPolicy(
+        SessionContextPolicy(
             history_turns=state.config.chat_history_turns,
             max_history_chars=state.config.chat_history_max_chars,
-            ttl_seconds=state.config.chat_history_ttl_seconds,
             memory_enabled=state.config.chat_memory_enabled,
             max_memory_chars=state.config.chat_memory_max_chars,
         )
@@ -252,7 +258,25 @@ def _publish_runtime_state(state: _RuntimeState) -> None:
     tts_client = state.tts_client
 
 
-_reply_gateway = OneBotReplyGateway(lambda: plugin_config)
+async def _outgoing_event_scope(request_id: str | None) -> DeliveryScope:
+    """Matcher 发送从真实事件解析会话，队列发送由处理器显式绑定原任务身份。"""
+    import hashlib
+
+    bot, event = current_bot.get(), current_event.get()
+    if not isinstance(bot, Bot) or not isinstance(event, MessageEvent):
+        raise RuntimeError("OUTGOING_CONTEXT_UNAVAILABLE")
+    session = _event_context.session_id(bot, event)
+    generation = await chat_service.history_generation(session)
+    identity = hashlib.sha256(f"{bot.self_id}:{event.message_id}".encode()).hexdigest()
+    return DeliveryScope(session, generation, request_id or f"qq-event-{identity}")
+
+
+_outgoing_recorder = OutgoingRecorder(
+    service_provider=lambda: chat_service, store_provider=lambda: _session_delivery_store,
+    materials_provider=lambda: _media_resources.materials, scope_provider=_outgoing_event_scope,
+    receipts_provider=lambda: _tool_operations(),
+)
+_reply_gateway = OneBotReplyGateway(lambda: plugin_config, recorder=_outgoing_recorder)
 _runtime_state = _build_runtime_state(plugin_config) if _context is None else None
 if _runtime_state is not None:
     _publish_runtime_state(_runtime_state)
@@ -395,6 +419,11 @@ class _ConversationProcessor(ConversationQueueProcessor):
             operation_store_provider=_tool_operations,
             image_submitter=lambda job: image_queue.enqueue(job),
             workflow_service_provider=lambda: workflow_service,
+            outgoing_recorder=_reply_gateway.recorder,
+            receive_queued=lambda *args, **kwargs: chat_service.receive_queued(*args, **kwargs),
+            finish_received=lambda session_id, request_id: chat_service.finish_received(
+                session_id, request_id,
+            ),
         )
 
 
@@ -484,34 +513,28 @@ def mark_channel_ready() -> None:
 
 @_legacy_startup
 async def initialize_chat_memory() -> None:
-    """统一服务只校验已有结构，直接加载的历史 NoneBot 入口保留原初始化契约。"""
+    """会话结构始终只校验；已有部署须显式迁移，普通启动不写数据库结构。"""
 
+    await asyncio.to_thread(_memory_schema.validate)
     if _context is not None:
-        await asyncio.to_thread(_memory_schema.validate)
         await asyncio.to_thread(_tagged_memory_store.validate)
     else:
-        await asyncio.to_thread(_memory_schema.initialize)
         await asyncio.to_thread(_tagged_memory_store.initialize)
 
 
 async def _memory_cleanup_loop() -> None:
-    """定期删除有限批次的过期会话和群上下文。"""
+    """仅清理独立的临时群背景，会话上下文没有过期或自动删除机制。"""
 
     while True:
         await asyncio.sleep(_MEMORY_CLEANUP_INTERVAL_SECONDS)
         try:
-            conversation_deleted = await asyncio.to_thread(
-                conversation_store.cleanup_expired,
-                limit=_MEMORY_CLEANUP_BATCH_SIZE,
-            )
             group_deleted = await asyncio.to_thread(
                 group_recent_context_store.cleanup_expired,
                 limit=_MEMORY_CLEANUP_BATCH_SIZE,
             )
-            if conversation_deleted or group_deleted:
+            if group_deleted:
                 logger.info(
-                    "过期聊天记忆清理完成：sessions={} groups={}",
-                    conversation_deleted,
+                    "过期群背景清理完成：groups={}",
                     group_deleted,
                 )
         except asyncio.CancelledError:

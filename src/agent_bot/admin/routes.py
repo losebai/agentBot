@@ -33,6 +33,7 @@ from agent_bot.admin.models import (
 )
 from agent_bot.admin.napcat_routes import install_napcat_routes
 from agent_bot.admin.plugin_routes import install_plugin_routes
+from agent_bot.admin.queue_routes import install_queue_routes
 from agent_bot.admin.settings import SettingsService
 from agent_bot.admin.streaming import ManagedStreamingResponse
 from agent_bot.admin.workflow_routes import install_workflow_routes
@@ -66,6 +67,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         require_token(authorization, admin.token.get_secret_value())
 
     router = APIRouter(prefix="/api/v1", dependencies=[Depends(authorize)])
+    install_queue_routes(router, runtime)
     from agent_bot.napcat.contracts import NapCatStatus
 
     def napcat_snapshot() -> NapCatStatus:

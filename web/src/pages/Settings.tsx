@@ -4,15 +4,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import type { JsonValue, SettingField, SettingsSnapshot } from '../types';
 import { ComfyWorkflows } from './ComfyWorkflows';
+import { QueueMaintenance } from './QueueMaintenance';
+import { modelSettingNames, SettingsModelSelect, useSettingsModels } from '../components/SettingsModelSelect';
 
 // 分类仅改变展示，共享同一草稿与版本；按字段用途归类，不用描述文本猜测。
 const categories = [
   { key: 'basic', label: '基础设置', description: '服务资源、会话与其他基础配置。' },
-  { key: 'llm', label: 'LLM设置', description: '模型、Agent、推理、图片理解、提示词和记忆。' },
+  { key: 'llm', label: 'LLM设置', description: '模型、Agent、推理、图片理解与生成、提示词和记忆。' },
   { key: 'qq', label: 'QQ', description: 'OneBot 接入、机器人名称、账号与访问权限。' },
   { key: 'reply', label: '自动回复设置', description: '关键词回复、回复限制、群聊上下文、主动发言与定时任务。' },
   { key: 'games', label: '游戏资讯设置', description: '永劫无间账号凭据、服务器、赛季与查询限制。' },
-  { key: 'comfy', label: 'Comfy', description: '图片生成与本地 ComfyUI 工作流。' },
+  { key: 'comfy', label: 'Comfy', description: '本地 ComfyUI 连接和工作流。' },
 ] as const;
 type Category = typeof categories[number]['key'];
 // null 仅表示显式清除可空密钥，空字符串仍是表单输入或静态密钥的保留操作。
@@ -29,6 +31,8 @@ const replySettingNames = new Set([
   'chat_priority', 'chat_reset_priority', 'chat_keyword_at_replies',
   'chat_cooldown_seconds', 'chat_chunk_chars', 'chat_max_reply_chars',
 ]);
+// 兼容旧服务端快照：菜单开关和内部搜索绑定均不能作为设置字段编辑或提交。
+const hiddenSettingNames = new Set(['app_enabled_plugins', 'chat_python_search_mcp_code']);
 
 /** 按用途分类；供应商模型归 LLM，避免生图模型因图片字段前缀混入 Comfy。 */
 function fieldCategory(field: SettingField): Category {
@@ -42,10 +46,10 @@ function fieldCategory(field: SettingField): Category {
   ].some(prefix => name.startsWith(prefix))) return 'qq';
   if (llmSettingNames.has(name) || [
     'chat_llm_', 'chat_python_', 'chat_agent_', 'chat_web_search_',
-    'chat_memory_', 'chat_history_', 'chat_tts_',
+    'chat_memory_', 'chat_history_', 'chat_tts_', 'chat_image_',
   ].some(prefix => name.startsWith(prefix))) return 'llm';
-  // 模型名称与识图字段已归入 LLM，剩余图片字段用于生图功能控制。
-  if (name.startsWith('chat_local_workflow_') || name.startsWith('chat_image_')) return 'comfy';
+  // 生图模型和预算与 Comfy 无关，只有本地工作流字段归入 Comfy。
+  if (name.startsWith('chat_local_workflow_')) return 'comfy';
   return 'basic';
 }
 
@@ -103,6 +107,8 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
   const [comfyTab, setComfyTab] = useState('connection');
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [settingsRefreshing, setSettingsRefreshing] = useState(false);
+  const showModels = category === 'llm' && !!snapshot?.fields.some(field => modelSettingNames.has(field.name));
+  const models = useSettingsModels(token, showModels);
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try { setSnapshot(await api.settings()); setDraft({}); setSaved(false); }
@@ -132,7 +138,7 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
       const values: Record<string, JsonValue> = {};
       let startupChanged = false;
       for (const field of snapshot.fields) {
-        if (!isReadOnly(field) && Object.hasOwn(draft, field.name)) {
+        if (!hiddenSettingNames.has(field.name) && !isReadOnly(field) && Object.hasOwn(draft, field.name)) {
           values[field.name] = patchValue(field, draft[field.name]);
           if (field.scope === 'static') startupChanged = true;
         }
@@ -144,7 +150,7 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
     finally { setSaving(false); }
   }
 
-  const fields = snapshot?.fields.filter(field => field.name !== 'app_enabled_plugins' && fieldCategory(field) === category
+  const fields = snapshot?.fields.filter(field => !hiddenSettingNames.has(field.name) && fieldCategory(field) === category
     && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase()))
     // 名称是群聊触发入口，在 QQ 分类中优先展示。
     .sort((left, right) => Number(right.name === 'nickname') - Number(left.name === 'nickname')) || [];
@@ -183,8 +189,17 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
             onSettingsChanged={workflowSettingsChanged} onBusyChange={setWorkflowBusy} />
           : <>
     {category === 'basic' && onPlugins && <Button type="link" onClick={onPlugins}>管理内置插件</Button>}
+    {category === 'basic' && <QueueMaintenance token={token} />}
     {fields.some(field => field.scope === 'static') && <Alert message="启动配置保存后需手动“服务→重启后端”生效；环境变量覆盖或缺少启动文件的字段只读。" type="info" showIcon className="notice" />}
     <Input prefix={<SearchOutlined />} placeholder="搜索设置名称或描述" aria-label="搜索配置" value={filter} onChange={event => setFilter(event.target.value)} className="settings-search" />
+    {showModels && <>
+      {models.error && <Alert message={`模型列表读取失败：${models.error}`} type="error" showIcon className="notice" />}
+      <div className="heading-actions">
+        <Button loading={models.busy} onClick={() => void models.load()}>刷新模型列表</Button>
+        {models.page.next_cursor && <Button disabled={models.busy}
+          onClick={() => void models.load(models.page.next_cursor!)}>加载更多模型</Button>}
+      </div>
+    </>}
     {loading ? <div className="loading"><Spin /></div> : <div className="settings-card">
       {!fields.length && <Empty description="没有可显示的配置" />}
       {fields.map(field => {
@@ -204,7 +219,9 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
         return <div className="setting-row" key={field.name}>
           <div className="setting-description"><label htmlFor={id}>{field.description}</label>{field.restart_required && <Tag>重启生效</Tag>}<code>{field.name}</code></div>
           <div className="setting-control">
-            {field.name === 'nickname' ? <Input.TextArea id={id} disabled={readOnly}
+            {modelSettingNames.has(field.name) ? <SettingsModelSelect id={id} value={String(value)}
+              readOnly={readOnly} nullable={field.nullable} directory={models} onChange={change} />
+              : field.name === 'nickname' ? <Input.TextArea id={id} disabled={readOnly}
               value={String(value)} placeholder="每行填写一个名称或别名，如：桃桃"
               autoSize={{minRows: 2, maxRows: 6}} onChange={event => change(event.target.value)} />
               : kind === 'boolean' && field.nullable ? <select id={id} disabled={readOnly}

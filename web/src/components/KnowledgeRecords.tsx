@@ -14,6 +14,11 @@ const emptyDraft = {title: '', key: '', content: '', tags: [] as string[], scope
 /** 知识标题与记忆键共同用于只读详情及删除目标。 */
 function recordName(item: TaggedEntry) { return 'title' in item ? item.title : item.key; }
 
+/** 名称来自已认证目录，未匹配身份继续展示原标识供管理员识别。 */
+function scopeLabel(item: {scope: MemoryScope; scope_id: string; scope_title?: string | null}) {
+  return scopeNames[item.scope] + ' · ' + (item.scope_title || item.scope_id.slice(0, 12) + '…');
+}
+
 /** 两类记录共用分页、取消和写入收尾；表单按对象区分身份字段。 */
 export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge' | 'memory'}) {
   const memory = kind === 'memory', label = memory ? '记忆' : '知识';
@@ -125,11 +130,11 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
         <option value="">全部类型</option>{Object.entries(scopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
         <label>目标作用域<select value={filterDraft.scope_id} onChange={event => setFilterDraft({...filterDraft, scope_id: event.target.value})}>
           <option value="">全部作用域</option>{scopes.filter(scope => !filterDraft.scope || scope.scope === filterDraft.scope).map(scope =>
-            <option key={scope.scope_id} value={scope.scope_id}>{scopeNames[scope.scope]} · {scope.scope_id.slice(0, 12)}…</option>)}</select></label></>}
+            <option key={scope.scope_id} value={scope.scope_id}>{scopeLabel(scope)}</option>)}</select></label></>}
       <Button aria-label="筛选" htmlType="submit" disabled={loading}>筛选</Button>
     </form>
     <div className="panel table-wrap"><table className="data-table"><thead><tr><th>{memory ? '记忆键 / 归属' : '标题'}</th><th>正文摘要</th><th>标签</th><th>创建时间</th><th>操作</th></tr></thead><tbody>
-      {page.items.map(item => <tr key={item.id}><td><strong>{recordName(item)}</strong>{'scope' in item && <small title={item.scope_id}>{scopeNames[item.scope]} · {item.scope_id.slice(0, 12)}…</small>}</td>
+      {page.items.map(item => <tr key={item.id}><td><strong>{recordName(item)}</strong>{'scope' in item && <small title={item.scope_id}>{scopeLabel(item)}</small>}</td>
         <td className="knowledge-summary">{item.content.slice(0, 100)}{item.content.length > 100 && '…'}</td>
         <td>{item.tags.map(tag => <Tag key={tag}>{tag}</Tag>)}</td><td>{item.created_at.replace('T', ' ')}</td>
         <td><div className="heading-actions"><Button aria-label={'查看' + recordName(item)} disabled={loading} onClick={() => void openDetail(item.id)}>查看</Button>
@@ -145,7 +150,7 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
           {draft.source === 'existing' ? <label>已有作用域<select required disabled={saving} value={draft.scope_id} onChange={event => {
             const owner = scopes.find(scope => scope.scope_id === event.target.value);
             setDraft({...draft, scope_id: event.target.value, scope: owner?.scope ?? draft.scope});
-          }}><option value="">请选择</option>{scopes.map(scope => <option key={scope.scope_id} value={scope.scope_id}>{scopeNames[scope.scope]} · {scope.scope_id.slice(0, 12)}…（{scope.count}）</option>)}</select></label>
+          }}><option value="">请选择</option>{scopes.map(scope => <option key={scope.scope_id} value={scope.scope_id}>{scopeLabel(scope)}（{scope.count}）</option>)}</select></label>
             : <><label>作用域<select disabled={saving} value={draft.scope} onChange={event => setDraft({...draft, scope: event.target.value as MemoryScope, target: ''})}>
               {Object.entries(scopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
               <label>机器人 QQ 号<input required disabled={saving} maxLength={20} pattern="[1-9][0-9]{0,19}" value={draft.bot_id} onChange={event => setDraft({...draft, bot_id: event.target.value})} /></label>
@@ -168,7 +173,8 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
     </CatalogDialog>}
     {selected !== undefined && <DetailDialog title={`${label}详情 #${selected}`} loading={detailLoading} error={detailError} onClose={closeDetail}>
       {detail && <><h3>{recordName(detail)}</h3><p>{detail.tags.map(tag => <Tag key={tag}>{tag}</Tag>)}</p>
-        {'scope' in detail && <p className="knowledge-owner">作用域：{scopeNames[detail.scope]} · {detail.scope_id}</p>}
+        {'scope' in detail && <><p className="knowledge-owner">作用域：{scopeLabel(detail)}</p>
+          <small>作用域 ID：{detail.scope_id}</small></>}
         {'material_ids' in detail && !!detail.material_ids?.length && <p>关联素材：{detail.material_ids.map(id => <Tag key={id}>{id}</Tag>)}</p>}
         <pre className="knowledge-content">{detail.content}</pre><p>创建时间：{detail.created_at.replace('T', ' ')}</p></>}
     </DetailDialog>}

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from datetime import datetime
@@ -15,6 +19,7 @@ from agent_bot.ai.database import page_limit
 from agent_bot.database import database_connector
 from agent_bot.knowledge.contracts import MemoryCreate, MemoryView, ScopeView, TagCount
 from agent_bot.knowledge.errors import KnowledgeError
+from agent_bot.knowledge.memory_titles import scope_titles
 from agent_bot.knowledge.pagination import decode_cursor, encode_cursor, literal_like
 from agent_bot.services.tagged_memory import (
     MemoryArguments,
@@ -28,11 +33,6 @@ from agent_bot.services.tagged_memory import (
 from agent_bot.settings import DatabaseParams
 
 SCHEMA_STATEMENTS = (
-    """CREATE TABLE IF NOT EXISTS chat_memory_scope (
-        scope_id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '匿名作用域键',
-        scope VARCHAR(16) NOT NULL COMMENT 'global/session/user/group',
-        PRIMARY KEY (scope_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='标签记忆作用域与写锁'""",
     """CREATE TABLE IF NOT EXISTS chat_tagged_memory (
         id INT NOT NULL AUTO_INCREMENT COMMENT '记忆自增主键',
         scope_id CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '关联作用域',
@@ -41,16 +41,13 @@ SCHEMA_STATEMENTS = (
         is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除标记',
         create_time DATETIME NOT NULL COMMENT '创建时间',
         update_time DATETIME NOT NULL COMMENT '更新时间',
+        scope VARCHAR(16) NOT NULL COMMENT 'global/session/user/group',
+        tags_json JSON NOT NULL COMMENT '规范化主题标签数组',
+        material_ids_json JSON NOT NULL COMMENT '引用素材标识数组',
         PRIMARY KEY (id),
         UNIQUE KEY uk_tagged_memory_scope_key (scope_id, memory_key),
         KEY idx_tagged_memory_scope_time (scope_id, is_deleted, update_time)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM 自主保存的标签记忆'""",
-    """CREATE TABLE IF NOT EXISTS chat_memory_tag (
-        memory_id INT NOT NULL COMMENT '关联记忆',
-        tag VARCHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '规范化主题标签',
-        PRIMARY KEY (memory_id, tag),
-        KEY idx_memory_tag_lookup (tag, memory_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='记忆与标签多对多关联'""",
 )
 
 
@@ -80,10 +77,14 @@ class TaggedMemoryStore:
         self._params = params
         self._secret = secret
         self._connect = connect or database_connector(params)
+        # 管理列表与作用域目录常同时读取，相同目录快照只匹配新增目标；不缓存陈旧名称。
+        self._scope_title_lock = threading.Lock()
+        self._scope_title_profiles: list[dict[str, Any]] | None = None
+        self._scope_title_cache: dict[tuple[str, MemoryScope], str | None] = {}
 
     @contextmanager
-    def _transaction(self) -> Iterator[Any]:
-        """关闭连接前明确提交或回滚，异常不泄露数据库细节。"""
+    def _transaction(self, owner: str | None = None) -> Iterator[Any]:
+        """同作用域写入先取得命名锁，提交或回滚后释放，避免容量和墓碑竞争。"""
         try:
             with closing(
                 self._connect(
@@ -100,18 +101,33 @@ class TaggedMemoryStore:
                     write_timeout=10,
                 )
             ) as connection:
-                try:
-                    with connection.cursor() as cursor:
+                with connection.cursor() as cursor:
+                    acquired = False
+                    lock_name = hashlib.sha256(
+                        f"agent_bot:memory:{self._params.database}:{owner}".encode()
+                    ).hexdigest()
+                    try:
+                        if owner is not None and self._params.backend != "sqlite":
+                            # GET_LOCK 不建立一致性快照；等待结束后首次业务读可见前一写入。
+                            cursor.execute("SELECT GET_LOCK(%s,10) AS acquired", (lock_name,))
+                            if cursor.fetchone()["acquired"] != 1:
+                                raise TaggedMemoryStoreError("记忆作用域正在写入，请稍后重试")
+                            acquired = True
                         yield cursor
-                    connection.commit()
-                except BaseException:
-                    connection.rollback()
-                    raise
+                        connection.commit()
+                    except BaseException:
+                        connection.rollback()
+                        raise
+                    finally:
+                        if acquired:
+                            cursor.execute("SELECT RELEASE_LOCK(%s) AS released", (lock_name,))
+                            if cursor.fetchone()["released"] != 1:
+                                raise TaggedMemoryStoreError("记忆作用域写锁释放失败")
         except pymysql.MySQLError as error:
             raise TaggedMemoryStoreError("记忆数据库暂时不可用") from error
 
     def initialize(self) -> None:
-        """幂等创建独立表，使用应用事务维护关联，不添加外键。"""
+        """显式创建单张事实表；已有部署的字段升级由独立迁移完成。"""
         with self._transaction() as cursor:
             if self._params.backend == "sqlite":
                 # 启动只检查手动初始化的 SQLite 表，避免隐式创建或覆盖业务结构。
@@ -128,10 +144,9 @@ class TaggedMemoryStore:
     @staticmethod
     def _validate_fields(cursor: Any) -> None:
         """两种后端和显式初始化复用同一字段检查，不写入业务数据。"""
-        cursor.execute("SELECT scope_id,scope FROM chat_memory_scope LIMIT 0")
         cursor.execute("SELECT id,scope_id,memory_key,content,is_deleted,create_time,"
-                       "update_time FROM chat_tagged_memory LIMIT 0")
-        cursor.execute("SELECT memory_id,tag FROM chat_memory_tag LIMIT 0")
+                       "update_time,scope,tags_json,material_ids_json "
+                       "FROM chat_tagged_memory LIMIT 0")
 
     def execute(
         self,
@@ -145,20 +160,12 @@ class TaggedMemoryStore:
             identity.scopes if arguments.scope == "all" else (cast(MemoryScope, arguments.scope),)
         )
         owners = tuple(identity.owner(scope, self._secret) for scope in scopes)
-        with self._transaction() as cursor:
-            if arguments.action in ("save", "forget"):
+        writing = arguments.action in ("save", "forget")
+        with self._transaction(owners[0] if writing else None) as cursor:
+            if writing:
                 if arguments.material_ids:
                     self._validate_materials(cursor, identity.session_id, arguments.material_ids)
                 result = self._write(cursor, owners[0], scopes[0], arguments)
-                if arguments.material_ids:
-                    cursor.execute("SELECT id FROM chat_tagged_memory "
-                                   "WHERE scope_id=%s AND memory_key=%s",
-                                   (owners[0], arguments.key))
-                    memory_id = cursor.fetchone()["id"]
-                    cursor.executemany(
-                        "INSERT INTO chat_memory_material (memory_id,material_id) VALUES (%s,%s)",
-                        [(memory_id, id) for id in arguments.material_ids],
-                    )
             elif arguments.action == "tags":
                 result = self._tags(cursor, owners, arguments.offset)
             else:
@@ -187,12 +194,7 @@ class TaggedMemoryStore:
         arguments: MemoryArguments,
     ) -> MemoryResult:
         """锁定作用域后只新增事实或标记遗忘，已有内容和标签不可编辑。"""
-        cursor.execute(
-            "INSERT INTO chat_memory_scope (scope_id, scope) VALUES (%s, %s) "
-            "ON DUPLICATE KEY UPDATE scope = VALUES(scope)",
-            (owner, scope),
-        )
-        # upsert 持有作用域行的排他锁，避免并发 INSERT IGNORE 后共享锁升级相互等待。
+        # 事务入口已串行化同作用域写入；唯一约束继续保护含已删除墓碑的事实键。
         cursor.execute(
             "SELECT id, is_deleted FROM chat_tagged_memory "
             "WHERE scope_id = %s AND memory_key = %s",
@@ -219,42 +221,27 @@ class TaggedMemoryStore:
             raise TaggedMemoryCapacityError("此作用域记忆已满，请明确删除旧记忆后使用新键新增")
         cursor.execute(
             "INSERT INTO chat_tagged_memory "
-            "(scope_id, memory_key, content, create_time, update_time) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (owner, arguments.key, arguments.content, now, now),
-        )
-        memory_id = cursor.lastrowid
-        cursor.executemany(
-            "INSERT INTO chat_memory_tag (memory_id, tag) VALUES (%s, %s)",
-            [(memory_id, tag) for tag in arguments.tags],
+            "(scope_id, memory_key, content, create_time, update_time, scope, "
+            "tags_json, material_ids_json) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (owner, arguments.key, arguments.content, now, now, scope,
+             json.dumps(sorted(arguments.tags), ensure_ascii=False),
+             json.dumps(sorted(arguments.material_ids))),
         )
         return MemoryResult(status="saved")
 
     def _admin_views(self, cursor: Any, rows: list[dict]) -> tuple[MemoryView, ...]:
         """管理员批量读取原文及匿名归属，不推测用户或群聊身份。"""
-        if not rows:
-            return ()
-        ids = tuple(row["id"] for row in rows)
-        cursor.execute("SELECT memory_id,tag FROM chat_memory_tag WHERE memory_id IN ("
-                       + ",".join("%s" for _ in ids) + ") ORDER BY tag", ids)
-        tags: dict[int, list[str]] = {id: [] for id in ids}
-        for row in cursor.fetchall():
-            tags[row["memory_id"]].append(row["tag"])
-        cursor.execute("SELECT memory_id,material_id FROM chat_memory_material WHERE memory_id IN ("
-                       + ",".join("%s" for _ in ids) + ") ORDER BY material_id", ids)
-        materials: dict[int, list[str]] = {id: [] for id in ids}
-        for row in cursor.fetchall():
-            materials[row["memory_id"]].append(row["material_id"])
         return tuple(MemoryView(id=row["id"], scope_id=row["scope_id"], scope=row["scope"],
                                 key=row["memory_key"], content=row["content"],
-                                tags=tuple(tags[row["id"]]), created_at=row["create_time"],
-                                material_ids=tuple(materials[row["id"]]))
+                                tags=tuple(json.loads(row["tags_json"])),
+                                created_at=row["create_time"],
+                                material_ids=tuple(json.loads(row["material_ids_json"])))
                      for row in rows)
 
     def _admin_get(self, cursor: Any, id: int) -> MemoryView:
         """读取和删除共同检查有效记录，不将已删除原文重新开放。"""
-        cursor.execute("SELECT m.*,s.scope FROM chat_tagged_memory m JOIN chat_memory_scope s "
-                       "ON s.scope_id=m.scope_id WHERE m.id=%s AND m.is_deleted=0", (id,))
+        cursor.execute("SELECT m.* FROM chat_tagged_memory m WHERE m.id=%s AND m.is_deleted=0",
+                       (id,))
         row = cursor.fetchone()
         if row is None:
             raise KnowledgeError("MEMORY_NOT_FOUND", status_code=404)
@@ -262,17 +249,17 @@ class TaggedMemoryStore:
 
     def admin_create(self, body: MemoryCreate) -> MemoryView:
         """管理员只新增到明确的已有作用域或当前 HMAC 命名空间。"""
-        with self._transaction() as cursor:
+        owner = body.scope_id or memory_scope_owner(
+            body.bot_id, body.scope, body.target or "", self._secret
+        )
+        with self._transaction(owner) as cursor:
             if body.scope_id:
-                # MySQL 普通读会建立 RR 快照；必须先锁作用域，容量和同键检查才看到并发提交。
-                cursor.execute("SELECT scope FROM chat_memory_scope WHERE scope_id=%s FOR UPDATE",
+                # 已删除事实保留授权类型；无任何事实的未知 scope_id 不能凭管理员参数创建。
+                cursor.execute("SELECT scope FROM chat_tagged_memory WHERE scope_id=%s LIMIT 1",
                                (body.scope_id,))
                 row = cursor.fetchone()
                 if row is None or row["scope"] != body.scope:
                     raise KnowledgeError("MEMORY_SCOPE_NOT_FOUND", status_code=404)
-                owner = body.scope_id
-            else:
-                owner = memory_scope_owner(body.bot_id, body.scope, body.target or "", self._secret)
             arguments = MemoryArguments(action="save", scope=body.scope, key=body.key,
                                         content=body.content, tags=body.tags)
             self._write(cursor, owner, body.scope, arguments)
@@ -294,10 +281,13 @@ class TaggedMemoryStore:
             conditions.append("(m.memory_key LIKE %s ESCAPE '!' OR m.content LIKE %s ESCAPE '!')")
             args.extend((literal_like(query), literal_like(query)))
         if tag:
-            conditions.append("EXISTS (SELECT 1 FROM chat_memory_tag t "
-                              "WHERE t.memory_id=m.id AND t.tag=%s)")
+            conditions.append(
+                "EXISTS (SELECT 1 FROM json_each(m.tags_json) WHERE value=%s)"
+                if self._params.backend == "sqlite"
+                else "JSON_CONTAINS(m.tags_json,JSON_QUOTE(%s))"
+            )
             args.append(tag)
-        for name, value in (("s.scope", scope), ("m.scope_id", scope_id)):
+        for name, value in (("m.scope", scope), ("m.scope_id", scope_id)):
             if value:
                 conditions.append(name + "=%s")
                 args.append(value)
@@ -317,8 +307,7 @@ class TaggedMemoryStore:
             conditions.append("m.id<%s")
             args.append(last_id)
         with self._transaction() as db_cursor:
-            db_cursor.execute("SELECT m.*,s.scope FROM chat_tagged_memory m "
-                              "JOIN chat_memory_scope s ON s.scope_id=m.scope_id WHERE "
+            db_cursor.execute("SELECT m.* FROM chat_tagged_memory m WHERE "
                               + " AND ".join(conditions) + " ORDER BY m.id DESC LIMIT %s",
                               (*args, limit + 1))
             rows = db_cursor.fetchall()
@@ -331,23 +320,48 @@ class TaggedMemoryStore:
         """只统计当前作用域筛选下仍可读取的记忆标签。"""
         conditions, args = self._admin_conditions(scope=scope, scope_id=scope_id)
         with self._transaction() as cursor:
-            cursor.execute("SELECT t.tag,COUNT(*) AS count FROM chat_memory_tag t "
-                           "JOIN chat_tagged_memory m ON m.id=t.memory_id "
-                           "JOIN chat_memory_scope s ON s.scope_id=m.scope_id WHERE "
-                           + " AND ".join(conditions) + " GROUP BY t.tag ORDER BY count DESC,t.tag",
+            cursor.execute("SELECT m.tags_json FROM chat_tagged_memory m WHERE "
+                           + " AND ".join(conditions),
                            tuple(args))
-            return tuple(TagCount.model_validate(row) for row in cursor.fetchall())
+            counts = Counter(tag for row in cursor.fetchall()
+                             for tag in json.loads(row["tags_json"]))
+            return tuple(TagCount(tag=tag, count=count)
+                         for tag, count in sorted(counts.items(),
+                                                  key=lambda item: (-item[1], item[0])))
 
     def admin_scopes(self, *, scope: str | None = None) -> tuple[ScopeView, ...]:
-        """保留空作用域以便新增另一键，不公开任何可逆 QQ 身份。"""
+        """从全部事实含墓碑列出授权类型，删除全部事实后仍允许新增另一键。"""
         with self._transaction() as cursor:
-            cursor.execute("SELECT s.scope_id,s.scope,COUNT(m.id) AS count "
-                           "FROM chat_memory_scope s "
-                           "LEFT JOIN chat_tagged_memory m ON m.scope_id=s.scope_id "
-                           "AND m.is_deleted=0" + (" WHERE s.scope=%s" if scope else "")
-                           + " GROUP BY s.scope_id,s.scope ORDER BY s.scope,s.scope_id",
+            cursor.execute("SELECT scope_id,scope,SUM(CASE WHEN is_deleted=0 THEN 1 ELSE 0 END) "
+                           "AS count FROM chat_tagged_memory"
+                           + (" WHERE scope=%s" if scope else "")
+                           + " GROUP BY scope_id,scope ORDER BY scope,scope_id",
                            (scope,) if scope else ())
             return tuple(ScopeView.model_validate(row) for row in cursor.fetchall())
+
+    def admin_scope_titles(self, owners: dict[str, MemoryScope]) -> dict[str, str]:
+        """归还数据库事务后匹配；逐字段核对目录快照，昵称变化立即使缓存失效。"""
+        if not owners:
+            return {}
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT bot_id,group_id,user_id,group_name,nickname,card FROM chat_group_member "
+                "ORDER BY update_time DESC,bot_id,group_id,user_id",
+            )
+            profiles = cursor.fetchall()
+        with self._scope_title_lock:
+            if profiles != self._scope_title_profiles:
+                self._scope_title_profiles = profiles
+                self._scope_title_cache.clear()
+            missing = {key: scope for key, scope in owners.items()
+                       if (key, scope) not in self._scope_title_cache}
+            if missing:
+                resolved = scope_titles(missing, profiles, self._secret)
+                self._scope_title_cache.update(
+                    ((key, scope), resolved.get(key)) for key, scope in missing.items()
+                )
+            return {key: title for key, scope in owners.items()
+                    if (title := self._scope_title_cache[(key, scope)]) is not None}
 
     def admin_delete(self, id: int) -> None:
         """管理员明确删除只变更状态，记录正文、标签和原 ID 保留。"""
@@ -359,22 +373,25 @@ class TaggedMemoryStore:
                 raise KnowledgeError("MEMORY_NOT_FOUND", status_code=404)
 
     def _tags(self, cursor: Any, owners: tuple[str, ...], offset: int) -> MemoryResult:
-        """分页只提供可见标签，不在工具声明中提前泄露记忆正文。"""
+        """最多四个受权作用域各 256 条事实，聚合后按最近使用稳定分页标签。"""
         placeholders = ",".join("%s" for _ in owners)
         cursor.execute(
-            "SELECT s.scope, t.tag FROM chat_memory_tag t "
-            "JOIN chat_tagged_memory m ON m.id = t.memory_id "
-            "JOIN chat_memory_scope s ON s.scope_id = m.scope_id "
-            f"WHERE m.scope_id IN ({placeholders}) AND m.is_deleted = 0 "
-            "GROUP BY s.scope, t.tag "
-            "ORDER BY MAX(m.update_time) DESC, s.scope, t.tag LIMIT 65 OFFSET %s",
-            (*owners, offset),
+            "SELECT scope,tags_json,update_time FROM chat_tagged_memory "
+            f"WHERE scope_id IN ({placeholders}) AND is_deleted=0",
+            owners,
         )
-        rows = cursor.fetchall()
+        recent: dict[tuple[str, str], datetime] = {}
+        for row in cursor.fetchall():
+            for tag in json.loads(row["tags_json"]):
+                key = (row["scope"], tag)
+                recent[key] = max(recent.get(key, row["update_time"]), row["update_time"])
+        keys = sorted(recent)
+        keys.sort(key=recent.__getitem__, reverse=True)
+        page = keys[offset:offset + 65]
         return MemoryResult(
             status="tags",
-            tags=tuple(MemoryTag.model_validate(row) for row in rows[:64]),
-            next_offset=offset + 64 if len(rows) > 64 else None,
+            tags=tuple(MemoryTag(scope=scope, tag=tag) for scope, tag in page[:64]),
+            next_offset=offset + 64 if len(page) > 64 else None,
         )
 
     def _recall(
@@ -386,36 +403,33 @@ class TaggedMemoryStore:
     ) -> MemoryResult:
         """按标签交集数量排序，每次最多加载八条完整事实。"""
         owner_parameters = ",".join("%s" for _ in owners)
-        tag_parameters = ",".join("%s" for _ in tags)
         cursor.execute(
-            "SELECT m.id, s.scope, m.memory_key, m.content "
-            "FROM chat_tagged_memory m "
-            "JOIN chat_memory_scope s ON s.scope_id = m.scope_id "
-            "JOIN chat_memory_tag t ON t.memory_id = m.id "
-            f"WHERE m.scope_id IN ({owner_parameters}) AND m.is_deleted = 0 "
-            f"AND t.tag IN ({tag_parameters}) "
-            "GROUP BY m.id, s.scope, m.memory_key, m.content, m.update_time "
-            "ORDER BY COUNT(*) DESC, m.update_time DESC, m.id LIMIT 8",
-            (*owners, *tags),
+            "SELECT id,scope,memory_key,content,tags_json,material_ids_json,update_time "
+            "FROM chat_tagged_memory "
+            f"WHERE scope_id IN ({owner_parameters}) AND is_deleted=0",
+            owners,
         )
-        rows = cursor.fetchall()
+        requested = set(tags)
+        rows = []
+        for row in cursor.fetchall():
+            row["tags"] = tuple(json.loads(row["tags_json"]))
+            row["matches"] = len(requested.intersection(row["tags"]))
+            if row["matches"]:
+                rows.append(row)
+        rows.sort(key=lambda row: row["id"])
+        rows.sort(key=lambda row: (row["matches"], row["update_time"]), reverse=True)
+        rows = rows[:8]
         if not rows:
             return MemoryResult(status="recalled")
-        memory_ids = tuple(row["id"] for row in rows)
-        memory_parameters = ",".join("%s" for _ in memory_ids)
-        cursor.execute(
-            "SELECT memory_id, tag FROM chat_memory_tag "
-            f"WHERE memory_id IN ({memory_parameters}) ORDER BY tag",
-            memory_ids,
-        )
-        memory_tags = cursor.fetchall()
-        cursor.execute(
-            "SELECT mm.memory_id,mm.material_id FROM chat_memory_material mm "
-            "JOIN chat_material m ON m.id=mm.material_id "
-            f"WHERE mm.memory_id IN ({memory_parameters}) AND m.entry='qq' AND m.session_id=%s "
-            "ORDER BY mm.material_id", (*memory_ids, session_id),
-        )
-        memory_materials = cursor.fetchall()
+        material_ids = tuple(sorted({item for row in rows
+                                     for item in json.loads(row["material_ids_json"])}))
+        visible_materials: set[str] = set()
+        if material_ids:
+            # 共享事实只共享文字；素材原件仍要求来源会话，不能直接信任记忆内的 ID。
+            cursor.execute("SELECT id FROM chat_material WHERE entry='qq' AND session_id=%s "
+                           "AND id IN (" + ",".join("%s" for _ in material_ids) + ")",
+                           (session_id, *material_ids))
+            visible_materials = {row["id"] for row in cursor.fetchall()}
         records: list[MemoryRecord] = []
         for row in rows:
             records.append(
@@ -423,11 +437,9 @@ class TaggedMemoryStore:
                     scope=row["scope"],
                     key=row["memory_key"],
                     content=row["content"],
-                    material_ids=tuple(item["material_id"] for item in memory_materials
-                                       if item["memory_id"] == row["id"]),
-                    tags=tuple(
-                        item["tag"] for item in memory_tags if item["memory_id"] == row["id"]
-                    ),
+                    material_ids=tuple(item for item in json.loads(row["material_ids_json"])
+                                       if item in visible_materials),
+                    tags=row["tags"],
                 )
             )
         return MemoryResult(status="recalled", records=tuple(records))

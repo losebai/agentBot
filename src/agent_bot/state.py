@@ -119,12 +119,27 @@ class ConversationContext:
 
     memory: str
     messages: tuple[ChatMessage, ...]
+    generation_id: str | None = None
 
 
 class ConversationStoreProtocol(Protocol):
     """Synchronous conversation store used behind an async service boundary."""
 
     def context(self, session_id: str) -> ConversationContext: ...
+
+    @property
+    def history_turns(self) -> int:
+        """返回近期历史开关，出站日志遵循同一策略。"""
+        ...
+
+    @property
+    def max_history_chars(self) -> int:
+        """返回历史模型视图的字符预算，不影响原件保存。"""
+        ...
+
+    def ensure_generation(self, session_id: str) -> str:
+        """确保当前会话存在并返回其稳定代际。"""
+        ...
 
     def commit_exchange(
         self,
@@ -182,7 +197,18 @@ class ConversationStore:
         self._sessions: OrderedDict[str, _History] = OrderedDict()
         self._receipts: OrderedDict[tuple[str, str], float] = OrderedDict()
 
+    @property
+    def history_turns(self) -> int:
+        """读取近期历史开关，独立发送的消息也遵循该设置。"""
+        return self._history_turns
+
+    @property
+    def max_history_chars(self) -> int:
+        """返回模型历史预算，持久素材不受此限制。"""
+        return self._max_history_chars
+
     def context(self, session_id: str) -> ConversationContext:
+        """读取当前有效历史及代际，不为单纯读取创建新会话。"""
         history = self._get_active(session_id)
         if history is None:
             return ConversationContext(memory="", messages=())
@@ -193,7 +219,23 @@ class ConversationStore:
                 ChatMessage(role="assistant", content=turn.assistant,
                             history_request_id=turn.request_id),
             ))
-        return ConversationContext(memory=history.memory, messages=tuple(messages))
+        return ConversationContext(
+            memory=history.memory, messages=tuple(messages), generation_id=history.generation_id
+        )
+
+    def ensure_generation(self, session_id: str) -> str:
+        """为没有普通轮次的主动发言固定代际，重置或过期后重新生成。"""
+        now = self._clock()
+        history = self._get_active(session_id, now=now)
+        if history is None:
+            history = _History(turns=deque(), touched_at=now)
+            self._sessions[session_id] = history
+        history.touched_at = now
+        self._sessions.move_to_end(session_id)
+        self._evict_expired(now)
+        while len(self._sessions) > self._max_sessions:
+            self._sessions.popitem(last=False)
+        return history.generation_id
 
     def messages(self, session_id: str) -> list[ChatMessage]:
         return list(self.context(session_id).messages)

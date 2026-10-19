@@ -31,10 +31,10 @@ class MediaGenerationService:
             resources,
         )
 
-    async def generate(self, request, owner):
-        """限制整个请求而不只限制 HTTP 阶段，取消后等待持久化收束。"""
+    async def generate(self, request, owner, *, scope=None):
+        """限制整个请求预算；Agent 内部可绑定当前执行，公开请求不能指定归属。"""
         self.resources.require_ready()
-        if owner.session_id != request.session_id:
+        if owner.session_id != request.session_id or (scope is not None and scope.owner != owner):
             raise MediaError("MEDIA_INPUT_UNAUTHORIZED", status_code=403)
         budget = min(
             120,
@@ -45,37 +45,38 @@ class MediaGenerationService:
             with request_deadline(budget):
                 try:
                     return await asyncio.wait_for(
-                        self._generate(request, owner), remaining_timeout(budget)
+                        self._generate(request, owner, scope=scope), remaining_timeout(budget)
                     )
                 except asyncio.TimeoutError as error:
                     raise MediaError("MEDIA_TIMEOUT", status_code=504) from error
 
-    async def _generate(self, request, owner):
-        """一次上游生成对应一个稳定执行 ID，文件完成后才交付响应。"""
-        execution_id, started = uuid4().hex, time.monotonic()
-        scope = MediaScope(owner=owner, execution_id=execution_id, execution_kind="media")
+    async def _generate(self, request, owner, *, scope=None):
+        """独立生成保存媒体记录；工具生成由 Agent 记录承载并直接关联原执行附件。"""
+        scope = scope or MediaScope(owner=owner, execution_id=uuid4().hex, execution_kind="media")
+        execution_id, started = scope.execution_id, time.monotonic()
         resolved = await self.catalog.resolve(request.model)
         validate_generation_request(request, resolved)
         credential = self.credentials.resolve(resolved.provider)
         saved, begun, status, error_code, text = True, False, "failed", None, ""
         try:
-            try:
-                await self.resources.records.begin(
-                    MediaRunStart(
-                        execution_id=execution_id,
-                        entry=owner.entry,
-                        session_id=owner.session_id,
-                        request_id=request.request_id,
-                        model=request.model,
-                        output_type=request.output_type,
-                        created_at=utc_now(),
-                        prompt=request.prompt
-                        or "\n".join(m.content for m in request.messages)[-32000:],
+            if scope.execution_kind == "media":
+                try:
+                    await self.resources.records.begin(
+                        MediaRunStart(
+                            execution_id=execution_id,
+                            entry=owner.entry,
+                            session_id=owner.session_id,
+                            request_id=request.request_id,
+                            model=request.model,
+                            output_type=request.output_type,
+                            created_at=utc_now(),
+                            prompt=request.prompt
+                            or "\n".join(m.content for m in request.messages)[-32000:],
+                        )
                     )
-                )
-                begun = True
-            except Exception:
-                saved = False
+                    begun = True
+                except Exception:
+                    saved = False
             response = await self.provider.generate(request, resolved, credential)
             data = await finish_database_write(
                 lambda: validate_generated_media(

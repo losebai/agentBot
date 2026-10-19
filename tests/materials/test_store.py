@@ -278,15 +278,21 @@ def test_migration_effective_schema_matches_fresh_database(tmp_path):
     """实际执行增量，比较生效后的表、索引和外键，而不是只检查 SQL 文本。"""
     full = Path("sql/agent_bot_init.sqlite.sql").read_text(encoding="utf-8")
     migration = Path("sql/2026-10-17-material-memory.sqlite.sql").read_text(encoding="utf-8")
-    baseline = full.removesuffix(migration)
-    assert baseline != full
     fresh = sqlite3.connect(tmp_path / "fresh.db")
     upgraded = sqlite3.connect(tmp_path / "upgraded.db")
     try:
         fresh.executescript(full)
-        upgraded.executescript(baseline)
+        upgraded.executescript(full)
+        # 旧素材迁移曾独立创建记忆关联表；当前最终结构把它合入事实表。
+        upgraded.execute("DROP TABLE chat_material_source")
+        upgraded.execute("DROP TABLE chat_material")
         upgraded.executescript(migration)
-        for table in ("chat_material", "chat_material_source", "chat_memory_material"):
+        upgraded.execute("CREATE TABLE chat_memory_scope (scope_id TEXT PRIMARY KEY,scope TEXT)")
+        upgraded.execute("CREATE TABLE chat_memory_tag (memory_id INTEGER,tag TEXT)")
+        upgraded.executescript(Path(
+            "sql/2026-10-20-retire-legacy-tagged-memory.sqlite.sql"
+        ).read_text(encoding="utf-8"))
+        for table in ("chat_material", "chat_material_source"):
             for pragma in ("table_info", "index_list", "foreign_key_list"):
                 assert fresh.execute(f"PRAGMA {pragma}({table})").fetchall() == (
                     upgraded.execute(f"PRAGMA {pragma}({table})").fetchall()
@@ -294,3 +300,206 @@ def test_migration_effective_schema_matches_fresh_database(tmp_path):
     finally:
         fresh.close()
         upgraded.close()
+
+
+@pytest.mark.asyncio
+async def test_material_get_reads_bounded_utf8_without_private_metadata(materials):
+    """文本预览按字符截断，原件位置和其他会话资料不能进入工具结果。"""
+    import json
+
+    from agent_bot.agent.contracts import ToolCall
+    from agent_bot.agent.tools.materials import MaterialGetTool
+    from agent_bot.agent.tools.schema import ToolSchema
+    from agent_bot.media.contracts import MediaScope
+    from agent_bot.media.errors import MediaError
+
+    owner = MediaOwner(entry="qq", session_id="material-owner")
+    asset = await materials.put(owner=owner, name="长文.txt", mime_type="text/plain",
+                                data=("文" * 8001).encode())
+    scope = MediaScope(owner=owner, execution_id="a" * 32, execution_kind="agent")
+    tool = MaterialGetTool(materials, scope)
+    ToolSchema.validate_definition(tool.definition)
+    call = ToolCall(call_id="get-1", name="material_get", arguments={"id": asset.id})
+    result = await tool.call(call)
+    body = json.loads(result.content)
+    assert body["text"] == "文" * 8000
+    assert body["truncated"] is True
+    assert body["material"]["id"] == asset.id
+    assert not result.images and not result.attachments
+    assert "material-owner" not in result.content and "storage_key" not in result.content
+    assert str(materials.files.root) not in result.content
+    foreign = scope.model_copy(update={"owner": MediaOwner(entry="qq", session_id="other")})
+    with pytest.raises(MediaError, match="MATERIAL_NOT_FOUND"):
+        await MaterialGetTool(materials, foreign).call(call)
+
+
+@pytest.mark.asyncio
+async def test_material_get_binary_and_invalid_utf8_are_metadata_only(materials):
+    """二进制及非法 UTF-8 不返回损坏正文，也不把内容编码进模型结果。"""
+    import json
+
+    from agent_bot.agent.contracts import ToolCall
+    from agent_bot.agent.tools.materials import MaterialGetTool
+    from agent_bot.media.contracts import MediaScope
+
+    owner = MediaOwner(entry="qq", session_id="a")
+    scope = MediaScope(owner=owner, execution_id="a" * 32, execution_kind="agent")
+    for index, mime in enumerate(("application/octet-stream", "text/plain")):
+        asset = await materials.put(owner=owner, name="binary", mime_type=mime,
+                                    data=b"\xff\x00private-content" + bytes([index]))
+        result = await MaterialGetTool(materials, scope).call(ToolCall(
+            call_id="binary", name="material_get", arguments={"id": asset.id},
+        ))
+        body = json.loads(result.content)
+        assert body["text"] is None and body["truncated"] is False
+        assert "private-content" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_material_get_image_is_separate_qq_output_without_vision(materials):
+    """历史原图进入请求图片收集器，不进入模型视觉输入或序列化日志。"""
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    from agent_bot.agent.contracts import ToolCall
+    from agent_bot.agent.tools.materials import MaterialGetTool
+    from agent_bot.media.contracts import MediaScope
+    from agent_bot.services.tool_images import capture_tool_images
+
+    output = BytesIO()
+    Image.new("RGB", (2, 2), "red").save(output, "PNG")
+    raw = output.getvalue()
+    owner = MediaOwner(entry="qq", session_id="a")
+    asset = await materials.put(owner=owner, name="image.png", mime_type="image/png", data=raw)
+    scope = MediaScope(owner=owner, execution_id="a" * 32, execution_kind="agent")
+    with capture_tool_images() as captured:
+        result = await MaterialGetTool(materials, scope).call(ToolCall(
+            call_id="image", name="material_get", arguments={"id": asset.id},
+        ))
+    assert len(captured.items) == 1
+    assert base64.b64decode(captured.items[0].data) == raw
+    assert result.images == () and result.attachments == ()
+    assert base64.b64encode(raw).decode() not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_material_get_admin_image_publishes_attachment_in_current_scope(
+    materials, material_database, tmp_path,
+):
+    """管理附件属于本次运行及当前管理会话，QQ 收集器不会接收管理图片。"""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from agent_bot.agent.contracts import ToolCall
+    from agent_bot.agent.tools.materials import MaterialGetTool
+    from agent_bot.media.contracts import MediaScope
+    from agent_bot.media.errors import MediaError
+    from agent_bot.media.store import MediaStore
+    from agent_bot.services.tool_images import capture_tool_images
+
+    output = BytesIO()
+    Image.new("RGB", (2, 2), "blue").save(output, "PNG")
+    raw = output.getvalue()
+    owner = MediaOwner(entry="admin", session_id="admin_a")
+    asset = await materials.put(owner=owner, name="image.png", mime_type="image/png", data=raw)
+    scope = MediaScope(owner=owner, execution_id="b" * 32, execution_kind="agent")
+    params, pool = material_database
+    files = MediaFiles(tmp_path / "attachments")
+    files.start()
+    store = MediaStore(params, connect=pool.connect, files=files)
+    try:
+        with capture_tool_images() as captured:
+            result = await MaterialGetTool(materials, scope, store).call(ToolCall(
+                call_id="image", name="material_get", arguments={"id": asset.id},
+            ))
+        assert len(result.attachments) == 1 and not result.images and not captured.items
+        attachment = result.attachments[0]
+        assert (await store.list_execution(scope)) == (attachment,)
+        async with store.open_content(attachment.id, owner=owner) as file:
+            assert file.read() == raw
+        with pytest.raises(MediaError, match="MEDIA_NOT_FOUND"):
+            await store.describe(attachment.id, owner=MediaOwner(entry="admin", session_id="other"))
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_material_get_escaped_text_respects_tool_result_limit(materials):
+    """转义字符和长元数据不能让合法预览超出工具结果契约。"""
+    import json
+
+    from agent_bot.agent.contracts import ToolCall
+    from agent_bot.agent.tools.materials import MaterialGetTool
+    from agent_bot.media.contracts import MediaScope
+
+    owner = MediaOwner(entry="qq", session_id="a")
+    asset = await materials.put(
+        owner=owner, name="\x01" * 255, mime_type="text/plain", data=b"\x01" * 8000,
+        description="\x01" * 1000,
+    )
+    scope = MediaScope(owner=owner, execution_id="a" * 32, execution_kind="agent")
+    result = await MaterialGetTool(materials, scope).call(ToolCall(
+        call_id="escaped", name="material_get", arguments={"id": asset.id},
+    ))
+    body = json.loads(result.content)
+    assert len(result.content) <= 32000 and 0 < len(body["text"]) <= 8000
+    assert body["truncated"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["qq", "admin"])
+@pytest.mark.parametrize("configured,authorized", [(True, True), (False, True), (True, False)])
+async def test_material_get_runtime_intersects_preset_and_entry_permissions(
+    materials, entry, configured, authorized,
+):
+    """只依赖可信当前作用域与预设和入口权限交集，模型不能指定另一会话。"""
+    import json
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from agent_bot.agent.contracts import AgentRequest, ExecutionAuthority, ToolCall
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.agent.tools.runtime import ToolRuntime
+    from agent_bot.media.contracts import MediaScope
+
+    class EmptyConnector:
+        """离线无 MCP 的工具作用域，不替换生产权限或存储实现。"""
+
+        @asynccontextmanager
+        async def open(self, *_args, **_kwargs):
+            """不启动外部连接，保持运行时真实的工具选择流程。"""
+            yield SimpleNamespace(tools=(), warnings=())
+
+    owner = MediaOwner(entry=entry, session_id="current")
+    asset = await materials.put(owner=owner, name="a.txt", mime_type="text/plain", data=b"actual")
+    scope = MediaScope(owner=owner, execution_id="a" * 32, execution_kind="agent")
+    request = AgentRequest(prompt="读取", session_id=owner.session_id, request_id="read")
+    snapshot = SimpleNamespace(
+        mcps=(), search_mcp=None,
+        agent=SimpleNamespace(tools=("material_get",) if configured else ()),
+    )
+    runtime = ToolRuntime(EmptyConnector(), material_store=materials)
+    if entry == "admin":
+        from agent_bot.admin.agent_chat import AgentChatProbe
+
+        admin_runtime = SimpleNamespace(agent_service=SimpleNamespace(tool_runtime=runtime))
+        authority = AgentChatProbe(admin_runtime).authority()
+        if not authorized:
+            authority = authority.model_copy(update={"allowed_tools": ()})
+    else:
+        authority = ExecutionAuthority(
+            entry=entry, allowed_tools=("material_get",) if authorized else (),
+        )
+    call = ToolCall(call_id="read", name="material_get", arguments={"id": asset.id})
+    async with runtime.open(snapshot, request, authority, media_scope=scope) as bound:
+        if configured and authorized:
+            assert json.loads((await bound.call(call)).content)["text"] == "actual"
+            for arguments in ({"id": "../private"}, {"id": asset.id, "session_id": "other"}):
+                with pytest.raises(AgentError, match="AGENT_TOOL_ARGUMENTS_INVALID"):
+                    bound.validate(call.model_copy(update={"arguments": arguments}))
+        else:
+            with pytest.raises(AgentError, match="AGENT_TOOL_UNAUTHORIZED"):
+                await bound.call(call)

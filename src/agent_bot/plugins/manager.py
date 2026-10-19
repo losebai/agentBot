@@ -116,6 +116,12 @@ class PluginManager:
             for bot in plugin.bots()
         ]
 
+    def running_plugin(self, plugin_id: str) -> ApplicationPlugin | None:
+        """只提供已运行的插件实例，维护请求不能隐式加载或启动禁用插件。"""
+        if self._states.get(plugin_id) != "running":
+            return None
+        return self._plugins[plugin_id]
+
     def snapshots(self, saved_enabled: Sequence[str]) -> list[PluginSnapshot]:
         """保存列表只影响待重启提示，不修改当前生命周期。"""
         saved = frozenset(saved_enabled)

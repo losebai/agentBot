@@ -93,7 +93,8 @@ describe('Comfy 工作流管理', () => {
         posts.push({ path: String(url), body: init.body ? JSON.parse(init.body) : undefined });
         return Response.json({ imported: 1 });
       }
-      catalogLoads += 1;
+      // 设置基础页还会读取队列状态，只统计工作流目录请求。
+      if (String(url).endsWith('/workflows')) catalogLoads += 1;
       return Response.json(catalog);
     }));
     render(<Settings token="offline-token" />);
@@ -142,7 +143,8 @@ describe('Comfy 工作流管理', () => {
           : Response.json({ ...latest, ...patch.values, revision: 'revision-three' });
       }
       if (String(url).endsWith('/workflows/sunrise')) return Response.json(latest);
-      loads += 1;
+      // 其他设置面板请求不属于工作流刷新次数。
+      if (String(url).endsWith('/workflows')) loads += 1;
       return Response.json(catalog);
     }));
     render(<Settings token="offline-token" />);

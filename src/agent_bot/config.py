@@ -244,7 +244,6 @@ class PluginConfig(BaseModel):
     chat_max_input_chars: int = Field(default=2000, gt=0)
     chat_history_turns: int = Field(default=6, ge=0)
     chat_history_max_chars: int = Field(default=12000, gt=0)
-    chat_history_ttl_seconds: float = Field(default=604_800, gt=0)
     chat_group_recent_context_enabled: bool = False
     chat_group_recent_context_messages: int = Field(default=10, ge=1)
     chat_group_recent_context_max_chars: int = Field(
@@ -848,7 +847,6 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_max_input_chars": "单条消息最大输入字数",
     "chat_history_turns": "历史对话保留轮数",
     "chat_history_max_chars": "历史对话最大字符数",
-    "chat_history_ttl_seconds": "历史对话存活时间 (秒)",
     "chat_group_recent_context_enabled": "是否读取当前群最近普通文本",
     "chat_group_recent_context_messages": "当前群最近文本消息条数",
     "chat_group_recent_context_max_chars": "当前群最近文本最大字符数",

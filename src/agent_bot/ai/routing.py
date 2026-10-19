@@ -268,7 +268,7 @@ class RoutingAiClient:
                 services = tuple(self.mcp_services) if use_agent and not vision_only else ()
                 # 共享知识仍与命名 Agent 的显式工具配置取交集，不改变普通对话路径。
                 if allow_knowledge and use_agent and self.agent_code and not vision_only:
-                    names += ("knowledge_search", "material_search")
+                    names += ("knowledge_search", "material_search", "material_get")
                 agent_code = None if vision_only else self.agent_code
                 request = AgentRequest(
                     agent_code=agent_code,

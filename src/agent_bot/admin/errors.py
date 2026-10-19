@@ -23,6 +23,9 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         "WORKFLOW_DIRECTORY_UNAVAILABLE": "工作流目录不可读取，请检查路径和服务文件权限",
         "AI_CAPABILITY_UNSUPPORTED": "当前请求包含尚未实现的能力，请移除视频或相关工具",
         "MEDIA_NOT_INITIALIZED": "媒体数据表尚未初始化，请导入 agent_bot_init.sql 后重启服务",
+        "MATERIAL_NOT_INITIALIZED": "素材库尚未初始化，请检查媒体目录与对应增量 SQL",
+        "MATERIAL_NOT_FOUND": "素材不存在或不可访问",
+        "MATERIAL_INVALID_PAGE": "素材筛选条件已改变或游标无效，请重新查询",
         "MEDIA_STORAGE_UNAVAILABLE": "媒体目录不可用，请修复后重启服务",
         "MEDIA_NOT_READY": "媒体资源尚未就绪，请检查状态并重启服务",
         "MEDIA_EXPIRED": "附件已过期",
@@ -34,7 +37,9 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         "MEDIA_BUSY": "媒体并发已满，请稍后再试",
         "MEDIA_SAVE_FAILED": "上游已调用，但媒体保存失败，请检查存储状态",
         "MEDIA_STORAGE_FULL": "媒体存储配额已满",
-        "MEDIA_VISION_UNSUPPORTED": "所选模型尚未启用图片理解能力",
+        "MEDIA_VISION_UNSUPPORTED": (
+            "所选模型尚未启用图片理解能力，请在“供应商与模型”中开启后重试"
+        ),
         "MEDIA_INPUT_ALREADY_USED": "此上传已用于另一次执行，请重新上传",
         "MEDIA_CANCELLED": "媒体请求已取消",
         "MEDIA_TIMEOUT": "媒体生成已超时",
@@ -45,6 +50,8 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
             "新库使用 agent_bot_init.sql"
         ),
         "AI_CONFIG_CONFLICT": "配置已被修改或仍在启用，请重新加载后操作",
+        "AI_MODEL_ALIAS_CONFLICT": "模型别名已被其他记录使用，请设置不同别名后导入",
+        "AI_CONFIG_NOT_FOUND": "所选供应商或模型不存在或已删除，请刷新列表后重新选择",
         "AI_CONFIG_IN_USE": "配置仍被模型或 Agent 引用，请先解除关联",
         "AI_CREDENTIAL_MISSING": "供应商密钥尚未设置，请在供应商管理中重新录入",
         "AGENT_CREDENTIAL_MISSING": "MCP 访问令牌尚未设置，请在 MCP 服务中重新录入",
@@ -67,7 +74,11 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         ),
         "AGENT_CONFIG_CONFLICT": "此配置已有更新，请保留草稿并重新加载后合并修改",
         "AGENT_CONFIG_IN_USE": "配置仍被 Agent 引用，请先解除关联",
-        "AGENT_MODEL_ROUTE_INVALID": "错误转发模型必须与聊天、图片理解模型不同",
+        "AGENT_CONFIG_NOT_FOUND": (
+            "所选 Agent、Skill 或 MCP 配置不存在或已删除，请刷新列表后重新选择"
+        ),
+        "AGENT_MODEL_UNAVAILABLE": "所选模型或供应商未启用，请在“供应商与模型”中启用后重试",
+        "AGENT_VISION_MODEL_REQUIRED": "本次请求包含图片，请先为 Agent 配置图片理解模型",
         "AGENT_CONFIG_DISABLED": "Agent、Skill 或 MCP 配置已停用",
         "AGENT_TOOL_UNAUTHORIZED": "当前入口或 Agent 未授权这些工具",
         "AGENT_TOOL_SESSION_EXPIRED": "QQ 工具会话已过期或撤销，请重新发起请求",

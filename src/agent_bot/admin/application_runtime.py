@@ -80,3 +80,9 @@ class ApplicationRuntimeProvider:
     def bots(self):
         """本地连接来自已运行的插件。"""
         return self.plugins.bots()
+
+    @property
+    def queue_stores(self):
+        """只暴露当前运行的 QQ 插件所持队列，禁用时无需导入消息模块。"""
+        plugin = self.plugins.running_plugin("qqbot")
+        return plugin.queue_stores() if plugin is not None else ()

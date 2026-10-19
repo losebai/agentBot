@@ -13,7 +13,9 @@ def reject_unquoted_usage(monkeypatch):
 
     def execute_mysql(self, sql, parameters=()):
         """模拟已确认的 MySQL 1064，避免 permissive SQLite 掩盖协议差异。"""
-        if re.search(r"(?<![\w`])usage(?![\w`])", sql, re.IGNORECASE):
+        # JSON 键和路径属于字符串常量，不能按列名保留字误报。
+        identifiers = re.sub(r"'(?:''|[^'])*'", "''", sql)
+        if re.search(r"(?<![\w`])usage(?![\w`])", identifiers, re.IGNORECASE):
             raise pymysql.ProgrammingError(1064, "unquoted reserved identifier: usage")
         return execute(self, sql, parameters)
 

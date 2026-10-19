@@ -7,6 +7,7 @@ import re
 from contextlib import closing
 from importlib.metadata import distribution
 from pathlib import Path
+from typing import Any
 
 import pymysql
 
@@ -14,13 +15,105 @@ from agent_bot.ai.call_records import (
     CallRecordStore,
     call_record_time,
     decision_record,
+    insert_record,
+    json_value,
     legacy_record,
     python_record,
+    source_record_time,
 )
-from agent_bot.ai.database import query
+from agent_bot.ai.database import AiDatabase, query
+from agent_bot.ai.errors import AiError
 from agent_bot.bootstrap import database_params, load_bootstrap_config
 from agent_bot.database import connect_database, database_connector
 from agent_bot.settings import DatabaseParams
+
+
+def _source_available(connection: Any, table: str, key: str) -> bool:
+    """明确识别已退役的来源表；仅缺表可跳过，连接或缺列错误仍向外报告。"""
+    try:
+        query(connection, f"SELECT {key} FROM {table} LIMIT 0")
+    except pymysql.DatabaseError as error:
+        if error.args[0] != 1146:
+            raise
+        return False
+    return True
+
+
+def _verify_ordinary_archive(old: dict, archived: dict) -> None:
+    """核对正文、执行身份与模型用量，已有快照和分类只保留、不重写。"""
+    expected = python_record(old, "ordinary")
+    for field in ("session_Id", "request_id", "content", "replay_context", "model",
+                  "duration", "execution_id", "status", "type"):
+        if archived[field] != expected[field]:
+            raise AiError("AI_RECORD_MIGRATION_CONFLICT", status_code=409)
+    if (archived["create_time"] is None
+            or source_record_time(archived["create_time"]) != expected["create_time"]):
+        raise AiError("AI_RECORD_MIGRATION_CONFLICT", status_code=409)
+    actual_data, expected_data = json_value(archived["data"]), expected["data"]
+    actual_full = actual_data.get("full_fields", {})
+    expected_full = expected_data.get("full_fields", {})
+    if any(actual_full.get(key) != value for key, value in expected_full.items()):
+        raise AiError("AI_RECORD_MIGRATION_CONFLICT", status_code=409)
+    for field, original in (("content", "prompt"), ("replay_context", "content"),
+                            ("session_Id", "session_id"), ("request_id", "request_id"),
+                            ("model", "model")):
+        if actual_full.get(field, archived[field]) != old[original]:
+            raise AiError("AI_RECORD_MIGRATION_CONFLICT", status_code=409)
+    actual_inner = actual_data.get("original_data", actual_data)
+    expected_data = expected_data.get("original_data", expected_data)
+    for key in ("usage", "configured_model", "error_code"):
+        # 详情优先读取顶层；拒绝双层冲突，也避免 MySQL JSON null 与 SQLite NULL 分歧。
+        if (key in actual_data and key in actual_inner
+                and actual_data[key] != actual_inner[key]):
+            raise AiError("AI_RECORD_MIGRATION_CONFLICT", status_code=409)
+        if actual_data.get(key, actual_inner.get(key)) != expected_data.get(key):
+            raise AiError("AI_RECORD_MIGRATION_CONFLICT", status_code=409)
+
+
+async def merge_ai_sessions(store: AiDatabase, batch_size: int = 100) -> dict[str, int]:
+    """显式逐批合并旧普通调用，缺失则补录；已有记录只补精确 UTC，冲突整批回滚。"""
+    result = {"scanned": 0, "inserted": 0, "updated": 0}
+    available = await store.run(
+        lambda c: _source_available(c, "agent_bot_ai_session", "execution_id"),
+    )
+    if not available:
+        return result
+    after = ""
+    while True:
+        def merge_batch(connection: Any, after: str = after) -> tuple[list[dict], int, int]:
+            """源和目标同一事务读取，任何不一致都不留下本批的部分补录。"""
+            query(connection, "SELECT created_at_utc FROM agent_bot_call_record LIMIT 0")
+            rows = query(connection,
+                         "SELECT * FROM agent_bot_ai_session WHERE execution_id>%s "
+                         "ORDER BY execution_id LIMIT %s", (after, batch_size))
+            inserted = updated = 0
+            for row in rows:
+                archive = query(connection,
+                                "SELECT * FROM agent_bot_call_record WHERE source=%s "
+                                "AND source_id=%s FOR UPDATE",
+                                ("python:agent_bot_ai_session", row["execution_id"]), one=True)
+                if archive is None:
+                    insert_record(connection, python_record(row, "ordinary"))
+                    inserted += 1
+                    continue
+                _verify_ordinary_archive(row, archive)
+                stamp = source_record_time(row["created_at"])
+                if (archive["created_at_utc"] is None
+                        or source_record_time(archive["created_at_utc"]) != stamp):
+                    with connection.cursor() as cursor:
+                        cursor.execute("UPDATE agent_bot_call_record SET created_at_utc=%s "
+                                       "WHERE id=%s", (stamp, archive["id"]))
+                    updated += 1
+            return rows, inserted, updated
+
+        rows, inserted, updated = await store.run(merge_batch, write=True)
+        if not rows:
+            break
+        result["scanned"] += len(rows)
+        result["inserted"] += inserted
+        result["updated"] += updated
+        after = rows[-1]["execution_id"]
+    return result
 
 
 def install_schema(params):
@@ -47,6 +140,11 @@ async def backfill_local(store, batch_size=100):
         ("agent_bot_auto_speak_decision", "auto_speak"),
     ):
         key = "id" if type == "auto_speak" else "execution_id"
+        if table == "agent_bot_ai_session" and not await store.run(
+            lambda c, table=table, key=key: _source_available(c, table, key),
+        ):
+            result[table] = {"scanned": 0, "inserted": 0}
+            continue
         after, scanned, inserted = "", 0, 0
         while True:
             rows = await store.run(
@@ -76,6 +174,11 @@ async def repair_local_times(store: CallRecordStore, batch_size: int = 100) -> d
         ("agent_bot_agent_run", "execution_id"),
         ("agent_bot_auto_speak_decision", "id"),
     ):
+        if table == "agent_bot_ai_session" and not await store.run(
+            lambda c, table=table, key=key: _source_available(c, table, key),
+        ):
+            result[table] = {"scanned": 0, "updated": 0}
+            continue
         source = f"python:{table}"
         after, scanned, updated = 0, 0, 0
         while True:
@@ -161,7 +264,7 @@ async def import_jsonl(store, path, source, batch_size=100):
 def run(argv):
     """显式导入或校正归档时间，连接密码不出现在参数或异常输出中。"""
     parser = argparse.ArgumentParser(prog="agent-bot records")
-    parser.add_argument("command", choices=["migrate", "repair-times"])
+    parser.add_argument("command", choices=["migrate", "repair-times", "merge-ai-sessions"])
     parser.add_argument("--init-schema", action="store_true", help="显式安装统一记录增量表")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--legacy-config", help="包含 DatabaseParams MySQL 参数的 JSON 文件")
@@ -170,10 +273,10 @@ def run(argv):
         "--source", help="稳定来源名，如 dispatch-ai:dispatch-sdk:service_ai_session"
     )
     args = parser.parse_args(argv)
-    if args.command == "repair-times" and (
+    if args.command in {"repair-times", "merge-ai-sessions"} and (
         args.init_schema or args.legacy_config or args.legacy_jsonl or args.source
     ):
-        parser.error("repair-times 只校正本库时间，不能与初始化或旧库导入选项一起使用")
+        parser.error("校正或合并命令不能与初始化或旧库导入选项一起使用")
     if (args.legacy_config or args.legacy_jsonl) and (
         not args.source
         or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,191}", args.source)
@@ -187,6 +290,9 @@ def run(argv):
         store = CallRecordStore(params, connect=database_connector(params))
         if args.command == "repair-times":
             print(json.dumps(asyncio.run(repair_local_times(store)), ensure_ascii=False))
+            return 0
+        if args.command == "merge-ai-sessions":
+            print(json.dumps(asyncio.run(merge_ai_sessions(store)), ensure_ascii=False))
             return 0
         source_params = None
         if args.legacy_config:

@@ -77,7 +77,7 @@ class AgentChatProbe:
         if getattr(self.service().tool_runtime, "knowledge_store", None) is not None:
             names += ("knowledge_search",)
         if getattr(self.service().tool_runtime, "material_store", None) is not None:
-            names += ("material_search",)
+            names += ("material_search", "material_get")
         adapter = getattr(self.service().tool_runtime, "admin_media_tools", None)
         if adapter is not None:
             names += tuple(sorted(adapter.allowed_tools))

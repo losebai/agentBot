@@ -47,7 +47,17 @@ async def after_nonebot_init(after_nonebot_init: None) -> None:
     from agent_bot.integrations.redis_queue import RedisConversationQueueStore
     from agent_bot.plugin import application as chat_plugin_module
 
-    chat_plugin_module._memory_schema = Mock(initialize=Mock())
+    # 普通插件测试不连接业务数据库；发送登记的持久化和素材权限由独立离线集成覆盖。
+    chat_plugin_module._reply_gateway.recorder = None
+    chat_plugin_module._session_delivery_store = None
+    chat_plugin_module.chat_service._sent_messages = None
+    chat_plugin_module.chat_service._session_delivery = None
+    chat_plugin_module.conversation_queue.processor._receive_queued = None
+    chat_plugin_module.image_queue.processor._receive_queued = None
+    chat_plugin_module.conversation_queue.processor._finish_received_callback = None
+    chat_plugin_module.image_queue.processor._finish_received_callback = None
+
+    chat_plugin_module._memory_schema = Mock(validate=Mock())
     chat_plugin_module._tagged_memory_store = Mock(initialize=Mock())
     fake_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     chat_plugin_module._redis_client = fake_redis

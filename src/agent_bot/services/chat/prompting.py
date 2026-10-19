@@ -26,6 +26,8 @@ _RECENT_GROUP_CONTEXT_ACKNOWLEDGEMENT = (
 _CURRENT_USER_CONTEXT_TEMPLATE = "我是{name}\n{prompt}"
 _MAX_CURRENT_USER_NAME_UTF16_UNITS = 128
 _MAX_REQUEST_MESSAGES = 100
+_MAX_REQUEST_CHARS = 120_000
+_MAX_MESSAGE_CHARS = 32_000
 
 
 class ChatPromptBuilder:
@@ -115,7 +117,7 @@ class ChatPromptBuilder:
         persist_history: bool = True,
         recent_group_context: str | None = None,
     ) -> list[ChatMessage]:
-        """合并系统消息、心智记忆、近期历史和群聊临时上下文。"""
+        """保留固定输入，按模型条数、单条和总字符上限裁切最旧历史。"""
 
         messages = list(self._system_messages if system_messages is None else system_messages)
         history_messages: Sequence[ChatMessage] = ()
@@ -154,13 +156,39 @@ class ChatPromptBuilder:
                 ),
             )
 
-        history_budget = max(
-            0,
-            _MAX_REQUEST_MESSAGES - len(messages) - len(recent_group_messages) - 1,
+        current_message = ChatMessage(role="user", content=current_prompt)
+        fixed_messages = (*messages, *recent_group_messages, current_message)
+        # 系统、压缩记忆、群背景和当前请求均完整保留；固定内容无效不能靠删历史掩盖。
+        if len(fixed_messages) > _MAX_REQUEST_MESSAGES:
+            raise PromptTooLongError("fixed prompt cannot exceed 100 messages")
+        if any(len(message.content) > _MAX_MESSAGE_CHARS for message in fixed_messages):
+            raise PromptTooLongError("fixed prompt message cannot exceed 32000 characters")
+        fixed_chars = sum(len(message.content) for message in fixed_messages)
+        if fixed_chars > _MAX_REQUEST_CHARS:
+            raise PromptTooLongError("fixed prompt cannot exceed 120000 characters")
+
+        history_budget = _MAX_REQUEST_MESSAGES - len(fixed_messages)
+        history = (
+            [_bounded_history_message(message) for message in history_messages[-history_budget:]]
+            if history_budget else []
         )
-        history_budget -= history_budget % 2
-        if history_budget:
-            messages.extend(history_messages[-history_budget:])
+        history_chars = sum(len(message.content) for message in history)
+        start = 0
+        # 日志允许独立、连续的助手事件，逐条移除最旧消息，不补造用户或要求配对。
+        while history_chars + fixed_chars > _MAX_REQUEST_CHARS:
+            history_chars -= len(history[start].content)
+            start += 1
+        messages.extend(history[start:])
         messages.extend(recent_group_messages)
-        messages.append(ChatMessage(role="user", content=current_prompt))
+        messages.append(current_message)
         return messages
+
+
+def _bounded_history_message(message: ChatMessage) -> ChatMessage:
+    """只裁切本次模型历史副本，保留角色和请求身份，不修改持久轮次或日志。"""
+    if len(message.content) <= _MAX_MESSAGE_CHARS:
+        return message
+    marker = "\n[历史内容过长，已截断]"
+    return message.model_copy(update={
+        "content": message.content[:_MAX_MESSAGE_CHARS - len(marker)] + marker,
+    })

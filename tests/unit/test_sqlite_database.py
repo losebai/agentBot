@@ -28,6 +28,9 @@ def test_initialize_all_tables_and_preserve_existing_data(tmp_path: Path) -> Non
             )
             tables = {row["name"] for row in cursor.fetchall()}
             assert {"chat_knowledge", "chat_knowledge_tag", "agent_bot_ai_provider"} <= tables
+            assert "chat_session_context" in tables
+            assert not {"chat_memory_session", "chat_memory_turn", "chat_memory_receipt",
+                        "chat_sent_message"} & tables
             cursor.execute(
                 "INSERT INTO agent_bot_ai_provider (name,protocol,base_url,created_at,updated_at) "
                 "VALUES (%s,%s,%s,%s,%s)",
@@ -56,16 +59,22 @@ def test_rollback_datetime_and_dictionary_cursor(tmp_path: Path) -> None:
     now = datetime(2026, 10, 13, 1, 2, 3, 456789)
     with closing(connect_database(params, cursorclass=pymysql.cursors.DictCursor)) as db:
         with db.cursor() as cursor:
-            cursor.execute("INSERT INTO chat_memory_receipt VALUES (%s,%s,%s)", ("s", "r", now))
+            cursor.execute(
+                "INSERT INTO chat_group_context (scope_id,messages_json,expires_at) "
+                "VALUES (%s,%s,%s)", ("s", "[]", now),
+            )
         db.rollback()
         with db.cursor() as cursor:
-            cursor.execute("SELECT * FROM chat_memory_receipt")
+            cursor.execute("SELECT * FROM chat_group_context")
             assert cursor.fetchall() == []
-            cursor.execute("INSERT INTO chat_memory_receipt VALUES (%s,%s,%s)", ("s", "r", now))
+            cursor.execute(
+                "INSERT INTO chat_group_context (scope_id,messages_json,expires_at) "
+                "VALUES (%s,%s,%s)", ("s", "[]", now),
+            )
         db.commit()
     with closing(connect_database(params, cursorclass=pymysql.cursors.DictCursor)) as db:
         with db.cursor() as cursor:
-            cursor.execute("SELECT expires_at FROM chat_memory_receipt")
+            cursor.execute("SELECT expires_at FROM chat_group_context")
             assert cursor.fetchone() == {"expires_at": now}
 
 

@@ -1,6 +1,7 @@
 """认证后的原始上传、直接生成、历史和有租约的媒体下载。"""
 
 import asyncio
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Query, Request
 from starlette.requests import ClientDisconnect
@@ -12,6 +13,9 @@ from agent_bot.ai.contracts import Page
 from agent_bot.database_pool import finish_database_write
 from agent_bot.materials.contracts import (
     MAX_FILE_BYTES,
+    MaterialId,
+    MaterialLibraryArguments,
+    MaterialLibraryView,
     MaterialSearchArguments,
     MaterialSearchResult,
     MaterialView,
@@ -148,6 +152,48 @@ def install_media_routes(router: APIRouter, runtime) -> None:
                 MediaOwner(entry="admin", session_id=f"admin_{session_id}"),
                 MaterialSearchArguments(query=query, kind=kind, limit=limit, offset=offset),
             )
+
+    @router.get("/material-library", response_model=Page[MaterialLibraryView])
+    async def material_library(
+        query: str = Query("", max_length=200, pattern=r"^[^\x00]*$"),
+        kind: str | None = Query(None, pattern=r"^(image|file)$"),
+        entry: str | None = Query(None, pattern=r"^(admin|qq)$"),
+        session_id: str = Query("", max_length=256, pattern=r"^[^\x00]*$"),
+        limit: int = Query(20, ge=1, le=100),
+        cursor: str | None = Query(None, min_length=1, max_length=1024),
+    ) -> Page[MaterialLibraryView]:
+        """管理员素材库可只读浏览全部来源，不接受伪造的会话所有者。"""
+        async with runtime.lease():
+            return await resources().materials.list_library(
+                MaterialLibraryArguments(query=query, kind=kind, entry=entry,
+                                         session_id=session_id, limit=limit), cursor=cursor,
+            )
+
+    @router.get("/material-library/{id}", response_model=MaterialLibraryView)
+    async def library_material(id: MaterialId) -> MaterialLibraryView:
+        """继承管理认证后读取完整素材说明，不与会话工具共享跨来源权限。"""
+        async with runtime.lease():
+            return await resources().materials.describe_for_library(id)
+
+    @router.get("/material-library/{id}/content")
+    async def library_material_content(id: MaterialId) -> MediaContentResponse:
+        """原件只在管理认证后读取，磁盘位置和认证凭据不进入 URL。"""
+        async with runtime.lease():
+            store = resources().materials
+            asset = await store.describe_for_library(id)
+            lease = store.open_library_content(id)
+            file = await lease.__aenter__()
+
+        async def chunks() -> AsyncIterator[bytes]:
+            """发送结束或断开均由响应归还文件锁，线程读取取消后仍等待收尾。"""
+            while chunk := await finish_database_write(lambda: file.read(65536)):
+                yield chunk
+
+        return MediaContentResponse(
+            chunks(), lease=lease, media_type=asset.mime_type,
+            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+                     "Content-Disposition": f'attachment; filename="{asset.id}"'},
+        )
 
     @router.get("/materials/{id}/content")
     async def material_content(

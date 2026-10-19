@@ -43,13 +43,30 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
             return await getattr(store, action)(*args, **kwargs)
 
     async def memory(action: str, *args, **kwargs):
-        """取消时等工作线程归还连接，避免先释放运行时租约。"""
+        """管理读取附加目录标题，取消时等全部工作线程归还连接再释放运行时租约。"""
         async with runtime.lease():
             store = getattr(runtime, "tagged_memory_store", None)
             if store is None:
                 raise KnowledgeError("MEMORY_UNAVAILABLE", status_code=503)
+
+            def operate():
+                """标题只装饰管理响应，QQ 记忆调用与不可逆权限键保持原有边界。"""
+                result = getattr(store, action)(*args, **kwargs)
+                if action not in {"admin_list", "admin_get", "admin_create", "admin_scopes"}:
+                    return result
+                rows = (result.items if isinstance(result, Page) else result
+                        if action == "admin_scopes" else (result,))
+                if not rows:
+                    return result
+                titles = store.admin_scope_titles({row.scope_id: row.scope for row in rows})
+                enriched = [row.model_copy(update={"scope_title": titles.get(row.scope_id)})
+                            for row in rows]
+                if isinstance(result, Page):
+                    return result.model_copy(update={"items": enriched})
+                return tuple(enriched) if action == "admin_scopes" else enriched[0]
+
             try:
-                return await finish_database_write(lambda: getattr(store, action)(*args, **kwargs))
+                return await finish_database_write(operate)
             except TaggedMemoryConflictError as error:
                 raise KnowledgeError("MEMORY_CONFLICT", status_code=409) from error
             except TaggedMemoryCapacityError as error:
@@ -134,5 +151,5 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
 
     @router.get("/memory-scopes", response_model=tuple[ScopeView, ...])
     async def memory_scopes(scope: MemoryScope | None = None):
-        """作用域目录仅包含不可逆键和类型。"""
+        """已认证管理员可用 QQ 昵称和群名识别归属，筛选仍使用不可逆键。"""
         return await memory("admin_scopes", scope=scope)

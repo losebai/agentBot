@@ -4,7 +4,7 @@ from agent_bot.agent.errors import AgentError
 from agent_bot.agent.tools.schema import ToolSchema
 
 ADMIN_MEDIA_TOOLS = frozenset(
-    {"local_workflow_list", "local_workflow_generate_image", "tts_generate"}
+    {"image_generate", "local_workflow_list", "local_workflow_generate_image", "tts_generate"}
 )
 QQ_ONLY_TOOLS = frozenset(
     {

@@ -1,6 +1,7 @@
 -- 用途：显式初始化 SQLite 的业务表与可选本地队列表。
 -- 执行顺序：由 agent-bot database init 在启用外键的事务中执行，再运行 settings init。
 -- 数据影响：仅创建缺失结构，不清空数据、不写入配置或密钥。
+-- 统一会话仅建 chat_session_context；既有部署校验迁移与备份后使用 2026-10-20-retire-legacy-session-context.sqlite.sql 清理旧表。
 -- SQLite 不支持 COMMENT，以下中文注释保留表、字段、索引与外键设计目的。
 
 -- chat 配置键值表
@@ -78,67 +79,6 @@ WHEN NEW.update_time = OLD.update_time BEGIN
 END;
 
 -- chat 持久会话记忆
-CREATE TABLE IF NOT EXISTS chat_memory_session (
-    -- HMAC 会话标识
-    `session_id` TEXT COLLATE NOCASE NOT NULL,
-    -- 会话代际标识，重建时重新生成
-    `generation_id` TEXT COLLATE NOCASE NOT NULL,
-    -- 压缩后的会话摘要
-    `memory_summary` TEXT COLLATE NOCASE NOT NULL,
-    -- 摘要乐观锁版本
-    `memory_revision` INTEGER NOT NULL DEFAULT 0,
-    -- 已压缩最大轮次 ID
-    `compacted_through_turn_id` INTEGER NOT NULL DEFAULT 0,
-    -- 滑动过期时间
-    `expires_at` DATETIME NOT NULL,
-    -- 创建时间
-    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    -- 更新时间
-    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (`session_id`)
-);
--- 联合索引支持过滤及排序。
-CREATE INDEX IF NOT EXISTS idx_chat_memory_session_expires ON chat_memory_session (`expires_at`);
--- 更新业务字段时同步记录更新时间，不覆盖应用显式设置的时间。
-CREATE TRIGGER IF NOT EXISTS chat_memory_session_update_time AFTER UPDATE ON chat_memory_session
-WHEN NEW.update_time = OLD.update_time BEGIN
-    UPDATE chat_memory_session SET update_time=CURRENT_TIMESTAMP WHERE session_id=NEW.session_id;
-END;
-
--- chat 最近会话轮次
-CREATE TABLE IF NOT EXISTS chat_memory_turn (
-    -- 轮次主键
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    -- HMAC 会话标识
-    `session_id` TEXT COLLATE NOCASE NOT NULL,
-    -- 幂等请求标识，旧轮次为空
-    `request_id` TEXT NULL,
-    -- 用户历史文本
-    `user_content` TEXT COLLATE NOCASE NOT NULL,
-    -- 已投递助手内容
-    `assistant_content` TEXT COLLATE NOCASE NOT NULL,
-    -- 创建时间
-    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
--- 联合索引支持过滤及排序。
-CREATE INDEX IF NOT EXISTS idx_chat_memory_turn_session_id ON chat_memory_turn (`session_id`, `id`);
--- 唯一索引保护业务标识。
-CREATE UNIQUE INDEX IF NOT EXISTS uk_chat_memory_turn_request ON chat_memory_turn (`session_id`, `request_id`);
-
--- chat 已提交请求回执
-CREATE TABLE IF NOT EXISTS chat_memory_receipt (
-    -- HMAC 会话标识
-    `session_id` TEXT COLLATE NOCASE NOT NULL,
-    -- 幂等请求标识
-    `request_id` TEXT NOT NULL,
-    -- 独立重试去重截止时间
-    `expires_at` DATETIME NOT NULL,
-    PRIMARY KEY (`session_id`, `request_id`)
-);
--- 联合索引支持过滤及排序。
-CREATE INDEX IF NOT EXISTS idx_chat_memory_receipt_expires ON chat_memory_receipt (`expires_at`);
-
--- chat 群聊最近文本
 CREATE TABLE IF NOT EXISTS chat_group_context (
     -- HMAC Bot/群作用域
     `scope_id` TEXT COLLATE NOCASE NOT NULL,
@@ -161,13 +101,7 @@ WHEN NEW.update_time = OLD.update_time BEGIN
 END;
 
 -- 标签记忆作用域与写锁
-CREATE TABLE IF NOT EXISTS chat_memory_scope (
-    -- 匿名作用域键
-    scope_id TEXT NOT NULL,
-    -- 记忆作用域：全局、会话、用户或群组
-    scope TEXT COLLATE NOCASE NOT NULL,
-    PRIMARY KEY (scope_id)
-);
+-- 旧关联表已合入 chat_tagged_memory，不再单独创建。
 
 -- LLM 自主保存的标签记忆
 CREATE TABLE IF NOT EXISTS chat_tagged_memory (
@@ -184,7 +118,13 @@ CREATE TABLE IF NOT EXISTS chat_tagged_memory (
     -- 创建时间
     create_time DATETIME NOT NULL,
     -- 更新时间
-    update_time DATETIME NOT NULL
+    update_time DATETIME NOT NULL,
+    -- 内嵌授权作用域类型，不再依赖作用域关联表。
+    scope TEXT NOT NULL,
+    -- 规范化主题标签数组，不再依赖标签关联表。
+    tags_json TEXT NOT NULL CHECK (json_valid(tags_json)),
+    -- 引用素材标识数组，原件授权仍按当前会话校验。
+    material_ids_json TEXT NOT NULL CHECK (json_valid(material_ids_json))
 );
 -- 唯一索引保护业务标识。
 CREATE UNIQUE INDEX IF NOT EXISTS uk_tagged_memory_scope_key ON chat_tagged_memory (scope_id, memory_key);
@@ -192,15 +132,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uk_tagged_memory_scope_key ON chat_tagged_memo
 CREATE INDEX IF NOT EXISTS idx_tagged_memory_scope_time ON chat_tagged_memory (scope_id, is_deleted, update_time);
 
 -- 记忆与标签多对多关联
-CREATE TABLE IF NOT EXISTS chat_memory_tag (
-    -- 关联记忆
-    memory_id INTEGER NOT NULL,
-    -- 规范化主题标签
-    tag TEXT NOT NULL,
-    PRIMARY KEY (memory_id, tag)
-);
+-- 旧关联表已合入 chat_tagged_memory，不再单独创建。
 -- 联合索引支持过滤及排序。
-CREATE INDEX IF NOT EXISTS idx_memory_tag_lookup ON chat_memory_tag (tag, memory_id);
 
 -- 本地 Comfy 工作流定义与执行绑定
 CREATE TABLE IF NOT EXISTS chat_workflow (
@@ -313,38 +246,7 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_model (
 -- 唯一索引保护业务标识。
 CREATE UNIQUE INDEX IF NOT EXISTS uq_model_alias ON agent_bot_ai_model (alias);
 
--- 普通文本调用记录
-CREATE TABLE IF NOT EXISTS agent_bot_ai_session (
-    -- 执行标识，三十二位十六进制
-    execution_id TEXT NOT NULL,
-    -- 区分大小写的会话标识
-    session_id TEXT NOT NULL,
-    -- 调用方请求标识
-    request_id TEXT COLLATE NOCASE NOT NULL,
-    -- 请求指定的模型别名
-    configured_model TEXT COLLATE NOCASE NOT NULL,
-    -- 实际使用的模型标识
-    model TEXT COLLATE NOCASE NOT NULL,
-    -- 执行状态：运行中、完成、失败或取消
-    status TEXT COLLATE NOCASE NOT NULL,
-    -- 执行耗时，单位毫秒
-    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
-    -- 令牌用量统计
-    `usage` TEXT COLLATE NOCASE NOT NULL CHECK (json_valid(usage)),
-    -- 创建时间，协调世界时
-    created_at DATETIME NOT NULL,
-    -- 稳定错误代码
-    error_code TEXT COLLATE NOCASE NULL,
-    -- 用户输入文本
-    prompt TEXT COLLATE NOCASE NOT NULL,
-    -- 模型输出文本
-    content TEXT COLLATE NOCASE NOT NULL,
-    PRIMARY KEY (execution_id)
-);
--- 联合索引支持过滤及排序。
-CREATE INDEX IF NOT EXISTS idx_session_created ON agent_bot_ai_session (session_id, created_at, execution_id);
--- 联合索引支持过滤及排序。
-CREATE INDEX IF NOT EXISTS idx_created ON agent_bot_ai_session (created_at, execution_id);
+-- 普通调用统一保存在 agent_bot_call_record，不再创建旧执行表。
 
 -- 智能体执行记录
 CREATE TABLE IF NOT EXISTS agent_bot_agent_run (
@@ -727,6 +629,7 @@ CREATE TABLE IF NOT EXISTS agent_bot_call_record (
   content TEXT, -- 用户输入正文
   replay_context TEXT, -- 模型回复正文
   create_time TEXT, -- 调用记录时间，保留源时间
+  created_at_utc TEXT, -- 普通执行原始 UTC 时间，保留微秒；其他历史来源可空
   duration INTEGER, -- 调用耗时，单位 ms
   user_certificate TEXT, -- 用户凭据摘要，不保存原始凭据
   model TEXT, -- 实际调用模型
@@ -897,13 +800,30 @@ CREATE TABLE IF NOT EXISTS chat_material_source (
 -- 支持按素材检查来源。
 CREATE INDEX IF NOT EXISTS idx_material_source_material ON chat_material_source(material_id);
 
-CREATE TABLE IF NOT EXISTS chat_memory_material (
-    -- 关联长期标签记忆，遗忘只软删除记忆。
-    memory_id INTEGER NOT NULL REFERENCES chat_tagged_memory(id),
-    -- 关联持久素材，外键确保原件登记真实存在。
-    material_id TEXT NOT NULL REFERENCES chat_material(id),
-    -- 同一记忆不重复关联同一素材。
-    PRIMARY KEY(memory_id,material_id)
-);
+-- 旧关联表已合入 chat_tagged_memory，不再单独创建。
 -- 支持按素材反查其记忆引用。
-CREATE INDEX IF NOT EXISTS idx_memory_material_material ON chat_memory_material(material_id);
+
+-- 用途：统一保存当前会话接收和发送上下文，每个 session 仅一行，不设置过期时间。
+-- 顺序：已有 SQLite 部署先停止服务并备份，再执行本脚本及显式历史迁移工具。
+-- 数据影响：仅新增表，不删除旧会话、轮次、出站记录，不覆盖已有统一上下文。
+CREATE TABLE IF NOT EXISTS chat_session_context (
+    -- 会话唯一标识，并发合并由短写事务串行提交。
+    session_id TEXT NOT NULL PRIMARY KEY,
+    -- 仅显式清空时切换，隔离旧后台任务。
+    generation_id TEXT NOT NULL,
+    -- 按消息时间及稳定序号排序的双向上下文。
+    messages_json TEXT NOT NULL,
+    -- 超出近期窗口的历史摘要。
+    memory_summary TEXT NOT NULL,
+    -- 摘要快照序号，不拒绝普通消息并发更新。
+    memory_revision INTEGER NOT NULL DEFAULT 0,
+    -- 请求去重、发送占位及回执，不再依赖出站正文表。
+    deliveries_json TEXT NOT NULL,
+    -- UTC 创建时间。
+    create_time DATETIME NOT NULL,
+    -- UTC 最近合并时间，不用于自动过期。
+    update_time DATETIME NOT NULL
+);
+
+-- 普通接口按来源、原始 UTC 微秒和执行标识稳定分页。
+CREATE INDEX IF NOT EXISTS idx_call_source_created ON agent_bot_call_record(source, created_at_utc, execution_id);

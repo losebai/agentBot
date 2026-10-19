@@ -7,11 +7,13 @@ import base64
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from nonebot.adapters.onebot.v11 import Bot, MessageSegment
 from nonebot.adapters.onebot.v11.exception import ActionFailed, ApiNotAvailable, NetworkError
+from websockets.exceptions import ConnectionClosedError
 
 from agent_bot.ai.chat_errors import (
     ChatAiError,
@@ -20,6 +22,7 @@ from agent_bot.ai.chat_errors import (
     ChatAiUnavailableError,
 )
 from agent_bot.config import RuntimeConfig
+from agent_bot.integrations.onebot.outgoing import OutgoingRecorder
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway
 from agent_bot.integrations.workflow_store import WorkflowNotFoundError
 from agent_bot.model_guard import (
@@ -94,8 +97,11 @@ class ConversationQueueProcessor:
         operation_store_provider: Callable[[], ToolOperationStore],
         image_submitter: Callable[[ConversationJob], Awaitable[str]],
         workflow_service_provider: Callable[[], WorkflowExecutionService | None],
+        outgoing_recorder: OutgoingRecorder | None = None,
+        receive_queued: Callable[..., Awaitable[None]] | None = None,
+        finish_received: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
-        """保存运行时依赖提供器，使配置热更新后无需重建处理器。"""
+        """保存热更新依赖和统一发送记录器，队列与命令使用同一上下文边界。"""
 
         self._config_provider = config_provider
         self._chat_service_provider = chat_service_provider
@@ -107,15 +113,31 @@ class ConversationQueueProcessor:
         self._operation_store_provider = operation_store_provider
         self._image_submitter = image_submitter
         self._workflow_service_provider = workflow_service_provider
+        self._outgoing_recorder = outgoing_recorder
+        self._receive_queued = receive_queued
+        self._finish_received_callback = finish_received
+
+    @asynccontextmanager
+    async def _delivery_scope(self, job: ConversationJob, key: str):
+        """每个持久投递片段使用稳定键，后台任务保留提交时的会话代际。"""
+        if self._outgoing_recorder is None:
+            yield
+        else:
+            async with self._outgoing_recorder.scope(
+                job.session_id, job.request_id, key=key,
+                generation_id=job.history_generation_id,
+            ):
+                yield
 
     @property
     def retryable_errors(self) -> tuple[type[Exception], ...]:
-        """返回队列编排层允许按策略重试的业务与 OneBot 异常。"""
+        """返回可按策略重试的异常，包含 OneBot 发送阶段直接抛出的 WebSocket 断连。"""
 
         return (
             ChatAiUnavailableError,
             ModelGuardUnavailableError,
             ConnectionError,
+            ConnectionClosedError,
             TimeoutError,
             ActionFailed,
             ApiNotAvailable,
@@ -123,9 +145,10 @@ class ConversationQueueProcessor:
         )
 
     async def generate(self, job: ConversationJob) -> ConversationResult:
-        """将本次 AI 附件与已生成结果一并保存，投递重试复用队列快照。"""
-        with capture_tool_images() as images:
-            result = await self._generate(job)
+        """捕获素材读取和模型附件；开画通知也登记到当前请求的出站历史。"""
+        async with self._delivery_scope(job, "generate"):
+            with capture_tool_images() as images:
+                result = await self._generate(job)
         if images.items:
             result = ConversationResult.model_validate(result.model_copy(update={
                 "tool_images": images.items,
@@ -133,9 +156,10 @@ class ConversationQueueProcessor:
         return result
 
     async def _generate(self, job: ConversationJob) -> ConversationResult:
-        """生成文本或媒体并规范化已生成任务正文，工作流只持久化首张已验证图片。"""
+        """绑定直接生图和工作流提交器，生成结果与投递检查点共用原队列。"""
 
         async with self._runtime_lease():
+            await self._receive_original(job)
             if (execution := active_image_task.get()) is not None:
                 await execution.check_cancelled()
             if job.ai_job_reply is not None:
@@ -176,6 +200,9 @@ class ConversationQueueProcessor:
                 if collector is not None:
                     collector.submit = lambda request, text: self._submit_image(
                         job, request, start_reply=text,
+                    )
+                    collector.submit_image = lambda prompt, text: self._submit_image(
+                        job.model_copy(update={"prompt": prompt}), start_reply=text,
                     )
                 try:
                     if collector is not None and collector.queued_task_id is not None:
@@ -361,7 +388,7 @@ class ConversationQueueProcessor:
         self, job: ConversationJob, workflow_request: WorkflowImageRequest | None = None,
         *, start_reply: str | None = None,
     ) -> str:
-        """答复送达后将受限绘图参数持久化到独立队列，不等待生成。"""
+        """答复送达后独立提交绘图，子任务只保留准备好的原图，不继承接收素材引用。"""
 
         if (
             workflow_request is None
@@ -372,12 +399,15 @@ class ConversationQueueProcessor:
             raise ValueError("workflow submission requires the agent start reply")
         await self._send_image_start(job, text=start_reply)
         task_id = "image-" + hashlib.sha256(job.job_id.encode("utf-8")).hexdigest()[:32]
+        scope = self._outgoing_recorder.current_scope if self._outgoing_recorder else None
         task = ConversationJob.model_validate(job.model_copy(update={
             "job_id": task_id, "request_id": f"{job.request_id[:120]}-image",
             "background_image": True, "workflow_request": workflow_request,
             "media_output": "IMAGE" if workflow_request is None else None,
             "chat_tools": (), "image_urls": (), "video_urls": (),
+            "material_ids": (), "image_material_ids": (),
             "image_start_reply": None, "image_start_parts": None,
+            "history_generation_id": scope.generation_id if scope else job.history_generation_id,
         }).model_dump(by_alias=True))
         await self._image_submitter(task)
         return task_id
@@ -506,6 +536,11 @@ class ConversationQueueProcessor:
         return len(job.image_start_parts) if job.image_start_parts is not None else 1
 
     async def deliver_start_part(self, job: ConversationJob, index: int) -> None:
+        """按片段键绑定出站上下文，恢复开画通知不会重复记录或发送。"""
+        async with self._delivery_scope(job, f"start:{index}"):
+            await self._deliver_start_part(job, index)
+
+    async def _deliver_start_part(self, job: ConversationJob, index: int) -> None:
         """投递指定的持久化开画片段，重试和热刷新均不得重新分段。"""
 
         job = ConversationJob.model_validate(job.model_dump(by_alias=True))
@@ -566,8 +601,23 @@ class ConversationQueueProcessor:
         )
 
     async def delivery_count(self, job: ConversationJob, result: ConversationResult) -> int:
-        """通用图片逐张投递，原有文本或媒体随后投递。"""
+        """缓存恢复也先登记原用户和事件时间，再计算图片、正文的持久投递进度。"""
+        if self._receive_queued is not None:
+            async with self._runtime_lease():
+                await self._receive_original(job)
         return len(result.tool_images) + await self._delivery_count(job, result)
+
+    async def _receive_original(self, job: ConversationJob) -> None:
+        """生成与缓存投递共享接收登记，仓库按请求去重并保留首次原时间。"""
+        if (
+            self._receive_queued is not None and not job.background_image
+            and job.ai_job_id is None and job.auto_speak_max_reply_chars is None
+        ):
+            await self._receive_queued(
+                job.session_id, job.prompt, request_id=job.request_id,
+                created_at=datetime.fromtimestamp(job.created_at, UTC),
+                chat_context=job.chat_context, generation_id=job.history_generation_id,
+            )
 
     def _requires_image_completion(
         self, job: ConversationJob, result: ConversationResult,
@@ -611,6 +661,13 @@ class ConversationQueueProcessor:
         return result.mention_target_id if result.kind == "TOOL_REPLY" else job.mention_target_id
 
     async def deliver_part(
+        self, job: ConversationJob, result: ConversationResult, index: int,
+    ) -> None:
+        """单独发送图片及文字，每个成功片段独立进入原会话上下文。"""
+        async with self._delivery_scope(job, f"result:{index}"):
+            await self._deliver_part(job, result, index)
+
+    async def _deliver_part(
         self, job: ConversationJob, result: ConversationResult, index: int,
     ) -> None:
         """按持久化索引先发图片再通知创建人，失败后不重发已确认附件。"""
@@ -743,10 +800,13 @@ class ConversationQueueProcessor:
                 job.workflow_request is not None
                 or "local_workflow_generate_image" in job.chat_tools
             ):
+                # 只记录协议关闭码，避免对端的关闭原因正文夹带配置或凭据。
+                received = error.rcvd if isinstance(error, ConnectionClosedError) else None
+                sent = error.sent if isinstance(error, ConnectionClosedError) else None
                 logger.warning(
                     "本地工作流处理失败：stage=napcat_delivery job_id=%s "
                     "request_id=%s session_id=%s result_kind=%s part_index=%s "
-                    "image_count=%s error=%s",
+                    "image_count=%s error=%s ws_received_code=%s ws_sent_code=%s",
                     job.job_id,
                     job.request_id,
                     job.session_id,
@@ -754,10 +814,30 @@ class ConversationQueueProcessor:
                     index,
                     len(result.workflow_images),
                     type(error).__name__,
+                    received.code if received is not None else None,
+                    sent.code if sent is not None else None,
                 )
             raise
 
     async def deliver_failure(self, job: ConversationJob, error: Exception) -> None:
+        """终态失败结束原输入保护；只有用户实际收到的失败提示才能登记为助手消息。"""
+        try:
+            async with self._delivery_scope(job, "failure"):
+                await self._deliver_failure(job, error)
+        finally:
+            if self._finish_received_callback is not None:
+                async with self._runtime_lease():
+                    await self._finish_received(job)
+
+    async def _finish_received(self, job: ConversationJob) -> None:
+        """只结束真实用户请求；重试中的生成失败不能调用，派生任务没有用户占位。"""
+        if (
+            self._finish_received_callback is not None and not job.background_image
+            and job.ai_job_id is None and job.auto_speak_max_reply_chars is None
+        ):
+            await self._finish_received_callback(job.session_id, job.request_id)
+
+    async def _deliver_failure(self, job: ConversationJob, error: Exception) -> None:
         """配置和忙碌状态直接通知，其余模型失败静默，业务失败才调用解释模型。"""
 
         if (
@@ -821,9 +901,21 @@ class ConversationQueueProcessor:
         return min(configured_limit, job.auto_speak_max_reply_chars)
 
     async def commit(self, job: ConversationJob, result: ConversationResult) -> None:
-        """在消息全部投递后提交一轮对话历史。"""
+        """普通轮次保存用户请求；主动发言和后台结果由真实出站日志独立承载。"""
 
-        if result.kind == "SILENT" or job.background_image:
+        if (result.kind == "SILENT" or job.background_image
+                or (self._outgoing_recorder is not None
+                    and job.auto_speak_max_reply_chars is not None)):
+            if self._finish_received_callback is not None:
+                async with self._runtime_lease():
+                    await self._finish_received(job)
+            return
+        if job.ai_job_id is not None:
+            # 定时结果只有确认发送的助手消息；确认 Job 不得把内部任务提示伪造成用户。
+            async with self._runtime_lease():
+                await self._chat_service_provider().client.acknowledge_job(
+                    job.bot_id, job.ai_job_id,
+                )
             return
         if result.kind == "IMAGE_QUEUED":
             assert result.reply is not None
@@ -846,6 +938,13 @@ class ConversationQueueProcessor:
         if result.tool_images:
             marker = f"[已发送 {len(result.tool_images)} 张工具图片]"
             delivered_answer = f"{delivered_answer}\n{marker}".strip()
+        if self._outgoing_recorder is not None:
+            # 完整文件在出站日志；为用户问题及群昵称留预算，避免大附件挤掉整个配对轮次。
+            marker = "\n[完整已发送内容见出站日志和素材]"
+            budget = self._config_provider().chat_history_max_chars
+            preview_limit = min(32_000, max(1, budget - len(job.prompt) - 256 - len(marker)))
+            if len(delivered_answer) > preview_limit:
+                delivered_answer = delivered_answer[:preview_limit] + marker
         async with self._runtime_lease():
             await self._chat_service_provider().commit_queued(
                 job.session_id,
@@ -854,7 +953,4 @@ class ConversationQueueProcessor:
                 chat_context=job.chat_context,
                 request_id=job.request_id,
             )
-            if job.ai_job_id is not None:
-                await self._chat_service_provider().client.acknowledge_job(
-                    job.bot_id, job.ai_job_id,
-                )
+            await self._finish_received(job)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
@@ -19,19 +18,20 @@ from agent_bot.integrations.naraka import NarakaClient
 from agent_bot.integrations.onebot.auto_speak import AutoSpeakBot, AutoSpeakService
 from agent_bot.media.resources import MediaResources
 from agent_bot.memory_store import (
-    ConversationMemoryPolicy,
     GroupContextPolicy,
-    MySqlConversationMemoryStore,
     MySqlRecentGroupContextStore,
 )
 from agent_bot.model_router import ContentModelRouter
 from agent_bot.models import ChatToolName
 from agent_bot.runtime_fields import RESTART_REQUIRED_FIELDS
+from agent_bot.sent_messages import SentMessageStore
 from agent_bot.services.auto_speak_decision import AutoSpeakContextBuilder
 from agent_bot.services.chat import ChatService
 from agent_bot.services.conversation_queue import ConversationJob
 from agent_bot.services.naraka import NarakaQueryService
 from agent_bot.services.workflow_execution import WorkflowExecutionService
+from agent_bot.session_context import SessionContextPolicy, SessionContextStore
+from agent_bot.session_delivery import SessionDeliveryStore
 from agent_bot.settings import (
     DatabaseParams,
     runtime_config_to_plain_values,
@@ -51,7 +51,7 @@ class RuntimeState:
     access_policy: AccessPolicy
     ai_client: RoutingAiClient
     model_guard: RoutedModelGuard
-    conversation_store: MySqlConversationMemoryStore
+    conversation_store: SessionContextStore
     group_recent_context_store: MySqlRecentGroupContextStore
     chat_service: ChatService
     message_counter: MessageCounter
@@ -79,8 +79,10 @@ def build_runtime_state(
     chat_tool_bridge: ChatToolBridge | None = None,
     media_resources: MediaResources | None = None,
     core_state: CoreRuntimeState | None = None,
+    sent_messages: SentMessageStore | None = None,
+    session_delivery: SessionDeliveryStore | None = None,
 ) -> RuntimeState:
-    """从类型化配置构建运行时，并复用契约未变化的历史存储。"""
+    """复用无过期的统一仓库，所有收发上下文按会话并发合并。"""
 
     session_secret = config.chat_session_secret.get_secret_value()
     naraka_default_role_id = (
@@ -110,17 +112,16 @@ def build_runtime_state(
     comfy_client, workflow_service = core_state.comfy_client, core_state.workflow_service
     tts_client = core_state.tts_client
     agent_catalog, mcp_connector = core_state.agent_catalog, core_state.mcp_connector
-    conversation_policy = ConversationMemoryPolicy(
+    conversation_policy = SessionContextPolicy(
         history_turns=config.chat_history_turns,
         max_history_chars=config.chat_history_max_chars,
-        ttl_seconds=config.chat_history_ttl_seconds,
         memory_enabled=config.chat_memory_enabled,
         max_memory_chars=config.chat_memory_max_chars,
     )
     conversation_store = (
         previous.conversation_store
         if previous is not None
-        else MySqlConversationMemoryStore(
+        else SessionContextStore(
             database,
             policy=conversation_policy,
             connect=database_pool.connect,
@@ -155,6 +156,8 @@ def build_runtime_state(
         web_search_enabled=config.chat_web_search_enabled,
         memory_compression_max_tokens=config.chat_memory_compression_max_tokens,
         memory_compression_queue_capacity=config.chat_memory_compression_queue_capacity,
+        sent_messages=sent_messages,
+        session_delivery=session_delivery,
     )
     message_counter = MessageCounter(
         limit=config.chat_user_message_limit,
@@ -168,9 +171,7 @@ def build_runtime_state(
         auto_speak_service = AutoSpeakService(
             job_submitter=auto_speak_job_submitter,
             available_tools_provider=auto_speak_tools_provider,
-            conversation_context_provider=lambda session_id: asyncio.to_thread(
-                conversation_store.context, session_id
-            ),
+            conversation_context_provider=chat_service.conversation_context,
             decision_client=AutoSpeakDecisionService(
                 agent_catalog, mcp_connector,
                 AutoSpeakRecords(database, connect=database_pool.connect),
@@ -185,6 +186,7 @@ def build_runtime_state(
             prompt=config.chat_auto_speak_prompt,
             system_prompt=config.chat_system_prompt,
             system_prompt_provider=ai_client.current_system_prompt,
+            group_shared_session=config.chat_group_shared_session,
             laya_prompt=config.chat_auto_speak_laya_prompt,
             session_secret=session_secret,
             initial_delay_seconds=config.chat_auto_speak_initial_delay_seconds,

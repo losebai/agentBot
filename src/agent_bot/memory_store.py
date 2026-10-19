@@ -408,8 +408,18 @@ class MySqlConversationMemoryStore:
         with self._policy_lock:
             self._policy = policy
 
+    @property
+    def history_turns(self) -> int:
+        """读取当前近期历史开关，出站日志不得绕过关闭历史的策略。"""
+        return self.policy.history_turns
+
+    @property
+    def max_history_chars(self) -> int:
+        """读取模型历史预算，保留数据库中完整消息及素材原件。"""
+        return self.policy.max_history_chars
+
     def context(self, session_id: str) -> ConversationContext:
-        """Load and renew one unexpired conversation snapshot."""
+        """读取并续期未过期会话，同时返回真实代际以隔离出站日志。"""
 
         normalized_session_id = _validate_session_id(session_id)
         policy = self.policy
@@ -459,7 +469,33 @@ class MySqlConversationMemoryStore:
         memory = row["memory_summary"]
         if not isinstance(memory, str):
             raise ChatMemoryStoreError("conversation memory row is invalid")
-        return ConversationContext(memory=memory, messages=tuple(messages))
+        return ConversationContext(
+            memory=memory, messages=tuple(messages), generation_id=str(row["generation_id"])
+        )
+
+    def ensure_generation(self, session_id: str) -> str:
+        """事务内续期或创建空会话，为主动消息和后台结果提供稳定代际。"""
+        normalized = _validate_session_id(session_id)
+        now = _naive_utc(self._clock())
+        expires_at = now + timedelta(seconds=self.policy.ttl_seconds)
+        try:
+            with closing(self._open()) as connection:
+                try:
+                    with connection.cursor() as cursor:
+                        self._delete_expired_session(cursor, normalized, now)
+                        self._ensure_session(cursor, normalized, expires_at, now)
+                        row = self._lock_session(cursor, normalized)
+                        if row is None:
+                            raise ChatMemoryStoreError("conversation session row is unavailable")
+                        self._renew_session(cursor, normalized, expires_at, now)
+                    connection.commit()
+                except Exception:
+                    with suppress(Exception):
+                        connection.rollback()
+                    raise
+        except (InterfaceError, OperationalError, DatabaseError) as exc:
+            raise ChatMemoryStoreError("failed to ensure conversation generation") from exc
+        return str(row["generation_id"])
 
     def commit_exchange(
         self,

@@ -34,6 +34,21 @@ export interface SettingsSnapshot {
   fields: SettingField[];
 }
 
+/** 队列未运行时仅展示不可用状态，不将零计数误认为队列已清空。 */
+export interface DeadLetterStatus {
+  available: boolean;
+  text: number;
+  images: number;
+  total: number;
+}
+
+/** 清除结果按本次实际删除数量返回，不包含待处理任务。 */
+export interface DeadLetterClearResult {
+  cleared: number;
+  text: number;
+  images: number;
+}
+
 /** 持久归档累计与当前进程的活动请求分开统计，未上报缓存信息保持未知。 */
 export interface OverviewStatistics {
   conversation_count: number;

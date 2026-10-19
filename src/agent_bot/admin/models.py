@@ -19,6 +19,8 @@ STARTUP_SETTING_NAMES = STATIC_SETTING_NAMES | BOOTSTRAP_SETTING_NAMES
 NATIVE_ONLY_STARTUP_SETTING_NAMES = frozenset({
     "agent_bot_napcat_mode", "agent_bot_napcat_webui_port",
 })
+# 仅移除管理设置入口；底层保留已有搜索绑定，编辑其他设置时不能将其清空。
+HIDDEN_SETTING_NAMES = frozenset({"chat_python_search_mcp_code"})
 
 
 class ApiModel(BaseModel):
@@ -46,7 +48,8 @@ class PatchBase(ApiModel):
 RuntimeConfigPatch = create_model(
     "RuntimeConfigPatch",
     __base__=PatchBase,
-    **{name: (field.annotation | None, None) for name, field in RuntimeConfig.model_fields.items()},
+    **{name: (field.annotation | None, None)
+       for name, field in RuntimeConfig.model_fields.items() if name not in HIDDEN_SETTING_NAMES},
     **{field.alias: (field.annotation | None, None)
        for field in BootstrapConfig.model_fields.values()},
 )

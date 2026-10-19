@@ -397,6 +397,14 @@ class RedisConversationQueueStore:
     async def dead_letter_length(self) -> int:
         return int(await self._redis.xlen(self._dead_letter_key))
 
+    async def clear_dead_letters(self) -> int:
+        """在事务中计数并删除本队列死信 Stream，禁止影响任务和其他部署的键。"""
+        async with self._redis.pipeline(transaction=True) as pipeline:
+            pipeline.xlen(self._dead_letter_key)
+            pipeline.delete(self._dead_letter_key)
+            count, _ = await pipeline.execute()
+        return int(count)
+
     async def _save_state(self, stream_id: str, state: QueueState) -> None:
         await self._redis.hset(self._state_key, stream_id, state.model_dump_json())
 

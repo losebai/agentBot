@@ -18,7 +18,7 @@ from agent_bot.services.auto_speak_decision import (
 )
 from agent_bot.services.chat.routing import ChatRouteSelector
 from agent_bot.services.conversation_queue import ConversationJob
-from agent_bot.state import ConversationContext, external_session_id
+from agent_bot.state import ConversationContext, build_session_scope, external_session_id
 
 
 class AutoSpeakBot(Protocol):
@@ -73,8 +73,9 @@ class AutoSpeakService:
         sleep: Sleep = asyncio.sleep,
         on_error: ErrorReporter | None = None,
         system_prompt_provider: Callable[[], Awaitable[str | None]] | None = None,
+        group_shared_session: bool = False,
     ) -> None:
-        """保存群目标与决策依赖；判定时读取当前人设，主动发言指令仍需提供。"""
+        """保存群目标、共享会话边界与决策依赖；判定时读取当前人设。"""
 
         if (
             not bot_id
@@ -103,6 +104,7 @@ class AutoSpeakService:
         self._system_prompt_provider = system_prompt_provider
         self._laya_prompt = laya_prompt.strip()
         self._session_secret = session_secret
+        self._group_shared_session = group_shared_session
         self._initial_delay_seconds = initial_delay_seconds
         self._interval_seconds = interval_seconds
         self._max_reply_chars = max_reply_chars
@@ -186,9 +188,16 @@ class AutoSpeakService:
         group_id: str,
         recent_group_context: str | None,
     ) -> bool:
-        """串行调用 Laya，并在 speak 时沿用群消息生成和投递流程。"""
+        """按配置绑定群会话，串行调用 Laya 并沿用普通队列生成和投递。"""
 
-        scope = f"bot:{self._bot_id}:auto:group:{group_id}"
+        # 共享群复用普通事件的规范身份；未共享时不能借主动发言扩大用户素材权限。
+        scope = (
+            build_session_scope(
+                bot_id=self._bot_id, user_id=self._bot_id, group_id=group_id, group_shared=True,
+            )
+            if self._group_shared_session
+            else f"bot:{self._bot_id}:auto:group:{group_id}"
+        )
         session_id = external_session_id(scope, self._session_secret)
         conversation_context = await self._conversation_context_provider(session_id)
         current_prompt = (

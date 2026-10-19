@@ -71,6 +71,28 @@ def test_save_cannot_modify_existing_memory(memory_store) -> None:
         ))
 
 
+def test_memory_fact_contains_scope_and_associations_without_side_tables(memory_store, tmp_path):
+    """每条事实直接保存授权类型和标签，不再依赖关联表。"""
+    import json
+    import sqlite3
+
+    identity = MemoryIdentity(bot_id="bot", user_id="user", session_id="session")
+    memory_store.execute(identity, MemoryArguments(
+        action="save", scope="user", key="fact", content="事实", tags=["主题"],
+    ))
+    with sqlite3.connect(tmp_path / "memory.db") as connection:
+        row = connection.execute(
+            "SELECT scope,tags_json,material_ids_json FROM chat_tagged_memory"
+        ).fetchone()
+        old_tables = connection.execute("SELECT name FROM sqlite_master WHERE name IN "
+                                       "('chat_memory_scope','chat_memory_tag',"
+                                       "'chat_memory_material')").fetchall()
+    assert row[0] == "user"
+    assert json.loads(row[1]) == ["主题"]
+    assert json.loads(row[2]) == []
+    assert old_tables == []
+
+
 @pytest.fixture
 def memory_store(tmp_path):
     """用 SQLite 执行真实关系查询，只翻译 MySQL 的建表与锁语法。"""
@@ -103,6 +125,10 @@ def memory_store(tmp_path):
 
         def execute(self, sql, args=()):
             """只翻译方言，筛选、排序、关联、事务仍由数据库执行。"""
+            if sql.startswith("SELECT GET_LOCK("):
+                return self.current.execute("SELECT 1 AS acquired")
+            if sql.startswith("SELECT RELEASE_LOCK("):
+                return self.current.execute("SELECT 1 AS released")
             sql = sql.replace("%s", "?").replace(
                 "ON DUPLICATE KEY UPDATE scope = VALUES(scope)",
                 "ON CONFLICT(scope_id) DO UPDATE SET scope = excluded.scope",
@@ -165,6 +191,8 @@ def memory_store(tmp_path):
         connection.executescript(
             Path("sql/2026-10-17-material-memory.sqlite.sql").read_text(encoding="utf-8")
         )
+        # 历史素材迁移的关联表已经退出当前结构，原件表继续供会话鉴权使用。
+        connection.execute("DROP TABLE chat_memory_material")
     return store
 
 
@@ -211,10 +239,11 @@ def test_store_scopes_duplicate_rejection_and_forget(memory_store) -> None:
     assert {item.tag for item in catalog.tags} == {"永劫"}
 
 
-def test_memory_ids_are_incrementing_integers_and_tag_links_use_them(
+def test_memory_ids_are_incrementing_integers_and_tags_live_in_each_fact(
     memory_store, tmp_path,
 ) -> None:
-    """新记忆由数据库分配整数 ID，标签关联使用同一个整数。"""
+    """新记忆由数据库分配整数 ID，标签直接存入事实。"""
+    import json
     import sqlite3
 
     identity = MemoryIdentity(bot_id="bot", user_id="user", session_id="session")
@@ -227,11 +256,11 @@ def test_memory_ids_are_incrementing_integers_and_tag_links_use_them(
         ids = [row[0] for row in connection.execute(
             "SELECT id FROM chat_tagged_memory ORDER BY id"
         )]
-        tag_ids = [row[0] for row in connection.execute(
-            "SELECT memory_id FROM chat_memory_tag ORDER BY memory_id"
+        tags = [json.loads(row[0]) for row in connection.execute(
+            "SELECT tags_json FROM chat_tagged_memory ORDER BY id"
         )]
     assert ids == [1, 2]
-    assert tag_ids == ids
+    assert tags == [["topic"], ["topic"]]
 
 
 def test_forget_hides_memory_without_deleting_row_and_cannot_restore_it(
@@ -265,11 +294,11 @@ def test_forget_hides_memory_without_deleting_row_and_cannot_restore_it(
             "SELECT is_deleted FROM chat_tagged_memory WHERE id = ?", (original_id,)
         ).fetchone()[0]
         old_tags = connection.execute(
-            "SELECT tag FROM chat_memory_tag WHERE memory_id = ?", (original_id,)
-        ).fetchall()
+            "SELECT tags_json FROM chat_tagged_memory WHERE id = ?", (original_id,)
+        ).fetchone()[0]
     assert row == (original_id, "old")
     assert deleted == 1
-    assert old_tags == [("old",)]
+    assert old_tags == '["old"]'
 
     with pytest.raises(RuntimeError, match="记忆键已存在"):
         memory_store.execute(
@@ -482,16 +511,16 @@ def test_scope_capacity_requires_forget_before_new_key(memory_store) -> None:
 
 
 def test_schema_script_matches_automatic_initialization() -> None:
-    """手工升级和服务启动使用同一张表结构。"""
+    """显式初始化与新库脚本使用同一事实表，历史基线不再充当最新结构。"""
+    import re
     from pathlib import Path
 
     from agent_bot.integrations.tagged_memory_store import SCHEMA_STATEMENTS
 
-    script = (Path(__file__).parents[2] / "sql/legacy/2026-09-22-tagged-memory.sql").read_text(
+    script = (Path(__file__).parents[2] / "sql/agent_bot_init.sql").read_text(
         encoding="utf-8",
     )
-    # 原始基线只映射表名前缀，继续核对完整结构。
-    normalized = " ".join(script.replace("dispatch_chat_", "chat_").split())
+    normalized = " ".join(re.sub(r"--[^\n]*", "", script).split())
     for statement in SCHEMA_STATEMENTS:
         assert " ".join(statement.split()) + ";" in normalized
 

@@ -67,11 +67,14 @@ class TooManyVideosError(VideoAttachmentError):
 
 @dataclass(frozen=True, slots=True)
 class MultimodalInput:
+    """模型输入与媒体引用；引用资料原文单独保留，不能混入本人来源。"""
+
     prompt: str
     image_urls: tuple[str, ...]
     video_urls: tuple[str, ...] = ()
     material_ids: tuple[str, ...] = ()
     image_material_ids: tuple[str, ...] = ()
+    quoted_text: str | None = field(default=None, repr=False)
 
 
 def validate_public_image_url(value: str) -> str:

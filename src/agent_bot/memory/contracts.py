@@ -9,6 +9,16 @@ MemoryKind = Literal["relationship", "preference", "agreement", "task", "fact", 
 MemoryStatus = Literal["active", "pending", "disputed", "expired", "merged", "deleted"]
 
 
+class QuotedMemorySource(BaseModel):
+    """服务端从真实引用绑定的有界资料，模型不能指定作者或平台消息身份。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    text: str = Field(min_length=1, max_length=20_000, repr=False)
+    event_id: str = Field(min_length=1, max_length=128)
+    user_id: str | None = Field(default=None, min_length=1, max_length=128)
+    time: datetime
+
+
 class MemoryUpdate(BaseModel):
     """省略字段保持原值；只有有效期允许用 null 显式清空。"""
 

@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from agent_bot.ai.chat_errors import ChatAiError
 from agent_bot.database_errors import DatabaseFailure
 from agent_bot.media_artifacts import ImageArtifact as WorkflowImageArtifact
+from agent_bot.memory.contracts import QuotedMemorySource
 from agent_bot.memory_store import ChatMemoryStoreError
 from agent_bot.model_guard import model_configuration_error_code
 from agent_bot.models import ChatContext, ChatMediaResponse, ChatToolName, MediaOutputType
@@ -85,6 +86,11 @@ class ConversationJob(BaseModel):
     memory_source_text: str | None = Field(
         default=None, alias="memorySourceText", max_length=20_000,
         exclude_if=lambda value: value is None, repr=False,
+    )
+    # 引用单独保存，恢复任务时不把他人资料混入本人原话或摘要证据。
+    memory_quoted_source: QuotedMemorySource | None = Field(
+        default=None, alias="memoryQuotedSource", exclude_if=lambda value: value is None,
+        repr=False,
     )
     user: str | None = Field(default=None, min_length=1, max_length=128)
     user_name: str | None = Field(default=None, alias="userName", max_length=128)

@@ -43,6 +43,7 @@ from agent_bot.services.tagged_memory import (
     MemoryIdentity,
     MemoryRecord,
     MemoryResult,
+    MemorySourceError,
     MemoryTag,
     memory_scope_owner,
     normalize_memory_tags,
@@ -365,7 +366,7 @@ class MemoryLifecycleMixin:
         excerpt: str = "",
         source_kind: str = "legacy_unknown",
     ) -> bool:
-        """真实来源去重；同来源重放不能刷佐证数量或确认时间。"""
+        """真实来源去重，引用保留原作者；同来源重放不能刷佐证数量或确认时间。"""
         source_ref = identity.source_event_id if identity else None
         signature = _evidence_key(source_kind, source_ref, excerpt)
         cursor.execute(
@@ -374,7 +375,12 @@ class MemoryLifecycleMixin:
         )
         if cursor.fetchone():
             return False
-        actor = identity.owner("user", self._secret) if identity else None
+        actor = None
+        if identity:
+            actor_id = (identity.source_user_id if source_kind == "third_party"
+                        else identity.user_id)
+            if actor_id is not None:
+                actor = memory_scope_owner(identity.bot_id, "user", actor_id, self._secret)
         cursor.execute(
             "INSERT INTO chat_memory_evidence "
             "(memory_id,first_revision,source_kind,source_ref,source_actor_id,"
@@ -570,9 +576,12 @@ class MemoryLifecycleMixin:
             if arguments.kind in {"preference", "relationship"} and scope != "user":
                 raise ValueError("个人偏好和关系只能保存至本人用户作用域")
         source_kind = source_kind or (
-            "self_report" if identity and identity.source_text else "legacy_unknown"
+            identity.source_kind if identity and identity.source_text else "legacy_unknown"
         )
         if existing:
+            # 模型声明 fact 不能让同键确认绕过已存分类，把引用挂到本人的偏好或约定。
+            if source_kind == "third_party" and existing["kind"] != "fact":
+                raise MemorySourceError()
             if existing["is_deleted"]:
                 _conflict("记忆键已存在且该事实已遗忘，不能恢复")
             if existing["status"] == "merged":

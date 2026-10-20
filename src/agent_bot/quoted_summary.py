@@ -280,6 +280,7 @@ async def build_quoted_chat_input(
         video_urls=video_urls,
         material_ids=tuple(dict.fromkeys((*collector.material_ids, *current_input.material_ids))),
         image_material_ids=image_ids,
+        quoted_text=material,
     )
 
 

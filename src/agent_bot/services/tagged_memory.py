@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -15,12 +15,27 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from agent_bot.database_pool import finish_database_write
 from agent_bot.materials.contracts import MaterialId
-from agent_bot.memory.contracts import MemoryEvidence, MemoryKind
+from agent_bot.memory.contracts import MemoryEvidence, MemoryKind, QuotedMemorySource
 
 if TYPE_CHECKING:
     from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
 
 MemoryScope = Literal["global", "session", "user", "group"]
+
+MEMORY_SOURCE_ERROR_MESSAGE = (
+    "记忆来源片段必须从当前真实用户消息或本次绑定的引用资料逐字摘取，"
+    "保留原有空格、标点和 Markdown，不能改写、拼接或加省略号。"
+    "保存用户明确要求保留的引用资料须使用 action=save、kind=fact、"
+    "retention_reason=explicit_request；引用不能作为本人偏好或关系的来源。"
+)
+
+
+class MemorySourceError(ValueError):
+    """只包含固定可公开提示，允许模型在当前请求内纠正来源参数。"""
+
+    def __init__(self) -> None:
+        """不接收模型输入或内部异常文本，避免错误提示泄露敏感值。"""
+        super().__init__(MEMORY_SOURCE_ERROR_MESSAGE)
 
 
 def normalize_memory_tags(tags: tuple[str, ...]) -> tuple[str, ...]:
@@ -76,7 +91,10 @@ class MemoryArguments(BaseModel):
     query: str = Field(default="", max_length=200)
     topic: str | None = Field(default=None, min_length=1, max_length=80)
     kind: MemoryKind = "fact"
-    source_excerpt: str | None = Field(default=None, min_length=1, max_length=300)
+    source_excerpt: str | None = Field(
+        default=None, min_length=1, max_length=300,
+        description="逐字摘取当前用户原话；明确要求保存引用事实时可摘取本次引用原文，保留格式",
+    )
     retention_reason: (
         Literal[
             "stable_preference",
@@ -151,6 +169,9 @@ class MemoryIdentity:
     source_event_id: str | None = None
     source_time: datetime | None = None
     request_id: str | None = None
+    quoted_source: QuotedMemorySource | None = field(default=None, repr=False)
+    source_kind: Literal["self_report", "third_party"] = "self_report"
+    source_user_id: str | None = None
 
     @property
     def scopes(self) -> tuple[MemoryScope, ...]:
@@ -254,7 +275,7 @@ class MemorySession:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     async def execute(self, arguments: MemoryArguments) -> MemoryResult:
-        """最多四次来源可核验的写入，更正必须核对当前版本。"""
+        """最多四次可核验写入，引用仅作明确要求保留的资料事实，更正需核对版本。"""
         if arguments.action not in ("recall", "tags"):
             async with self._lock:
                 if self._writes >= 4:
@@ -264,16 +285,29 @@ class MemorySession:
                     raise ValueError("无真实用户来源的请求只允许读取记忆")
                 if arguments.action == "forget" and arguments.expected_revision is None:
                     raise ValueError("遗忘需要先读取事实并传 expected_revision")
+                identity = self.identity
                 if arguments.action in {"save", "revise", "resolve"}:
                     if not arguments.source_excerpt or not arguments.retention_reason:
-                        raise ValueError("保存记忆需要真实来源片段和跨会话保留原因")
+                        raise MemorySourceError()
                     if (
-                        not self.identity.source_text
-                        or arguments.source_excerpt not in self.identity.source_text
+                        not identity.source_text
+                        or arguments.source_excerpt not in identity.source_text
                     ):
-                        raise ValueError("记忆来源片段不属于当前真实用户消息")
+                        quote = identity.quoted_source
+                        if not (
+                            quote is not None and arguments.source_excerpt in quote.text
+                            and arguments.action == "save" and arguments.kind == "fact"
+                            and arguments.retention_reason == "explicit_request"
+                        ):
+                            raise MemorySourceError()
+                        # 作用域仍属于请求者，证据身份改用原引用，重放不能虚增独立佐证。
+                        identity = replace(
+                            identity, source_text=quote.text, source_event_id=quote.event_id,
+                            source_time=quote.time, source_kind="third_party",
+                            source_user_id=quote.user_id,
+                        )
                 return await finish_database_write(
-                    lambda: self.store.execute(self.identity, arguments, self.deadline_at)
+                    lambda: self.store.execute(identity, arguments, self.deadline_at)
                 )
         if arguments.action == "recall" and arguments.query:
             if self.semantic_search is None:
@@ -312,7 +346,9 @@ MEMORY_TOOL_DESCRIPTION = (
     "save 传 scope/key/content/tags，可用 material_ids 关联当前会话已登记的图片或文件；"
     "只能使用接收上下文或 material_search 返回的真实素材 ID，不保存临时 URL 或 Base64。"
     "保存前判断跨会话价值；传 kind/topic/source_excerpt/retention_reason，"
-    "来源片段必须来自当前用户原话。"
+    "source_excerpt 必须逐字摘取当前用户原话，保留 Markdown、空格和标点，不改写或拼接。"
+    "用户明确要求保存本次引用资料时，可保存为 kind=fact、retention_reason=explicit_request，"
+    "source_excerpt 从引用资料逐字摘取最多300字符，正文 content 可总结；来源保留为引用作者。"
     "用户偏好仅能来自本人明确自述，群友观点、引用、助手推断不能变成本人偏好。"
     "精确重复自动合并；同命题更正先读取 ID/revision，再 revise(id,expected_revision,reason,...)，"
     "禁止换键制造重复；已遗忘事实不可恢复。"

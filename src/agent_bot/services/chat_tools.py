@@ -64,6 +64,7 @@ from agent_bot.services.tagged_memory import (
     MemoryArguments,
     MemoryResult,
     MemorySession,
+    MemorySourceError,
 )
 from agent_bot.services.tool_operations import (
     EffectToolName,
@@ -828,6 +829,8 @@ async def _memory(arguments: dict[str, object], context: ChatToolContext) -> Mem
 
     try:
         return await context.memory_session.execute(MemoryArguments.model_validate(arguments))
+    except MemorySourceError as error:
+        raise ChatToolError("MEMORY_SOURCE_INVALID", str(error)) from error
     except TaggedMemoryConflictError as error:
         raise ChatToolError("MEMORY_CONFLICT", str(error)) from error
     except TaggedMemoryCapacityError as error:

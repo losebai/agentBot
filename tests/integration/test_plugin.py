@@ -179,11 +179,11 @@ async def test_file_notice_persists_in_real_event_session(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("message", ["", "   ", Message(MessageSegment.at(90001))])
+@pytest.mark.parametrize("message", ["", "   "])
 async def test_empty_message_reply_comes_from_llm(
     app: App, chat_plugin, reply_chat: AsyncMock, message: str | Message,
 ) -> None:
-    """空消息与纯 At 必须生成回复，不能丢弃或进入普通聊天队列。"""
+    """真正的空消息通过校验回复模型提示缺少内容。"""
 
     event = group_event(message)
     async with app.test_matcher(chat_plugin.natural_chat) as ctx:
@@ -242,7 +242,7 @@ async def test_natural_validation_uses_reply_llm_or_stays_silent(
     ("message", "max_input_chars", "subject"),
     [
         (" \t\n ", 40, "消息内容"),
-        (Message([MessageSegment.at(90001), MessageSegment.text(" \t ")]), 40, "消息内容"),
+        (Message([MessageSegment.at(90001), MessageSegment.text(" \t ")]), 1, "消息长度"),
         ("长" * 41, 40, "消息长度"),
         (" \t ", 1, "消息内容"),
         ("长" * 2, 1, "消息长度"),
@@ -252,8 +252,11 @@ async def test_validation_context_reaches_real_reply_service_and_model(
     monkeypatch: pytest.MonkeyPatch, chat_plugin,
     message: str | Message, max_input_chars: int, subject: str,
 ) -> None:
-    """真实回复服务必须让空白、纯 At 和超限输入的校验回复到达底层模型。"""
+    """真实回复服务让空白和超限输入的校验回复到达底层模型，纯 At 按名称计长度。"""
 
+    monkeypatch.setattr(chat_plugin, "_load_group_members", AsyncMock(return_value=[
+        {"user_id": 90001, "nickname": "机器人昵称", "card": "桃桃"},
+    ]))
     complete = AsyncMock(return_value="真实模型生成的校验回复。")
     service = ChatService(
         client=Mock(complete=complete),
@@ -1233,6 +1236,10 @@ async def test_natural_chat_includes_all_quoted_content_in_current_request(
     queued = chat_plugin.conversation_queue.enqueue.await_args.args[0]
     assert queued.memory_source_text == "这段内容是什么意思？"
     assert "引用正文" not in queued.memory_source_text
+    assert "引用正文" in queued.memory_quoted_source.text
+    assert queued.memory_quoted_source.text in queued.prompt
+    assert queued.memory_quoted_source.event_id == "qq:90001:87"
+    assert queued.memory_quoted_source.user_id == "10086"
     assert respond.await_args.kwargs["image_urls"] == ()
     ids = respond.await_args.kwargs["image_material_ids"]
     assert len(ids) == 1 and ids[0] in respond.await_args.args[1]
@@ -1493,10 +1500,12 @@ async def test_group_natural_chat_replies_to_bot_only_mention(
     monkeypatch: pytest.MonkeyPatch,
     chat_plugin,
 ) -> None:
-    """纯 At 通过回复模型回应招呼，不创建普通聊天任务。"""
+    """纯 At 将机器人群名片作为普通聊天提示词，不能生成校验回复指令。"""
 
-    respond = AsyncMock(return_value="找我有什么事呀？")
-    monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", respond)
+    monkeypatch.setattr(chat_plugin, "_load_group_members", AsyncMock(return_value=[
+        {"user_id": 90001, "nickname": "机器人昵称", "card": "桃桃"},
+    ]))
+    respond = mock_response(monkeypatch, chat_plugin, "找我有什么事呀？")
     event = group_event(Message(MessageSegment.at(90001)), to_me=True)
 
     async with app.test_matcher(chat_plugin.natural_chat) as ctx:
@@ -1507,6 +1516,8 @@ async def test_group_natural_chat_replies_to_bot_only_mention(
         ctx.should_finished(chat_plugin.natural_chat)
 
     respond.assert_awaited_once()
+    assert respond.await_args.args[1] == "桃桃"
+    chat_plugin.chat_service.generate_reply_queued.assert_not_awaited()
 
 
 @pytest.mark.integration

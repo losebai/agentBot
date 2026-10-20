@@ -25,6 +25,7 @@ from agent_bot.ai.chat_errors import ChatAiRejectedError
 from agent_bot.ai.errors import AiError
 from agent_bot.config import RuntimeConfig
 from agent_bot.group_members import GroupMemberStoreError, GroupMemberValidationError
+from agent_bot.integrations.onebot.memory_source import quoted_memory_source
 from agent_bot.integrations.onebot.replies import OneBotReplyService
 from agent_bot.materials.receiver import MaterialReceiver
 from agent_bot.media.contracts import MediaOwner
@@ -275,7 +276,7 @@ class ConversationHandler:
         event: GroupMessageEvent,
         message: Message,
     ) -> Message:
-        """把非指令原生 @ 转成群成员名称，必要时刷新成员目录一次。"""
+        """把非指令原生 @ 转成群成员名称，纯机器人 @ 保留为有效称呼。"""
 
         semantic_message = Message(
             [
@@ -287,6 +288,12 @@ class ConversationHandler:
                 )
             ]
         )
+        # 触发 At 旁有正文或附件时只保留正文；单独 At 的名称本身就是用户输入。
+        if all(
+            segment.type == "text" and not str(segment.data.get("text", "")).strip()
+            for segment in semantic_message
+        ):
+            semantic_message = message
         if not any(segment.type == "at" for segment in semantic_message):
             return semantic_message
         members = await self._group_members_loader(bot, event.group_id)
@@ -660,6 +667,7 @@ class ConversationHandler:
             userId=user_id,
             prompt=normalized_prompt,
             memorySourceText=event.original_message.extract_plain_text(),
+            memoryQuotedSource=quoted_memory_source(bot.self_id, event, chat_input.quoted_text),
             user=llm_user,
             userName=user_name,
             chatContext=chat_context,
@@ -703,7 +711,23 @@ class ConversationHandler:
         await matcher.finish()
 
     def _restore_original_prefix(self, event: MessageEvent, message: Message) -> Message:
-        """恢复 OneBot 在定向消息预处理时从纯文本开头移除的内容。"""
+        """恢复 OneBot 删除的纯机器人 At，以及定向文本开头的称呼。"""
+
+        # 适配器会把纯 At 清空，必须从原始消息保留目标，随后解析其实际群名称。
+        if all(
+            segment.type == "text" and not str(segment.data.get("text", "")).strip()
+            for segment in message
+        ) and all(
+            (
+                segment.type == "at"
+                and str(segment.data.get("qq", "")).strip() == str(event.self_id)
+            )
+            or (
+                segment.type == "text" and not str(segment.data.get("text", "")).strip()
+            )
+            for segment in event.original_message
+        ):
+            return deepcopy(event.original_message)
 
         original_text = event.original_message.extract_plain_text()
         adapter_text = event.get_message().extract_plain_text()

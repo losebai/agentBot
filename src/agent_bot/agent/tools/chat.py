@@ -1,11 +1,16 @@
 """通过现有令牌作用域的 Chat MCP 执行 QQ 工具，保留原投递和队列语义。"""
 
-from agent_bot.agent.contracts import ToolDefinition
+import json
+
+from mcp import types
+
+from agent_bot.agent.contracts import ToolDefinition, ToolResult
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.mcp.discovery import convert_result
 from agent_bot.agent.tools.local_media import project_local_schema, validate_local_call
 from agent_bot.agent.tools.policy import CHAT_TOOLS
 from agent_bot.agent.tools.schema import ToolSchema
+from agent_bot.services.tagged_memory import MEMORY_SOURCE_ERROR_MESSAGE
 from agent_bot.services.tool_sessions import ToolSessionExpiredError
 
 
@@ -63,4 +68,19 @@ class ChatToolBridge:
             result = await server.call_tool(token, call.name, call.arguments)
         except ToolSessionExpiredError as error:
             raise AgentError("AGENT_TOOL_SESSION_EXPIRED", status_code=403) from error
+        # 只公开本地记忆来源的固定提示；其他错误继续遮蔽，不透传服务器异常正文。
+        if (call.name == "memory" and isinstance(result, types.CallToolResult)
+                and result.is_error and len(result.content) == 1
+                and isinstance(result.content[0], types.TextContent)):
+            try:
+                body = json.loads(result.content[0].text)
+            except (ValueError, TypeError):
+                body = None
+            if isinstance(body, dict) and body.get("code") == "MEMORY_SOURCE_INVALID":
+                return ToolResult(
+                    call_id=call.call_id, name=call.name, is_error=True,
+                    content=json.dumps({"code": "MEMORY_SOURCE_INVALID",
+                                        "message": MEMORY_SOURCE_ERROR_MESSAGE},
+                                       ensure_ascii=False),
+                )
         return convert_result(call, result)

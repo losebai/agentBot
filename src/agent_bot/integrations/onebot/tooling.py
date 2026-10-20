@@ -21,6 +21,7 @@ from agent_bot.integrations.onebot.memory_source import (
     queued_source_event_id,
 )
 from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
+from agent_bot.memory.contracts import QuotedMemorySource
 from agent_bot.memory.embeddings import EmbeddingClient
 from agent_bot.memory.retrieval import HybridMemorySearch
 from agent_bot.models import ChatContext, ChatToolName
@@ -286,6 +287,7 @@ class ChatToolSessionManager:
             source_time=(datetime.fromtimestamp(job.created_at, timezone.utc)
                          if has_source else None),
             request_id=job.request_id,
+            quoted_source=job.memory_quoted_source if has_source else None,
         )
         if context.operation_store is not None:
             if "mention_member" in job.chat_tools:
@@ -315,8 +317,9 @@ class ChatToolSessionManager:
         self, context: ChatToolContext, *, source_text: str | None = None,
         source_event_id: str | None = None, source_time: datetime | None = None,
         request_id: str | None = None,
+        quoted_source: QuotedMemorySource | None = None,
     ) -> MemorySession | None:
-        """把真实事件或队列任务身份绑定到独立的单请求记忆权限。"""
+        """按真人事件绑定单请求权限，队列引用单列为资料来源，不替换本人原话。"""
         store = self._memory_store_provider()
         if "memory" not in context.allowed_tools or store is None:
             return None
@@ -337,6 +340,7 @@ class ChatToolSessionManager:
                 group_id=str(context.group_id) if context.group_id is not None else None,
                 source_text=source_text, source_event_id=source_event_id, source_time=source_time,
                 request_id=request_id,
+                quoted_source=quoted_source,
             ),
             deadline_at=context.deadline_at,
             semantic_search=semantic_search,

@@ -7,11 +7,28 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from nonebot.adapters.onebot.v11 import MessageEvent
+
+from agent_bot.memory.contracts import QuotedMemorySource
 from agent_bot.services.tagged_memory import memory_scope_owner
 from agent_bot.state import ConversationSourceBinding, current_conversation_source
 
 if TYPE_CHECKING:
     from agent_bot.services.conversation_queue import ConversationJob
+
+
+def quoted_memory_source(
+    bot_id: str, event: MessageEvent, text: str | None,
+) -> QuotedMemorySource | None:
+    """仅从平台解析的真实引用绑定消息和外层作者，不信任正文内的身份声明。"""
+    reply = getattr(event, "reply", None)
+    if reply is None or not text:
+        return None
+    return QuotedMemorySource(
+        text=text, event_id=f"qq:{bot_id}:{reply.message_id}",
+        user_id=str(reply.sender.user_id) if reply.sender.user_id is not None else None,
+        time=datetime.fromtimestamp(reply.time, UTC),
+    )
 
 
 def has_user_memory_source(job: ConversationJob) -> bool:

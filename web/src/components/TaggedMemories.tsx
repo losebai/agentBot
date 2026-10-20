@@ -1,3 +1,4 @@
+import { ChoiceSelect } from './ChoiceSelect';
 import { Alert, Button, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Page } from '../ai-types';
@@ -73,24 +74,24 @@ export function TaggedMemories({token}: {token: string}) {
     {error && <Alert type="error" showIcon message={error} className="notice" />}
     <form className="record-filter" onSubmit={event => { event.preventDefault(); setCursor(undefined); setHistory([]); setFilters({...filterDraft}); }}>
       <label>关键词<input maxLength={200} value={filterDraft.query} onChange={event => setFilterDraft({...filterDraft, query: event.target.value})} /></label>
-      <label>标签<select value={filterDraft.tag} onChange={event => setFilterDraft({...filterDraft, tag: event.target.value})}>
-        <option value="">全部标签</option>{tags.map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}（{tag.count}）</option>)}</select></label>
+      <label>标签<ChoiceSelect aria-label="标签" value={filterDraft.tag} onChange={event => setFilterDraft({...filterDraft, tag: event})}>
+        <option value="">全部标签</option>{tags.map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}（{tag.count}）</option>)}</ChoiceSelect></label>
       <label>主题<input maxLength={80} value={filterDraft.topic} onChange={event => setFilterDraft({...filterDraft, topic: event.target.value})} /></label>
-      <label>记忆类型<select value={filterDraft.kind} onChange={event => setFilterDraft({...filterDraft, kind: event.target.value as MemoryKind | ''})}>
-        <option value="">全部类型</option>{Object.entries(memoryKindNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
-      <label>状态<select value={filterDraft.status} onChange={event => setFilterDraft({...filterDraft, status: event.target.value as MemoryStatus | 'future' | ''})}>
-        <option value="">当前有效（默认）</option>{Object.entries(memoryStatusNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
-      <label>作用域类型<select value={filterDraft.scope} onChange={event => setFilterDraft({...filterDraft, scope: event.target.value as MemoryScope | '', scope_id: ''})}>
-        <option value="">全部作用域类型</option>{Object.entries(memoryScopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
-      <label>目标作用域<select value={filterDraft.scope_id} onChange={event => setFilterDraft({...filterDraft, scope_id: event.target.value})}>
-        <option value="">全部作用域</option>{scopes.filter(scope => !filterDraft.scope || scope.scope === filterDraft.scope).map(scope => <option key={scope.scope_id} value={scope.scope_id}>{memoryScopeLabel(scope)}</option>)}</select></label>
+      <label>记忆类型<ChoiceSelect aria-label="记忆类型" value={filterDraft.kind} onChange={event => setFilterDraft({...filterDraft, kind: event as MemoryKind | ''})}>
+        <option value="">全部类型</option>{Object.entries(memoryKindNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</ChoiceSelect></label>
+      <label>状态<ChoiceSelect aria-label="状态" value={filterDraft.status} onChange={event => setFilterDraft({...filterDraft, status: event as MemoryStatus | 'future' | ''})}>
+        <option value="">当前有效（默认）</option>{Object.entries(memoryStatusNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</ChoiceSelect></label>
+      <label>作用域类型<ChoiceSelect aria-label="作用域类型" value={filterDraft.scope} onChange={event => setFilterDraft({...filterDraft, scope: event as MemoryScope | '', scope_id: ''})}>
+        <option value="">全部作用域类型</option>{Object.entries(memoryScopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</ChoiceSelect></label>
+      <label>目标作用域<ChoiceSelect aria-label="目标作用域" value={filterDraft.scope_id} onChange={event => setFilterDraft({...filterDraft, scope_id: event})}>
+        <option value="">全部作用域</option>{scopes.filter(scope => !filterDraft.scope || scope.scope === filterDraft.scope).map(scope => <option key={scope.scope_id} value={scope.scope_id}>{memoryScopeLabel(scope)}</option>)}</ChoiceSelect></label>
       <Button aria-label="筛选" htmlType="submit" disabled={loading}>筛选</Button>
     </form>
     <div className="heading-actions" style={{marginBottom: 16, flexWrap: 'wrap'}}>
       <Button disabled={loading || selected.length < 2 || selected.length > 8} onClick={() => setBatch({action: 'merge', items: selected})}>合并所选记忆</Button>
       {!!selected.length && <small>已选 {selected.length} 条，单次合并 2 至 8 条。</small>}
-      <label>清理方式 <select value={cleanupAction} onChange={event => setCleanupAction(event.target.value as 'expire' | 'forget')}>
-        <option value="expire">标为失效</option><option value="forget">遗忘</option></select></label>
+      <label>清理方式 <ChoiceSelect aria-label="清理方式" value={cleanupAction} onChange={event => setCleanupAction(event as 'expire' | 'forget')}>
+        <option value="expire">标为失效</option><option value="forget">遗忘</option></ChoiceSelect></label>
       <Button disabled={loading || !filterDraft.scope_id || !filterDraft.topic?.trim()} onClick={() => setBatch({
         action: cleanupAction, scope_id: filterDraft.scope_id!, topic: filterDraft.topic!.trim(),
       })}>预览主题清理</Button>

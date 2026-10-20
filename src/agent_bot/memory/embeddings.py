@@ -59,16 +59,16 @@ class EmbeddingBatch:
 class EmbeddingClient:
     """只通过数据库模型目录选取显式模型，HTTP 连接由单次调用释放。"""
 
-    def __init__(self, catalog: AiCatalog, model_alias: str, *,
+    def __init__(self, catalog: AiCatalog, model_reference: str, *,
                  transport: httpx.AsyncBaseTransport | None = None) -> None:
         """允许测试注入 HTTP transport，不引入其他配置或隐式模型。"""
         self._catalog = catalog
-        self._model_alias = model_alias
+        self._model_reference = model_reference
         self._transport = transport
 
     async def embed(self, texts: tuple[str, ...]) -> EmbeddingBatch:
         """固定一次目录快照，按明确的条数及字节预算分批，不重试失败请求。"""
-        if not self._model_alias:
+        if not self._model_reference:
             raise EmbeddingError("请先配置记忆 Embedding 模型")
         if not texts or any(not isinstance(text, str) or not text.strip() for text in texts):
             raise EmbeddingError("Embedding 输入不能为空")
@@ -77,7 +77,7 @@ class EmbeddingClient:
             raise EmbeddingError("Embedding 批量输入超出本次请求预算")
         if max(sizes) > HTTP_BATCH_BYTES:
             raise EmbeddingError("Embedding 单条输入超出本次请求预算")
-        resolved = await self._catalog.resolve(self._model_alias)
+        resolved = await self._catalog.resolve(self._model_reference)
         provider, model = resolved.provider, resolved.model
         if not provider.credential_available:
             raise EmbeddingError("Embedding 供应商凭据不可用")

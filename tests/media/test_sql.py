@@ -86,6 +86,16 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
                     "credential_ref VARCHAR(128)NULL",
                     "credential TEXT NULL,credential_required TINYINT NOT NULL DEFAULT 0",
                 )
+            if name == "agent_bot_ai_model":
+                # 显式模型身份升级允许历史别名为空，以供应商和上游标识限制重复。
+                expected = expected.replace(
+                    "alias VARCHAR(200)COLLATE utf8mb4_bin NOT NULL,",
+                    "alias VARCHAR(200)COLLATE utf8mb4_bin NULL,",
+                ).replace(
+                    "UNIQUE KEY uq_model_alias(alias),",
+                    "UNIQUE KEY uq_model_alias(alias),"
+                    "UNIQUE KEY uq_model_provider_upstream(provider_id,upstream_model),",
+                )
             if name == "agent_bot_agent":
                 expected = expected.replace(
                     "model_id BIGINT UNSIGNED NOT NULL,",

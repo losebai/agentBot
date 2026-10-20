@@ -2,6 +2,31 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { expect, it, vi } from 'vitest';
 import { App } from './App';
 
+/** 以具体按钮文本定位并验证真实可见性，避免对整页所有按钮重复计算样式。 */
+function getVisibleButton(name: string | RegExp, root: HTMLElement = document.body) {
+  const button = within(root).getByText(name, { selector: 'button, button > span' }).closest('button');
+  if (!button) throw new Error('按钮文本没有对应的按钮');
+  expect(button).toBeVisible();
+  return button;
+}
+
+/** 页签具有直接可读名称，保留可见性校验后再执行切换。 */
+function getVisibleTab(name: string, root: HTMLElement = document.body) {
+  const tab = within(root).getByText(name, { selector: '[role="tab"]' });
+  expect(tab).toBeVisible();
+  return tab;
+}
+
+/** 从弹窗自身标题定位容器，后续表单和操作均限定在该弹窗内。 */
+async function findVisibleDialog(title: string) {
+  return waitFor(() => {
+    const dialog = screen.getByText(title, { selector: '.ant-modal-title' }).closest<HTMLElement>('[role="dialog"]');
+    if (!dialog) throw new Error('标题没有对应的弹窗');
+    expect(dialog).toBeVisible();
+    return dialog;
+  });
+}
+
 /** 使用离线响应验证登录流程，避免连接真实后端或机器人。 */
 function managementResponse(url: string) {
   return url.endsWith('/bots')
@@ -115,28 +140,31 @@ it('Agent 管理中新增共享 Skill 后，切回 Agent 即可关联并保存',
   const navigation = await screen.findByRole('navigation');
   expect(within(navigation).queryByRole('button', { name: /Skill 管理$/ })).not.toBeInTheDocument();
   expect(within(navigation).queryByRole('button', { name: /MCP 服务$/ })).not.toBeInTheDocument();
-  fireEvent.click(within(navigation).getByRole('button', { name: /Agent 管理$/ }));
-  expect(await screen.findByRole('button', { name: '编辑助手' })).toBeVisible();
-  fireEvent.click(screen.getByRole('tab', { name: 'Skill' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: '新增 Skill' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: '新增 Skill' }));
-  const dialog = await screen.findByRole('dialog', { name: '新增 Skill' });
+  fireEvent.click(getVisibleButton(/Agent 管理$/, navigation));
+  expect(await screen.findByLabelText('编辑助手')).toBeVisible();
+  fireEvent.click(getVisibleTab('Skill'));
+  await waitFor(() => expect(getVisibleButton('新增 Skill')).toBeEnabled());
+  fireEvent.click(getVisibleButton('新增 Skill'));
+  const dialog = await findVisibleDialog('新增 Skill');
   fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '共享写作' } });
   fireEvent.click(within(dialog).getByLabelText('启用 Skill'));
-  fireEvent.click(within(dialog).getByRole('button', { name: '保存 Skill' }));
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  fireEvent.click(getVisibleButton('保存 Skill', dialog));
+  await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(await screen.findByText('共享写作')).toBeVisible();
-  fireEvent.click(screen.getByRole('tab', { name: 'MCP' }));
-  expect(await screen.findByRole('heading', { name: 'MCP 服务' })).toBeVisible();
-  await waitFor(() => expect(screen.getByRole('button', { name: '新增 MCP' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: '新增 MCP' }));
-  const mcpDialog = await screen.findByRole('dialog', { name: '新增 MCP' });
+  fireEvent.click(getVisibleTab('MCP'));
+  expect(await screen.findByText('MCP 服务', { selector: 'h1' })).toBeVisible();
+  await waitFor(() => expect(getVisibleButton('新增 MCP')).toBeEnabled());
+  fireEvent.click(getVisibleButton('新增 MCP'));
+  const mcpDialog = await findVisibleDialog('新增 MCP');
   await waitFor(() => expect(within(mcpDialog).getByLabelText('服务地址')).toBeVisible());
-  fireEvent.click(within(mcpDialog).getByRole('button', { name: /取\s*消/ }));
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  fireEvent.click(screen.getByRole('tab', { name: 'Agent' }));
-  fireEvent.click(await screen.findByRole('button', { name: '编辑助手' }));
-  fireEvent.click(await screen.findByRole('checkbox', { name: '共享写作' }));
-  fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
+  fireEvent.click(getVisibleButton(/取\s*消/, mcpDialog));
+  await waitFor(() => expect(mcpDialog).not.toBeInTheDocument());
+  fireEvent.click(getVisibleTab('Agent'));
+  fireEvent.click(await screen.findByLabelText('编辑助手'));
+  const agentDialog = await findVisibleDialog('编辑 Agent');
+  const sharedSkill = within(agentDialog).getByLabelText('共享写作');
+  expect(sharedSkill).toBeVisible();
+  fireEvent.click(sharedSkill);
+  fireEvent.click(getVisibleButton('保存 Agent', agentDialog));
   await waitFor(() => expect(patch).toEqual({ expected_revision: 1, skill_ids: [7] }));
 }, 20000);

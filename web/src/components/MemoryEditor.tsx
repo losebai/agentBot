@@ -1,3 +1,4 @@
+import { ChoiceSelect } from './ChoiceSelect';
 import { Button, Select } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { ApiFailure, errorMessage } from '../api';
@@ -94,22 +95,22 @@ export function MemoryEditor({api, id, scopes, tags, onClose, onSaved}: {
     {loading ? <p role="status">正在读取完整记忆…</p> : <form className="catalog-form knowledge-form" onSubmit={event => { event.preventDefault(); if (valid) void save(); }}>
       {conflict && <p>草稿已保留，请先核对最新版本再决定修改。不会自动覆盖已有记忆。</p>}
       {!editing && <>
-        <label>作用域来源<select disabled={busy} value={draft.source} onChange={event => setDraft({...draft, source: event.target.value as 'new' | 'existing'})}>
-          <option value="new">指定新作用域</option><option value="existing" disabled={!scopes.length}>使用已有作用域</option></select></label>
-        {draft.source === 'existing' ? <label>已有作用域<select required disabled={busy} value={draft.scope_id} onChange={event => {
-          const owner = scopes.find(scope => scope.scope_id === event.target.value);
-          setDraft({...draft, scope_id: event.target.value, scope: owner!.scope});
-        }}>{scopes.map(scope => <option key={scope.scope_id} value={scope.scope_id}>{memoryScopeLabel(scope)}（{scope.count}）</option>)}</select></label> : <>
-          <label>作用域<select disabled={busy} value={draft.scope} onChange={event => setDraft({...draft, scope: event.target.value as MemoryScope, target: ''})}>
-            {Object.entries(memoryScopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
+        <label>作用域来源<ChoiceSelect aria-label="作用域来源" disabled={busy} value={draft.source} onChange={event => setDraft({...draft, source: event as 'new' | 'existing'})}>
+          <option value="new">指定新作用域</option><option value="existing" disabled={!scopes.length}>使用已有作用域</option></ChoiceSelect></label>
+        {draft.source === 'existing' ? <label>已有作用域<ChoiceSelect aria-label="已有作用域" required disabled={busy} value={draft.scope_id} onChange={event => {
+          const owner = scopes.find(scope => scope.scope_id === event);
+          setDraft({...draft, scope_id: event, scope: owner!.scope});
+        }}>{scopes.map(scope => <option key={scope.scope_id} value={scope.scope_id}>{memoryScopeLabel(scope)}（{scope.count}）</option>)}</ChoiceSelect></label> : <>
+          <label>作用域<ChoiceSelect aria-label="作用域" disabled={busy} value={draft.scope} onChange={event => setDraft({...draft, scope: event as MemoryScope, target: ''})}>
+            {Object.entries(memoryScopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</ChoiceSelect></label>
           <label>机器人 QQ 号<input required disabled={busy} pattern="[1-9][0-9]{0,19}" maxLength={20} value={draft.bot_id} onChange={event => setDraft({...draft, bot_id: event.target.value})} /></label>
           {draft.scope !== 'global' && <label>{draft.scope === 'user' ? '用户 QQ 号' : draft.scope === 'group' ? '群号' : '会话 ID'}<input required disabled={busy}
             pattern={draft.scope === 'session' ? 'qq_[a-f0-9]{32}' : '[1-9][0-9]{0,19}'} maxLength={draft.scope === 'session' ? 35 : 20}
             value={draft.target} onChange={event => setDraft({...draft, target: event.target.value})} /></label>}
         </>}
         <label>记忆键<input required disabled={busy} maxLength={80} value={draft.key} onChange={event => setDraft({...draft, key: event.target.value})} /></label>
-        <label>记忆类型<select disabled={busy} value={draft.kind} onChange={event => setDraft({...draft, kind: event.target.value as MemoryKind})}>
-          {Object.entries(memoryKindNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
+        <label>记忆类型<ChoiceSelect aria-label="记忆类型" disabled={busy} value={draft.kind} onChange={event => setDraft({...draft, kind: event as MemoryKind})}>
+          {Object.entries(memoryKindNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</ChoiceSelect></label>
       </>}
       {editing && original && <p>当前编辑“{original.key}”的第 {original.revision} 版，归属：{memoryScopeLabel(original)}。</p>}
       {terminal && <p>已遗忘或合并的记忆不能从编辑界面恢复。</p>}

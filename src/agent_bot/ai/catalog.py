@@ -1,4 +1,4 @@
-"""以事务维护供应商、区分大小写的模型别名及媒体能力。"""
+"""以事务维护供应商、稳定模型身份和媒体能力。"""
 
 from datetime import datetime, timezone
 
@@ -18,6 +18,7 @@ from agent_bot.ai.contracts import (
 )
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
+from agent_bot.ai.model_reference import parse_model_reference
 from agent_bot.credential_values import row_values, write_credential
 from agent_bot.media.catalog import (
     model_view,
@@ -117,11 +118,22 @@ class AiCatalog(AiDatabase):
                 (after, provider_id, limit + 1) if provider_id is not None else (after, limit + 1),
             )
             if kind == "model":
+                provider_ids = tuple({row["provider_id"] for row in rows})
+                providers = query(
+                    connection,
+                    "SELECT id,name FROM agent_bot_ai_provider WHERE id IN ("
+                    + ",".join("%s" for _ in provider_ids) + ")",
+                    provider_ids,
+                ) if provider_ids else []
+                names = {provider["id"]: provider["name"] for provider in providers}
                 capabilities, initialized = read_media_batch(
                     connection, [row["id"] for row in rows]
                 )
                 for row in rows:
-                    row.update(media=capabilities.get(row["id"], {}), media_initialized=initialized)
+                    row.update(
+                        provider_name=names[row["provider_id"]],
+                        media=capabilities.get(row["id"], {}), media_initialized=initialized,
+                    )
             return rows
 
         rows = await self.run(read)
@@ -176,13 +188,13 @@ class AiCatalog(AiDatabase):
                 if exists:
                     skipped.append(item.upstream_model)
                     continue
-                # 别名全局唯一，供应商同名模型只能由管理员指定不同别名，不能自动改名。
+                # 仅检查旧客户端显式提供的别名；新导入始终保存 NULL。
                 occupied = query(
                     connection,
                     "SELECT id FROM agent_bot_ai_model WHERE alias=%s",
                     (item.alias,),
                     one=True,
-                )
+                ) if item.alias is not None else None
                 if occupied:
                     if not body.skip_alias_conflicts:
                         raise AiError("AI_MODEL_ALIAS_CONFLICT", status_code=409)
@@ -331,17 +343,34 @@ class AiCatalog(AiDatabase):
     async def delete_model(self, id: int, expected_revision: int) -> None:
         await self._delete("model", id, expected_revision)
 
+    @staticmethod
+    def _model_by_reference(connection, reference: str) -> ModelView:
+        """按稳定 ID 或历史别名解析；形似规范引用的旧别名冲突必须拒绝。"""
+        try:
+            id = parse_model_reference(reference)
+        except ValueError as error:
+            raise AiError("AI_MODEL_REFERENCE_INVALID", status_code=400) from error
+        legacy = query(
+            connection, "SELECT * FROM agent_bot_ai_model WHERE alias=%s", (reference,), one=True
+        )
+        if id is None:
+            row = legacy
+        else:
+            if legacy is not None and legacy["id"] != id:
+                raise AiError("AI_MODEL_REFERENCE_AMBIGUOUS", status_code=400)
+            row = query(
+                connection, "SELECT * FROM agent_bot_ai_model WHERE id=%s", (id,), one=True
+            )
+        if row is None:
+            raise AiError("AI_MODEL_NOT_FOUND", status_code=400)
+        return model_view(connection, row)
+
     async def resolve(self, model: str) -> ResolvedModel:
         """解析不可变的模型、供应商和媒体能力快照。"""
 
         def read(connection):
             """所有快照字段来自同一读取事务。"""
-            row = query(
-                connection, "SELECT * FROM agent_bot_ai_model WHERE alias=%s", (model,), one=True
-            )
-            if row is None:
-                raise AiError("AI_MODEL_NOT_FOUND", status_code=400)
-            selected = model_view(connection, row)
+            selected = self._model_by_reference(connection, model)
             if not selected.enabled:
                 raise AiError("AI_MODEL_DISABLED", status_code=400)
             provider = self._get(connection, "provider", selected.provider_id)

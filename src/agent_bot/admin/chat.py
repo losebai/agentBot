@@ -33,7 +33,7 @@ class ChatProbe:
         return messages
 
     def text_request(self, request: ChatRequest, request_id: str, messages) -> TextRequest:
-        """只允许模型别名和有界历史，由服务端配置生成协议参数。"""
+        """只允许模型引用和有界历史，由服务端配置生成协议参数。"""
         config = self.runtime.config
         options = LlmRequestOptions(
             **{

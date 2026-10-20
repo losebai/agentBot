@@ -236,8 +236,8 @@ class AgentService:
                             request_context={
                                 'agent_code': request.agent_code,
                                 'model_routes': {
-                                    'primary': prepared.snapshot.resolved.model.alias,
-                                    'fallback': prepared.snapshot.fallback.model.alias
+                                    'primary': prepared.snapshot.resolved.model.reference,
+                                    'fallback': prepared.snapshot.fallback.model.reference
                                     if prepared.snapshot.fallback else None,
                                 },
                                 'model': prepared.call.resolved.model.upstream_model,

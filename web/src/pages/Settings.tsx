@@ -1,3 +1,4 @@
+import { ChoiceSelect } from '../components/ChoiceSelect';
 import { Alert, Button, Empty, Input, Spin, Switch, Tabs, Tag } from 'antd';
 import { ReloadOutlined, SaveOutlined, SearchOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -227,10 +228,10 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
               : field.name === 'nickname' ? <Input.TextArea id={id} disabled={readOnly}
               value={String(value)} placeholder="每行填写一个名称或别名，如：桃桃"
               autoSize={{minRows: 2, maxRows: 6}} onChange={event => change(event.target.value)} />
-              : kind === 'boolean' && field.nullable ? <select id={id} disabled={readOnly}
-              value={String(value)} onChange={event => change(event.target.value === '' ? '' : event.target.value === 'true')}>
+              : kind === 'boolean' && field.nullable ? <ChoiceSelect id={id} disabled={readOnly}
+              value={String(value)} onChange={event => change(event === '' ? '' : event === 'true')}>
               <option value="">未设置（不传此参数）</option><option value="true">启用</option><option value="false">禁用</option>
-            </select>
+            </ChoiceSelect>
               : kind === 'boolean' ? <Switch id={id} disabled={readOnly} checked={value === true} onChange={change} />
               : kind === 'secret' ? <Input.Password id={id} disabled={readOnly} value={String(value)} placeholder={field.secret_is_set ? readOnly ? '已设置' : '已设置 · 留空保持原值' : '未设置'} autoComplete="new-password" onChange={event => change(event.target.value)} />
               : kind === 'json' || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />

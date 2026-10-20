@@ -16,7 +16,6 @@ from agent_bot.ai.contracts import Page, ResolvedModel
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
 from agent_bot.credential_values import row_values, write_credential
-from agent_bot.media.catalog import model_view
 
 
 class AgentCatalog(AiDatabase):
@@ -265,15 +264,13 @@ class AgentCatalog(AiDatabase):
                 model_id = agent.vision_model_id if has_images else None
                 model = AiCatalog._get(self, connection, "model", model_id or agent.model_id)
             else:
-                row = query(
-                    connection,
-                    "SELECT * FROM agent_bot_ai_model WHERE alias=%s",
-                    (request.model,),
-                    one=True,
-                )
-                if row is None:
-                    raise AgentError("AGENT_MODEL_UNAVAILABLE", status_code=400)
-                model = model_view(connection, row)
+                # 直接调用与普通文本使用同一身份规则，并保留本事务的模型快照。
+                try:
+                    model = AiCatalog._model_by_reference(connection, request.model)
+                except AiError as error:
+                    if error.code == "AI_MODEL_NOT_FOUND":
+                        raise AgentError("AGENT_MODEL_UNAVAILABLE", status_code=400) from error
+                    raise
             provider = AiCatalog._get(self, connection, "provider", model.provider_id)
             vision = None
             if agent and agent.vision_model_id:

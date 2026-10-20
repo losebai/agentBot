@@ -1,3 +1,4 @@
+import { ChoiceSelect } from './ChoiceSelect';
 import { Button } from 'antd';
 import { useEffect, useRef, useState } from 'react';
 import { ApiFailure, errorMessage } from '../api';
@@ -68,8 +69,8 @@ export function MemoryBatchDialog({api, batch, onClose, onSaved}: {
   return <CatalogDialog title={merging ? '合并记忆' : '主题清理预览'} busy={writing} error={error} onCancel={onClose}>
     <div className="catalog-form knowledge-form">
       {merging ? <>
-        <label>保留为目标记忆<select disabled={busy || !!preview} value={target} onChange={event => { setTarget(Number(event.target.value)); setPreview(undefined); }}>
-          {batch.items.map(item => <option key={item.id} value={item.id}>{item.key} · {memoryScopeLabel(item)}</option>)}</select></label>
+        <label>保留为目标记忆<ChoiceSelect aria-label="保留为目标记忆" disabled={busy || !!preview} value={target} onChange={event => { setTarget(Number(event)); setPreview(undefined); }}>
+          {batch.items.map(item => <option key={item.id} value={item.id}>{item.key} · {memoryScopeLabel(item)}</option>)}</ChoiceSelect></label>
         <label>合并后的正文（留空保留目标正文）<textarea disabled={busy || !!preview} rows={5} maxLength={1000} value={content} onChange={event => { setContent(event.target.value); setPreview(undefined); }} /></label>
         <p>仅合并同一作用域、同一主体的重复事实。来源与历史由服务端保留，其他事实不会因为主题相同就自动合并。</p>
       </> : <p>主题：{batch.topic}。操作：{batch.action === 'expire' ? '标为失效' : '遗忘'}。只处理以下预览版本。</p>}

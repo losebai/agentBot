@@ -43,7 +43,7 @@ class JobOwner(JobModel):
 
 
 class JobScope(JobOwner):
-    """宿主快照提供请求幂等标识、模型别名和系统提示，不持久化凭据。"""
+    """宿主快照提供请求幂等标识、稳定模型引用和系统提示，不持久化凭据。"""
 
     request_id: str = Field(min_length=1, max_length=256)
     model: str = Field(min_length=1, max_length=200)

@@ -12,7 +12,7 @@ const providers: Provider[] = [1, 2].map(id => ({ id, revision: 1, name: `供应
 
 /** 离线目录按供应商过滤，捕获写入归属错误而不连接真实模型服务。 */
 function catalogApi() {
-  const models: AiModel[] = [1, 2].map(id => ({ id, revision: 1, alias: `local-${id}`,
+  const models: AiModel[] = [1, 2].map(id => ({ id, provider_name: `供应商${id}`, reference: `model:${id}`, revision: 1, alias: `local-${id}`,
     upstream_model: `upstream-${id}`, provider_id: id, enabled: false }));
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
     const target = new URL(String(url), 'http://offline.test');
@@ -56,14 +56,14 @@ it.each([
 it('左侧选择供应商只显示当前供应商的模型和启用开关', async () => {
   catalogApi();
   render(<Providers token="offline" />);
-  expect(await screen.findByText('local-1')).toBeVisible();
-  expect(screen.queryByText('local-2')).not.toBeInTheDocument();
+  expect(await screen.findByText('upstream-1')).toBeVisible();
+  expect(screen.queryByText('upstream-2')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('tab', { name: /供应商2/ }));
-  expect(await screen.findByRole('switch', { name: '启用 local-2' })).toBeVisible();
-  expect(screen.queryByText('local-1')).not.toBeInTheDocument();
+  expect(await screen.findByRole('switch', { name: '启用 upstream-2' })).toBeVisible();
+  expect(screen.queryByText('upstream-1')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('tab', { name: /供应商1/ }));
-  expect(await screen.findByRole('switch', { name: '启用 local-1' })).toBeVisible();
-  expect(screen.queryByText('local-2')).not.toBeInTheDocument();
+  expect(await screen.findByRole('switch', { name: '启用 upstream-1' })).toBeVisible();
+  expect(screen.queryByText('upstream-2')).not.toBeInTheDocument();
 });
 
 it('新增供应商不在当前分页时仍选中它，避免把模型登记到其他供应商', async () => {

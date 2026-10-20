@@ -16,9 +16,7 @@ it('供应商冲突后保留编辑值且不回填数据库密钥', async () => {
   expect(screen.getByLabelText('API 密钥')).toHaveValue('');
 });
 
-it.each([
-  { fail: false, conflict: false }, { fail: true, conflict: false }, { fail: false, conflict: true },
-])('保存供应商后自动同步，无需二次导入；失败=$fail、别名冲突=$conflict', async ({ fail, conflict }) => {
+it.each([false, true])('保存供应商后自动同步，无需二次导入；失败=%s', async (fail) => {
   const provider = { id: 2, revision: 1, name: '服务乙', protocol: 'openai-chat', base_url: 'https://two.invalid/v1',
     credential_set: true, credential_available: true, enabled: true, description: '' };
   let saved = false, failDiscovery = fail;
@@ -28,10 +26,10 @@ it.each([
       ? Response.json({ message: '获取失败' }, { status: 502 })
       : Response.json({ provider_id: 2, revision: 1, models: ['same-model', 'other-model'] });
     if (String(url).includes('models/import')) {
-      models.push(...JSON.parse(String(options.body)).models.filter((item: { alias: string }) => !conflict || item.alias !== 'same-model').map((item: { alias: string; upstream_model: string }, i: number) =>
+      models.push(...JSON.parse(String(options.body)).models.map((item: { alias: string; upstream_model: string }, i: number) =>
         ({ ...item, id: i + 1, revision: 1, provider_id: 2, enabled: false })));
       return Response.json({ provider_id: 2, revision: 1, imported: models, skipped: [],
-        conflicts: conflict ? [{ alias: 'same-model', upstream_model: 'same-model' }] : [] });
+        conflicts: [] });
     }
     if (options?.method === 'POST') { saved = true; return Response.json(provider, { status: 201 }); }
     return Response.json({ items: String(url).includes('/ai/providers?') ? (saved ? [provider] : []) : models, next_cursor: null });
@@ -49,13 +47,10 @@ it.each([
     failDiscovery = false;
     fireEvent.click(screen.getByRole('button', { name: '刷新模型' }));
   }
-  if (conflict) {
-    expect(await screen.findByRole('button', { name: '设置 same-model 的别名并导入' })).toBeVisible();
-    expect(screen.queryByRole('switch', { name: '启用 same-model' })).not.toBeInTheDocument();
-  } else expect(await screen.findByRole('switch', { name: '启用 same-model' })).not.toBeChecked();
+  expect(await screen.findByRole('switch', { name: '启用 same-model' })).not.toBeChecked();
   expect(screen.getByRole('switch', { name: '启用 other-model' })).not.toBeChecked();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  if (!conflict) expect(screen.queryByRole('button', { name: /导入/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /导入/ })).not.toBeInTheDocument();
   const requests = fetcher.mock.calls.filter(([url, options]) => options?.method === 'POST' && String(url).endsWith('/ai/providers'));
   expect(requests).toHaveLength(1);
   expect(JSON.parse(String(requests[0][1].body)).credential).toBe('second-key');

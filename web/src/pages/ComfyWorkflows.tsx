@@ -1,3 +1,4 @@
+import { ChoiceSelect } from '../components/ChoiceSelect';
 import { Alert, Button, Empty, Input, Spin, Switch, Tabs, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { changes } from '../ai-api';
@@ -215,9 +216,9 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
     {notice && <Alert type="success" showIcon className="notice" message={notice} />}
     <div className="workflow-toolbar">
       <Input aria-label="筛选工作流" placeholder="筛选已加载的名称或说明" value={filter} onChange={event => setFilter(event.target.value)} />
-      <select aria-label="工作流状态" value={status} onChange={event => setStatus(event.target.value)}>
+      <ChoiceSelect aria-label="工作流状态" value={status} onChange={event => setStatus(event)}>
         <option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option>
-      </select>
+      </ChoiceSelect>
       <Button disabled={blocked} onClick={() => fileInput.current?.click()}>导入 JSON 文件</Button>
       <input ref={fileInput} aria-label="导入 JSON 文件" type="file" accept=".json,application/json" hidden disabled={blocked}
         onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void importFile(file); }} />

@@ -41,7 +41,7 @@ it('流式停止保留部分回复且不放入下一次历史，退出取消请�
   const encoder = new TextEncoder();
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
     if(String(url).endsWith('/status')) return Response.json({plain_ai_backend:'python',configured_model:'local'});
-    if(String(url).includes('/ai/models')) return Response.json({items:[{id:1,alias:'local',enabled:true}],next_cursor:null});
+    if(String(url).includes('/ai/models')) return Response.json({items:[{provider_name: '测试供应商', reference: `model:${1}`, provider_id: 1, upstream_model: 'local', revision: 1, id:1,alias:'local',enabled:true}],next_cursor:null});
     if(String(url).endsWith('/chat/stream')) {bodies.push(JSON.parse(init.body));streamSignal=init.signal;return new Response(new ReadableStream({start(controller){streamController=controller;controller.enqueue(encoder.encode('data: {"kind":"delta","request_id":"r","delta":"部分回复"}\n\n'));}}));}
     return Response.json({content:'完整回复',request_id:'r'});
   }));

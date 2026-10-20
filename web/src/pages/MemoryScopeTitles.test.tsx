@@ -18,8 +18,11 @@ it('长期记忆用用户名和群名显示作用域标题', async () => {
     return Response.json({items: [item], next_cursor: null});
   }));
   render(<TaggedMemories token="offline" />);
-  expect(await screen.findByRole('option', {name: '用户 · 小明 (30001)'})).toBeVisible();
+  await waitFor(() => expect(screen.getByRole('button', {name: '查看语言'})).toBeEnabled());
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '目标作用域' }));
+  await waitFor(() => expect(screen.getByRole('option', {name: '用户 · 小明 (30001)'})).toBeVisible());
   expect(screen.getByRole('option', {name: '群聊 · 读书群 (20001)'})).toBeVisible();
+  fireEvent.keyDown(screen.getByRole('combobox', { name: '目标作用域' }), { key: 'Escape' });
   fireEvent.click(screen.getByRole('button', {name: '查看语言'}));
   await waitFor(() => expect(screen.getByText('作用域：用户 · 小明 (30001)')).toBeVisible());
 });

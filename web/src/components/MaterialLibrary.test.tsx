@@ -1,3 +1,4 @@
+import { chooseSelect } from '../test-select';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { Knowledge } from '../pages/Knowledge';
@@ -45,8 +46,8 @@ it('筛选来源、会话和关键词时清空翻页游标', async () => {
   await waitFor(() => expect(fetcher.mock.calls.some(([url]) => String(url).includes('cursor=next-page'))).toBe(true));
   await waitFor(() => expect(screen.getByRole('button', {name: '筛选'})).toBeEnabled());
   fireEvent.change(screen.getByLabelText('关键词'), {target: {value: '旅行'}});
-  fireEvent.change(screen.getByLabelText('素材类型'), {target: {value: 'image'}});
-  fireEvent.change(screen.getByLabelText('来源'), {target: {value: 'qq'}});
+  await chooseSelect(screen.getByRole('combobox', { name: '素材类型' }), '图片');
+  await chooseSelect(screen.getByRole('combobox', { name: '来源' }), 'QQ');
   fireEvent.change(screen.getByLabelText('会话 ID'), {target: {value: 'qq-session'}});
   fireEvent.click(screen.getByRole('button', {name: '筛选'}));
   await waitFor(() => expect(fetcher.mock.calls.some(([url]) => String(url).includes('query='))).toBe(true));

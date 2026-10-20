@@ -1,7 +1,7 @@
 """通过真实 QQ 授权上下文验证任务工具及批次副作用边界。"""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -48,7 +48,9 @@ def request():
 def snapshot():
     """这里只替换目录解析边界，工具仍使用真实实现。"""
     return SimpleNamespace(
-        agent=None, resolved=SimpleNamespace(model=SimpleNamespace(alias="offline-model"))
+        agent=None, resolved=SimpleNamespace(
+            model=SimpleNamespace(alias="offline-model", reference="model:31")
+        )
     )
 
 
@@ -69,6 +71,15 @@ async def test_bound_job_uses_host_identity_and_idempotency(job_store):
     assert first["botId"] == "10001" and first["senderId"] == "10002"
     assert "system_prompt" not in first and "model" not in first
     assert len(await job_store.list_owned(scope())) == 1
+
+
+async def test_new_job_persists_the_resolved_model_identity(job_store, job_clock):
+    """延时任务保存本次解析出的模型身份，供应商重命名或旧别名变化不改变执行目标。"""
+    session = JobTools(job_store).bind(snapshot(), request(), context())
+    await session.call(call({"action": "create", "prompt": "稍后提醒", "delaySeconds": 1}))
+    job_clock[0] += timedelta(seconds=1)
+    claimed = await job_store.claim_due()
+    assert claimed.model == "model:31"
 
 
 @pytest.mark.parametrize(

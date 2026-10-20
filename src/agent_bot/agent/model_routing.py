@@ -65,14 +65,15 @@ class AgentModelRouter:
         self.resolved, self.credential = resolved, credential
 
     def forward(self, error: AiError) -> str:
-        """仅明确允许的模型故障接管一次，剩余期限耗尽则立即退出。"""
+        """明确模型故障只接管一次，提示包含供应商与上游模型以区分同名目标。"""
         if self.forwarded or not self.snapshot.fallback or error.code not in FORWARDABLE_ERRORS:
             raise error
         remaining_timeout(self.timeout_seconds)
-        previous = self.resolved.model.alias
+        previous = f"{self.resolved.provider.name} / {self.resolved.model.upstream_model}"
         self.forwarded = True
         self._bind(self.snapshot.fallback)
-        return f"{error.code}：{previous} 转交 {self.resolved.model.alias}"
+        target = f"{self.resolved.provider.name} / {self.resolved.model.upstream_model}"
+        return f"{error.code}：{previous} 转交 {target}"
 
     @property
     def provider(self) -> LangChainProvider:

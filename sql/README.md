@@ -1,6 +1,6 @@
 # SQL 使用说明
 
-当前版本的执行顺序和数据影响见 [0.5.4 升级说明](UPGRADE-0.5.4.md)。
+当前版本的执行顺序和数据影响见 [0.5.5 升级说明](UPGRADE-0.5.5.md)。
 
 新安装按 `CHAT_DB_BACKEND` 选择 [MySQL 脚本](agent_bot_init.sql) 或 [SQLite 脚本](agent_bot_init.sqlite.sql)。MySQL 先创建独立数据库，SQLite 文件由显式初始化命令创建，
 该文件按依赖顺序创建完整业务表，覆盖运行配置、群成员、聊天记忆、标签记忆、共享知识、

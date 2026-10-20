@@ -1,3 +1,4 @@
+import { ChoiceSelect } from './ChoiceSelect';
 import { Alert, Button, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgentApi } from '../agent-api';
@@ -50,7 +51,7 @@ export function AgentChat({token}:{token:string}) {
     finally{if(controller.current===abort){controller.current=undefined;if(mounted.current)setSending(false);}}
   }
   return <div className="page-content chat-page"><div className="page-heading"><div><p className="eyebrow">AGENT CONVERSATION</p><h1>Agent 对话</h1><p>使用已启用的 Agent，查看模型与工具执行进度。</p></div><Button onClick={reset}>新会话</Button></div>
-    <div className="chat-controls"><label htmlFor="agent-choice">选择 Agent</label><select id="agent-choice" value={code} onChange={e=>{setCode(e.target.value);reset();}}><option value="">选择已启用的 Agent</option>{agents.filter(a=>a.enabled).map(a=><option key={a.id} value={a.code}>{a.name}</option>)}</select>{cursor&&<Button disabled={sending} onClick={()=>void more()}>加载更多 Agent</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式执行</label></div>
+    <div className="chat-controls"><label htmlFor="agent-choice">选择 Agent</label><ChoiceSelect id="agent-choice" value={code} onChange={value=>{setCode(value);reset();}}><option value="">选择已启用的 Agent</option>{agents.filter(a=>a.enabled).map(a=><option key={a.id} value={a.code}>{a.name}</option>)}</ChoiceSelect>{cursor&&<Button disabled={sending} onClick={()=>void more()}>加载更多 Agent</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式执行</label></div>
     <p className="chat-scope">管理测试可使用网页、预设 MCP 和已启用的绘图、语音工具。QQ 会话工具需在机器人会话中使用。</p>
     {error&&<Alert className="notice" type="error" showIcon message={error}/>}{metadata&&!metadata.record_saved&&<Alert className="notice" type="warning" message="回复已生成，但运行记录未保存。请检查数据库，无需重新发送。"/>}
     <div className="conversation" aria-live="polite"><div data-testid="agent-history">{messages.map((m,i)=><article className={`message ${m.role}`} key={i}><span className="message-avatar">{m.role==='user'?'你':'AB'}</span><div className="message-body"><MarkdownRenderer content={m.content}/></div></article>)}</div>

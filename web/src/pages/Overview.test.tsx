@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { Overview } from './Overview';
 
@@ -23,7 +24,10 @@ it('首页显示累计用量和加权缓存命中率，刷新更新正在运行�
   expect(screen.getByText('缓存命中率').parentElement).toHaveTextContent('25.0%');
   expect(screen.queryByText(/视频、通用 Laya 和 SolonCode 尚未迁移/)).not.toBeInTheDocument();
   running = 0;
-  fireEvent.click(screen.getByRole('button', { name: /刷新状态/ }));
+  // 使用完整点击序列，等待初次加载后的按钮状态更新再刷新。
+  const refresh = screen.getByText('刷新状态').closest('button')!;
+  expect(refresh).toBeVisible();
+  await userEvent.click(refresh);
   await waitFor(() => expect(screen.getByText('当前运行中').parentElement).toHaveTextContent('0'));
 });
 

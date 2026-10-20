@@ -7,9 +7,9 @@ export class AiApi extends ApiClient {
   models(cursor?: string, providerId?: number, signal?: AbortSignal) { return this.request<Page<AiModel>>(`ai/models?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${providerId ? `&provider_id=${providerId}` : ''}`, 'GET', undefined, signal); }
   // 模型发现只传供应商身份与版本，实际 Key 留在服务器端。
   upstreamModels(id: number, revision: number, signal?: AbortSignal) { return this.request<UpstreamModels>(`ai/providers/${id}/upstream-models?expected_revision=${revision}`, 'GET', undefined, signal); }
-  /** 严格导入保留事务回滚语义；自动同步显式要求返回冲突项并继续处理其他模型。 */
-  importModels(id: number, revision: number, models: ModelImportItem[], signal?: AbortSignal, skipAliasConflicts = false) { return this.request<ModelImportResult>(`ai/providers/${id}/models/import`, 'POST', {expected_revision: revision, models, ...(skipAliasConflicts ? { skip_alias_conflicts: true } : {})}, signal); }
-  /** 新模型沿用上游名称；已登记项保留配置，别名冲突交由管理员显式处理。 */
+  /** 按供应商和上游标识严格导入，不生成第二套模型名称。 */
+  importModels(id: number, revision: number, models: ModelImportItem[], signal?: AbortSignal) { return this.request<ModelImportResult>(`ai/providers/${id}/models/import`, 'POST', {expected_revision: revision, models}, signal); }
+  /** 已登记项保留配置，同名模型可属于不同供应商。 */
   async syncModels(id: number, revision: number, signal?: AbortSignal) {
     const discovered = await this.upstreamModels(id, revision, signal);
     let added = 0;
@@ -18,9 +18,9 @@ export class AiApi extends ApiClient {
     for (let offset = 0; offset < discovered.models.length; offset += 100) {
       signal?.throwIfAborted();
       const models = discovered.models.slice(offset, offset + 100).map(upstream_model => ({
-        upstream_model, alias: upstream_model,
+        upstream_model,
       }));
-      const result = await this.importModels(id, discovered.revision, models, signal, true);
+      const result = await this.importModels(id, discovered.revision, models, signal);
       added += result.imported.length;
       conflicts.push(...result.conflicts);
     }

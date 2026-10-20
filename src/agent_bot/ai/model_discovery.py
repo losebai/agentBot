@@ -24,7 +24,7 @@ async def discover_models(provider, transport) -> UpstreamModels:
     for item in items:
         name = item.get("name" if ollama else "id") if isinstance(item, dict) else None
         try:
-            ModelCreate(alias=name, upstream_model=name, provider_id=provider.id)
+            ModelCreate(upstream_model=name, provider_id=provider.id)
         except ValidationError as error:
             raise AiError("AI_MODEL_LIST_INVALID", status_code=502) from error
         if name not in seen:

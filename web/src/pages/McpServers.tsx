@@ -1,3 +1,4 @@
+import { ChoiceSelect } from '../components/ChoiceSelect';
 import { useMemo } from 'react';
 import { AgentApi } from '../agent-api';
 import type { McpDraft } from '../agent-types';
@@ -12,8 +13,8 @@ export function McpServers({token}:{token:string}) {
   const actions=useMemo(()=>({list:api.listMcps.bind(api),create:api.createMcp.bind(api),update:api.updateMcp.bind(api),remove:api.deleteMcp.bind(api)}),[api]);
   return <DirectoryEditor title="MCP 服务" label="MCP" description="登记服务，获取完整工具列表并管理每个工具的启用状态。" empty={empty} actions={actions} valid={d=>d.category!=='search'||Boolean(d.search_tool&&(d.allowed_tools.includes('*')||d.allowed_tools.includes(d.search_tool)))} fields={(draft,set,item)=><>
     <label>服务代码<input required pattern="[a-z][a-z0-9_-]{0,63}" value={draft.code} onChange={e=>set({...draft,code:e.target.value})}/></label>
-    <label>分类<select value={draft.category} onChange={e=>set({...draft,category:e.target.value as McpDraft['category']})}><option value="general">通用工具</option><option value="search">网页搜索</option></select></label>
-    <label>连接协议<select value={draft.transport} onChange={e=>set({...draft,transport:e.target.value as McpDraft['transport']})}><option value="streamable">Streamable HTTP</option><option value="sse">SSE</option></select></label>
+    <label>分类<ChoiceSelect aria-label="分类" value={draft.category} onChange={e=>set({...draft,category:e as McpDraft['category']})}><option value="general">通用工具</option><option value="search">网页搜索</option></ChoiceSelect></label>
+    <label>连接协议<ChoiceSelect aria-label="连接协议" value={draft.transport} onChange={e=>set({...draft,transport:e as McpDraft['transport']})}><option value="streamable">Streamable HTTP</option><option value="sse">SSE</option></ChoiceSelect></label>
     <label>服务地址<input required type="url" maxLength={512} value={draft.endpoint} onChange={e=>set({...draft,endpoint:e.target.value})}/></label>
     <CredentialInput label="访问令牌" value={draft.credential} onChange={credential=>set({...draft,credential})} editing={Boolean(item)} configured={item?.credential_set||false} available={item?.credential_available??true}/>
     <McpTools api={api} server={item} allowedTools={draft.allowed_tools}

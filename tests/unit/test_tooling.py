@@ -147,14 +147,14 @@ async def test_memory_identity_is_bound_in_direct_and_queued_sessions(chat_plugi
 
 
 async def test_memory_embedding_service_uses_explicit_runtime_catalog(chat_plugin):
-    """显式模型与目录一起装配语义检索，留空模型保留标签检索。"""
+    """稳定模型引用与目录一起装配语义检索，留空模型保留标签检索。"""
     from unittest.mock import Mock
 
     from agent_bot.memory.retrieval import HybridMemorySearch
     from agent_bot.services.tool_sessions import ToolSessionStore
 
     config = chat_plugin.plugin_config.model_copy(update={
-        "chat_mcp_enabled": True, "chat_memory_embedding_model": "embed-explicit",
+        "chat_mcp_enabled": True, "chat_memory_embedding_model": "model:31",
     })
     sessions = ToolSessionStore(ttl_seconds=30, max_sessions=3)
     catalog = object()
@@ -169,7 +169,7 @@ async def test_memory_embedding_service_uses_explicit_runtime_catalog(chat_plugi
         search = context.memory_session.semantic_search
         assert isinstance(search, HybridMemorySearch)
         assert search._embedder._catalog is catalog
-        assert search._embedder._model_alias == "embed-explicit"
+        assert search._embedder._model_reference == "model:31"
     config = config.model_copy(update={"chat_memory_embedding_model": ""})
     async with manager.open_chat_session(Mock(self_id="90001"), _private_event(), "test") as lease:
         assert (await sessions.resolve(lease.token)).memory_session.semantic_search is None

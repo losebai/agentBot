@@ -1,3 +1,4 @@
+import { ChoiceSelect } from '../components/ChoiceSelect';
 import { Alert, Button, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AiApi, changes } from '../ai-api';
@@ -5,7 +6,7 @@ import { ApiFailure, errorMessage } from '../api';
 import { CatalogDialog } from '../components/CatalogDialog';
 import { CredentialInput } from '../components/CredentialInput';
 import { Models } from './Models';
-import type { ModelImportItem, Page, Provider, ProviderDraft, ProviderProtocol } from '../ai-types';
+import type { Page, Provider, ProviderDraft, ProviderProtocol } from '../ai-types';
 
 const empty: ProviderDraft = { name: '', protocol: 'openai-responses', base_url: '', enabled: false, description: '' };
 
@@ -20,7 +21,6 @@ export function Providers({ token }: { token: string }) {
   const [editing, setEditing] = useState<Provider | null>();
   const [draft, setDraft] = useState<ProviderDraft>(empty);
   const [modelRefresh, setModelRefresh] = useState(0);
-  const [modelConflicts, setModelConflicts] = useState<{ providerId: number; items: ModelImportItem[] }>();
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [noticeType, setNoticeType] = useState<'success' | 'warning'>('success');
@@ -93,10 +93,9 @@ export function Providers({ token }: { token: string }) {
       try {
         const result = await api.syncModels(saved.id, saved.revision, current.signal);
         if (!current.signal.aborted) {
-          setModelConflicts({ providerId: saved.id, items: result.conflicts });
-          setNoticeType(result.conflicts.length ? 'warning' : 'success');
+          setNoticeType('success');
           setNotice('供应商已保存，已检查 ' + result.total + ' 个模型，新增 ' + result.added + ' 个。'
-            + (result.conflicts.length ? '另有 ' + result.conflicts.length + ' 个别名冲突，请在模型区处理。' : '新模型默认停用。'));
+            + '新模型默认停用。');
         }
       } catch (failure) {
         syncError = '供应商已保存，模型同步失败：' + errorMessage(failure) + '。可点击刷新模型继续。';
@@ -154,8 +153,6 @@ export function Providers({ token }: { token: string }) {
       </aside>
       <section id="provider-model-panel" role="tabpanel" aria-labelledby={selected ? 'provider-tab-' + selected.id : undefined} className="provider-model-panel">
         {selected ? <Models key={selected.id + ':' + modelRefresh} token={token} provider={selected}
-          initialConflicts={modelConflicts?.providerId === selected.id ? modelConflicts.items : undefined}
-          onConflictsChange={items => { setModelConflicts({ providerId: selected.id, items }); setNotice(''); }}
           onReloadProvider={signal => reloadProvider(selected.id, signal)} />
           : <div className="panel empty-list">新增供应商后，即可在这里管理模型。</div>}
       </section>
@@ -163,9 +160,9 @@ export function Providers({ token }: { token: string }) {
     {editing !== undefined && <CatalogDialog title={editing ? '编辑供应商' : '新增供应商'} busy={busy} error={error} onCancel={cancel}>
       <form className="catalog-form" onSubmit={event => { event.preventDefault(); if (!busy) void save(); }}>
         <label htmlFor="provider-name">供应商名称</label><input id="provider-name" required maxLength={100} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} />
-        <label htmlFor="provider-protocol">协议</label><select id="provider-protocol" value={draft.protocol} onChange={event => setDraft({ ...draft, protocol: event.target.value as ProviderProtocol })}>
+        <label htmlFor="provider-protocol">协议</label><ChoiceSelect id="provider-protocol" value={draft.protocol} onChange={event => setDraft({ ...draft, protocol: event as ProviderProtocol })}>
           <option value="openai-responses">OpenAI Responses</option><option value="openai-chat">兼容 Chat Completions</option><option value="ollama">Ollama</option>
-        </select>
+        </ChoiceSelect>
         <label htmlFor="provider-url">API 根地址</label><input id="provider-url" required type="url" maxLength={2048} placeholder={draft.protocol === 'ollama' ? 'http://127.0.0.1:11434' : 'https://api.example.com/v1'} value={draft.base_url} onChange={event => setDraft({ ...draft, base_url: event.target.value })} />
         <CredentialInput label="API 密钥" value={draft.credential} onChange={credential => setDraft({ ...draft, credential })} editing={Boolean(editing)} configured={editing?.credential_set || false} available={editing?.credential_available ?? true} />
         <label htmlFor="provider-description">描述</label><input id="provider-description" maxLength={1000} value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} />

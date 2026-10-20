@@ -52,7 +52,9 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
             "新库使用 agent_bot_init.sql"
         ),
         "AI_CONFIG_CONFLICT": "配置已被修改或仍在启用，请重新加载后操作",
-        "AI_MODEL_ALIAS_CONFLICT": "模型别名已被其他记录使用，请设置不同别名后导入",
+        "AI_MODEL_ALIAS_CONFLICT": "旧模型别名已被其他记录使用，请刷新目录并按供应商选择模型",
+        "AI_MODEL_REFERENCE_INVALID": "模型引用格式无效，请从供应商模型列表重新选择",
+        "AI_MODEL_REFERENCE_AMBIGUOUS": "旧模型引用存在歧义，请先完成模型身份迁移",
         "AI_CONFIG_NOT_FOUND": "所选供应商或模型不存在或已删除，请刷新列表后重新选择",
         "AI_CONFIG_IN_USE": "配置仍被模型或 Agent 引用，请先解除关联",
         "AI_CREDENTIAL_MISSING": "供应商密钥尚未设置，请在供应商管理中重新录入",

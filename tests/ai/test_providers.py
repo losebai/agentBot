@@ -96,6 +96,7 @@ def call(protocol, options=None):
                 alias="local",
                 upstream_model="Qwen/X",
                 provider_id=1,
+                provider_name="test",
                 enabled=True,
             ),
             provider=ProviderView(

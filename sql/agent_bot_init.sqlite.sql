@@ -260,12 +260,12 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_provider (
 -- 唯一索引保护业务标识。
 CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_name ON agent_bot_ai_provider (name);
 
--- 模型别名目录
+-- 模型目录，稳定主键定义引用身份
 CREATE TABLE IF NOT EXISTS agent_bot_ai_model (
     -- 自增主键
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id >= 0),
-    -- 区分大小写的模型别名
-    alias TEXT NOT NULL,
+    -- 历史别名仅供兼容，新模型为空
+    alias TEXT NULL,
     -- 上游实际模型标识
     upstream_model TEXT NOT NULL,
     -- 所属供应商主键
@@ -283,6 +283,8 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_model (
 );
 -- 唯一索引保护业务标识。
 CREATE UNIQUE INDEX IF NOT EXISTS uq_model_alias ON agent_bot_ai_model (alias);
+-- 供应商与上游模型共同定义业务身份，保留大小写。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_model_provider_upstream ON agent_bot_ai_model (provider_id, upstream_model);
 
 -- 普通调用统一保存在 agent_bot_call_record，不再创建旧执行表。
 

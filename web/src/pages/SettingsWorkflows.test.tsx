@@ -2,6 +2,32 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Settings } from './Settings';
 
+/** 以具体按钮文本定位并验证真实可见性，避免对整页所有按钮重复计算样式。 */
+function getVisibleButton(name: string | RegExp, root: HTMLElement = document.body) {
+  const button = within(root).getByText(name, { selector: 'button, button > span' }).closest('button');
+  if (!button) throw new Error('按钮文本没有对应的按钮');
+  expect(button).toBeVisible();
+  return button;
+}
+
+/** 页签具有直接可读名称，保留可见性校验后再执行切换。 */
+function getVisibleTab(name: string, root: HTMLElement = document.body) {
+  const tab = within(root).getByText(name, { selector: '[role="tab"]' });
+  expect(tab).toBeVisible();
+  return tab;
+}
+
+/** 从弹窗自身标题定位容器，后续表单和操作均限定在该弹窗内。 */
+async function findVisibleDialog(title: string) {
+  return waitFor(() => {
+    const dialog = screen.getByText(title, { selector: '.ant-modal-title' }).closest<HTMLElement>('[role="dialog"]');
+    if (!dialog) throw new Error('标题没有对应的弹窗');
+    expect(dialog).toBeVisible();
+    return dialog;
+  });
+}
+
+
 const settings = {
   database_revision: 1, applied_revision: 1, restart_required_fields: [],
   fields: [
@@ -31,9 +57,9 @@ const detail = { ...workflow, ui_json: '{"nodes":[]}', api_json: '{"1":{"inputs"
 
 /** 进入按需加载的工作流子页，测试真实设置页面的状态保留边界。 */
 async function openWorkflows() {
-  fireEvent.click(screen.getByRole('button', { name: 'Comfy' }));
+  fireEvent.click(getVisibleButton('Comfy'));
   await screen.findByLabelText('Comfy 服务地址');
-  fireEvent.click(screen.getByRole('tab', { name: '工作流管理' }));
+  fireEvent.click(getVisibleTab('工作流管理'));
   await screen.findByText('晨光画图');
 }
 
@@ -47,15 +73,15 @@ describe('Comfy 工作流管理', () => {
       return Response.json(String(url).endsWith('/settings') ? settings : catalog);
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Comfy' }));
+    fireEvent.click(getVisibleButton('Comfy'));
     expect(await screen.findByLabelText('Comfy 服务地址')).toBeInTheDocument();
     expect(requests.filter(path => path.endsWith('/workflows'))).toHaveLength(0);
-    fireEvent.click(screen.getByRole('tab', { name: '工作流管理' }));
+    fireEvent.click(getVisibleTab('工作流管理'));
     expect(await screen.findByText('晨光画图')).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: '启用未适配草稿' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '将未适配草稿设为默认' })).toBeDisabled();
+    expect(screen.getByLabelText('启用未适配草稿')).toBeDisabled();
+    expect(screen.getByLabelText('将未适配草稿设为默认')).toBeDisabled();
     expect(screen.queryByText('private/workflows/sunrise.json')).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole('textbox', { name: '筛选工作流' }), { target: { value: '晨光' } });
+    fireEvent.change(screen.getByLabelText('筛选工作流'), { target: { value: '晨光' } });
     expect(screen.queryByText('未适配草稿')).not.toBeInTheDocument();
     expect(screen.getByText('晨光画图')).toBeInTheDocument();
   });
@@ -73,13 +99,13 @@ describe('Comfy 工作流管理', () => {
     await openWorkflows();
     expect(screen.getByText('已加载 2 个工作流')).toBeInTheDocument();
     expect(screen.getByText('筛选已加载工作流')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '加载更多' }));
+    fireEvent.click(getVisibleButton('加载更多'));
     expect(await screen.findByText('晚霞画图')).toBeInTheDocument();
     expect(screen.getAllByText('晨光画图')).toHaveLength(1);
     expect(requests).toContain('/api/v1/workflows?after=sunrise');
     expect(screen.getByText('已加载 3 个工作流')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '加载更多' })).toBeDisabled();
-    fireEvent.change(screen.getByRole('textbox', { name: '筛选工作流' }), { target: { value: '晚霞' } });
+    expect(getVisibleButton('加载更多')).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('筛选工作流'), { target: { value: '晚霞' } });
     expect(screen.queryByText('晨光画图')).not.toBeInTheDocument();
     expect(screen.getByText('晚霞画图')).toBeInTheDocument();
   });
@@ -105,7 +131,7 @@ describe('Comfy 工作流管理', () => {
       body: { filename: 'scene.json', content } }));
     await waitFor(() => expect(catalogLoads).toBe(2));
     expect(await screen.findByText(/已导入 1 个工作流/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '同步配置目录' }));
+    fireEvent.click(getVisibleButton('同步配置目录'));
     await waitFor(() => expect(posts).toContainEqual({ path: '/api/v1/workflows/sync', body: undefined }));
     await waitFor(() => expect(catalogLoads).toBe(3));
   });
@@ -118,7 +144,7 @@ describe('Comfy 工作流管理', () => {
     }));
     render(<Settings token="offline-token" />);
     await openWorkflows();
-    expect(screen.getByRole('button', { name: '同步配置目录' })).toBeDisabled();
+    expect(getVisibleButton('同步配置目录')).toBeDisabled();
     const input = screen.getByLabelText('导入 JSON 文件');
     fireEvent.change(input, { target: { files: [new File(['x'.repeat(1_048_577)], 'huge.json')] } });
     expect(await screen.findByText(/不能超过 1 MiB/)).toBeInTheDocument();
@@ -149,24 +175,24 @@ describe('Comfy 工作流管理', () => {
     }));
     render(<Settings token="offline-token" />);
     await openWorkflows();
-    fireEvent.click(screen.getByRole('button', { name: '编辑晨光画图' }));
-    const dialog = screen.getByRole('dialog', { name: '编辑工作流' });
+    fireEvent.click(screen.getByLabelText('编辑晨光画图'));
+    const dialog = await findVisibleDialog('编辑工作流');
     fireEvent.change(within(dialog).getByLabelText('显示名称'), { target: { value: '傍晚画图' } });
     fireEvent.change(within(dialog).getByLabelText('附加正向提示词'), { target: { value: '用户的正向提示词' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存工作流' }));
+    fireEvent.click(getVisibleButton('保存工作流', dialog));
     expect(await within(dialog).findByText('工作流已被修改，请重新加载')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('显示名称')).toHaveValue('傍晚画图');
     expect(patches[0]).toEqual({ expected_revision: 'revision-one', values: {
       display_name: '傍晚画图', additional_positive_prompt: '用户的正向提示词',
     } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '读取最新版本并保留修改' }));
+    fireEvent.click(getVisibleButton('读取最新版本并保留修改', dialog));
     await waitFor(() => expect(within(dialog).getByLabelText('说明')).toHaveValue('他人更新的说明'));
     expect(within(dialog).getByLabelText('显示名称')).toHaveValue('傍晚画图');
     expect(within(dialog).getByLabelText('附加正向提示词')).toHaveValue('用户的正向提示词');
     expect(within(dialog).getByLabelText('附加负向提示词')).toHaveValue('他人负向提示词');
     expect(within(dialog).getByText(/请复核后再保存/)).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存工作流' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    fireEvent.click(getVisibleButton('保存工作流', dialog));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(patches[1]).toEqual({ expected_revision: 'revision-two', values: {
       display_name: '傍晚画图', additional_positive_prompt: '用户的正向提示词',
     } });
@@ -189,22 +215,22 @@ describe('Comfy 工作流管理', () => {
     }));
     render(<Settings token="offline-token" />);
     await openWorkflows();
-    fireEvent.click(screen.getByRole('button', { name: '编辑晨光画图' }));
-    const dialog = screen.getByRole('dialog', { name: '编辑工作流' });
+    fireEvent.click(screen.getByLabelText('编辑晨光画图'));
+    const dialog = await findVisibleDialog('编辑工作流');
     fireEvent.change(within(dialog).getByLabelText('显示名称'), { target: { value: '保留的名称' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存工作流' }));
+    fireEvent.click(getVisibleButton('保存工作流', dialog));
     await within(dialog).findByText('工作流已被修改，请重新加载');
-    fireEvent.click(within(dialog).getByRole('button', { name: '读取最新版本并保留修改' }));
+    fireEvent.click(getVisibleButton('读取最新版本并保留修改', dialog));
     await waitFor(() => expect(rejectRead).toBeDefined());
-    expect(within(dialog).getByRole('button', { name: '取消' })).toBeDisabled();
+    expect(within(dialog).getByLabelText('取消')).toBeDisabled();
     expect(within(dialog).getByLabelText('显示名称')).toBeDisabled();
-    expect(within(dialog).getByRole('button', { name: /保存工作流/ })).toBeDisabled();
+    expect(getVisibleButton(/保存工作流/, dialog)).toBeDisabled();
     expect(within(dialog).queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
     expect(screen.getByText('同步配置目录').closest('button')).toBeDisabled();
     rejectRead!(Response.json({ code: 'WORKFLOW_UNAVAILABLE', message: '无法读取最新工作流' }, { status: 503 }));
     expect(await within(dialog).findByText('无法读取最新工作流')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('显示名称')).toHaveValue('保留的名称');
-    fireEvent.click(within(dialog).getByRole('button', { name: '保存工作流' }));
+    fireEvent.click(getVisibleButton('保存工作流', dialog));
     await waitFor(() => expect(patches).toHaveLength(2));
     expect(patches[1]).toEqual({ expected_revision: 'revision-one', values: { display_name: '保留的名称' } });
   });
@@ -221,10 +247,10 @@ describe('Comfy 工作流管理', () => {
     }));
     render(<Settings token="offline-token" />);
     await openWorkflows();
-    fireEvent.click(screen.getByRole('switch', { name: '启用晨光画图' }));
+    fireEvent.click(screen.getByLabelText('启用晨光画图'));
     expect(await screen.findByText('工作流不能停用')).toBeInTheDocument();
     expect(patch).toEqual({ expected_revision: 'revision-one', values: { enabled: false } });
-    expect(screen.getByRole('switch', { name: '启用晨光画图' })).toBeChecked();
+    expect(screen.getByLabelText('启用晨光画图')).toBeChecked();
   });
 
   it('选择默认工作流刷新配置版本，保留其他分类草稿并移除旧默认草稿', async () => {
@@ -247,19 +273,19 @@ describe('Comfy 工作流管理', () => {
         default_key: selected ? 'evening' : 'sunrise', settings_revision: selected ? 2 : 1 });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
+    fireEvent.click(getVisibleButton('LLM设置'));
     fireEvent.change(await screen.findByLabelText('温度'), { target: { value: '0.4' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Comfy' }));
+    fireEvent.click(getVisibleButton('Comfy'));
     fireEvent.change(screen.getByLabelText('默认工作流'), { target: { value: 'unsubmitted' } });
-    fireEvent.click(screen.getByRole('tab', { name: '工作流管理' }));
-    fireEvent.click(await screen.findByRole('button', { name: '将傍晚画图设为默认' }));
+    fireEvent.click(getVisibleTab('工作流管理'));
+    fireEvent.click(await screen.findByLabelText('将傍晚画图设为默认'));
     expect(await screen.findByText('数据库版本 2 · 运行时版本 2')).toBeInTheDocument();
     expect(defaultBody).toEqual({ expected_revision: 1 });
-    fireEvent.click(screen.getByRole('tab', { name: '连接设置' }));
+    fireEvent.click(getVisibleTab('连接设置'));
     expect(screen.getByLabelText('默认工作流')).toHaveValue('evening');
-    fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
+    fireEvent.click(getVisibleButton('LLM设置'));
     expect(screen.getByLabelText('温度')).toHaveValue(0.4);
-    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    fireEvent.click(getVisibleButton('保存修改'));
     await waitFor(() => expect(settingsPatch).toEqual({ expected_revision: 2, values: { chat_llm_temperature: 0.4 } }));
   });
 
@@ -280,13 +306,13 @@ describe('Comfy 工作流管理', () => {
     }));
     render(<Settings token="offline-token" />);
     await openWorkflows();
-    fireEvent.click(screen.getByRole('button', { name: /重新加载/ }));
+    fireEvent.click(getVisibleButton(/重新加载/));
     await waitFor(() => expect(finishRead).toBeDefined());
-    const selectDefault = screen.getByRole('button', { name: '将傍晚画图设为默认' });
+    const selectDefault = screen.getByLabelText('将傍晚画图设为默认');
     expect(selectDefault).toBeDisabled();
-    expect(screen.getByRole('button', { name: '同步配置目录' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '导入 JSON 文件' })).toBeDisabled();
-    expect(screen.getByRole('tab', { name: '工作流管理' })).toHaveAttribute('aria-disabled', 'true');
+    expect(getVisibleButton('同步配置目录')).toBeDisabled();
+    expect(getVisibleButton('导入 JSON 文件')).toBeDisabled();
+    expect(getVisibleTab('工作流管理')).toHaveAttribute('aria-disabled', 'true');
     fireEvent.click(selectDefault);
     expect(posts).toEqual([]);
     finishRead!(Response.json(settings));
@@ -306,13 +332,13 @@ describe('Comfy 工作流管理', () => {
       ? settings : String(url).endsWith('/workflows/sunrise') ? detail : catalog)));
     render(<Settings token="offline-token" />);
     await openWorkflows();
-    fireEvent.click(screen.getByRole('button', { name: '查看晨光画图 JSON' }));
-    const dialog = await screen.findByRole('dialog', { name: '查看工作流 JSON' });
+    fireEvent.click(screen.getByLabelText('查看晨光画图 JSON'));
+    const dialog = await findVisibleDialog('查看工作流 JSON');
     expect(within(dialog).getByLabelText('工作流 JSON')).toHaveValue(detail.api_json);
     expect(within(dialog).getByLabelText('工作流 JSON')).toHaveAttribute('readonly');
-    fireEvent.click(within(dialog).getByRole('tab', { name: '界面 JSON' }));
+    fireEvent.click(getVisibleTab('界面 JSON', dialog));
     expect(within(dialog).getByLabelText('工作流 JSON')).toHaveValue(detail.ui_json);
-    fireEvent.click(within(dialog).getByRole('button', { name: '导出当前 JSON' }));
+    fireEvent.click(getVisibleButton('导出当前 JSON', dialog));
     expect(revoke).toHaveBeenCalledWith('blob:offline-workflow');
     const reader = new FileReader();
     const content = await new Promise(resolve => {

@@ -11,24 +11,25 @@ import { AgentManagement } from './pages/AgentManagement';
 import { Plugins } from './pages/Plugins';
 import { Knowledge } from './pages/Knowledge';
 
-// 组件库与页面采用同一套中性色；告警仍保留语义颜色，按钮不使用装饰性阴影。
+// 组件库与页面共享白粉蓝主题，统一控件尺寸、可读性和状态反馈。
 const workspaceTheme = {
   token: {
-    colorPrimary: '#303030', colorInfo: '#666666', colorSuccess: '#52735b',
+    colorPrimary: '#6975d3', colorInfo: '#2563eb', colorSuccess: '#24836b',
     colorWarning: '#9b702f', colorError: '#b94b4b',
     colorSuccessBg: '#f5f8f5', colorSuccessBorder: '#dce7de',
     colorWarningBg: '#fcf9f1', colorWarningBorder: '#ece1c8',
     colorErrorBg: '#fcf5f5', colorErrorBorder: '#eddcdc',
-    colorInfoBg: '#f7f7f7', colorInfoBorder: '#e4e4e4',
-    colorText: '#242424', colorTextSecondary: '#707070',
-    colorBorder: '#dedede', colorBgLayout: '#f7f7f7',
-    borderRadius: 6, fontSize: 13, controlHeight: 32,
+    colorInfoBg: '#eff6ff', colorInfoBorder: '#cddffc',
+    colorText: '#1e293b', colorTextSecondary: '#64748b',
+    colorBorder: '#d8e1ed', colorBgLayout: '#f3f6fb',
+    borderRadius: 8, fontSize: 14, controlHeight: 38,
     fontFamily: 'Inter, Segoe UI, Microsoft YaHei, sans-serif',
   },
   components: {
     Button: { primaryShadow: 'none', defaultShadow: 'none', dangerShadow: 'none' },
-    Tabs: { inkBarColor: '#303030', itemSelectedColor: '#242424', itemHoverColor: '#555555' },
-    Modal: { borderRadiusLG: 10 },
+    Tabs: { inkBarColor: '#8c78cf', itemSelectedColor: '#6975d3', itemHoverColor: '#9e65b0' },
+    Select: { optionSelectedBg: '#eef0ff', optionActiveBg: '#f7f3fc' },
+    Modal: { borderRadiusLG: 14 },
   },
 };
 

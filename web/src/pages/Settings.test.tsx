@@ -1,3 +1,4 @@
+import { chooseSelect, selectDisplay } from '../test-select';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Settings } from './Settings';
@@ -86,20 +87,24 @@ describe('配置编辑', () => {
     const fields = [{ name: 'chat_llm_enable_thinking', description: '深度思考', kind: 'boolean',
       value: initial, nullable: true, secret_is_set: false, restart_required: false }];
     vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
-      if (init?.method === 'PATCH') submitted = JSON.parse(init.body);
+      if (init?.method === 'PATCH') {
+        submitted = JSON.parse(init.body);
+        fields[0].value = JSON.parse(init.body).values.chat_llm_enable_thinking;
+      }
       return Response.json({ ...snapshot, fields });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
-    const control = await screen.findByRole('combobox', { name: '深度思考' });
-    expect(control).toHaveValue(initial === null ? '' : String(initial));
-    fireEvent.change(control, { target: { value: 'false' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    fireEvent.click(screen.getByText('LLM设置', { selector: 'button' }));
+    const control = await screen.findByLabelText('深度思考');
+    expect(selectDisplay(control)).toHaveTextContent(initial === null ? '未设置（不传此参数）' : initial ? '启用' : '禁用');
+    const selected = initial === false;
+    await chooseSelect(control, selected ? '启用' : '禁用');
+    fireEvent.click(screen.getByText('保存修改').closest('button')!);
     await waitFor(() => expect(submitted).toEqual({ expected_revision: 1,
-      values: { chat_llm_enable_thinking: false } }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled());
-    fireEvent.change(control, { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+      values: { chat_llm_enable_thinking: selected } }));
+    await waitFor(() => expect(screen.getByText('保存修改').closest('button')!).toBeDisabled());
+    await chooseSelect(control, '未设置（不传此参数）');
+    fireEvent.click(screen.getByText('保存修改').closest('button')!);
     await waitFor(() => expect(submitted).toEqual({ expected_revision: 1,
       values: { chat_llm_enable_thinking: null } }));
   });
@@ -316,8 +321,8 @@ describe('配置编辑', () => {
     ].map(field => ({ nullable: false, secret_is_set: false, restart_required: false,
       scope: 'runtime', read_only: false, ...field }));
     vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).includes('/ai/models?')
-      ? { items: [{ id: 1, alias: 'vision', enabled: true },
-        { id: 2, alias: 'gpt-image-1', enabled: true }], next_cursor: null }
+      ? { items: [{provider_name: '测试供应商', reference: `model:${1}`, provider_id: 1, upstream_model: 'vision', revision: 1,  id: 1, alias: 'vision', enabled: true },
+        {provider_name: '测试供应商', reference: `model:${2}`, provider_id: 1, upstream_model: 'gpt-image-1', revision: 1,  id: 2, alias: 'gpt-image-1', enabled: true }], next_cursor: null }
       : { ...snapshot, fields })));
     render(<Settings token="offline-token" />);
     const navigation = screen.getByRole('navigation', { name: '机器人配置分类' });
@@ -374,17 +379,17 @@ describe('配置编辑', () => {
       return Response.json({ ...snapshot, fields });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
+    fireEvent.click(screen.getByText('LLM设置', { selector: 'button' }));
     fireEvent.change(await screen.findByLabelText('温度'), { target: { value: '0.4' } });
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+    fireEvent.click(screen.getByText('QQ', { selector: 'button' }));
     fireEvent.change(screen.getByLabelText('机器人名称'), { target: { value: '小桃' } });
-    fireEvent.click(screen.getByRole('button', { name: '自动回复设置' }));
+    fireEvent.click(screen.getByText('自动回复设置', { selector: 'button' }));
     fireEvent.change(screen.getByLabelText('自动发言间隔'), { target: { value: '1800' } });
-    fireEvent.click(screen.getByRole('button', { name: '游戏资讯设置' }));
+    fireEvent.click(screen.getByText('游戏资讯设置', { selector: 'button' }));
     fireEvent.change(screen.getByLabelText('默认角色 ID'), { target: { value: 'game-role' } });
-    fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
+    fireEvent.click(screen.getByText('LLM设置', { selector: 'button' }));
     expect(screen.getByLabelText('温度')).toHaveValue(0.4);
-    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    fireEvent.click(screen.getByText('保存修改').closest('button')!);
     await waitFor(() => expect(submitted).toEqual({ expected_revision: 1,
       values: { chat_llm_temperature: 0.4, nickname: ['小桃'],
         chat_auto_speak_interval_seconds: 1800, chat_naraka_default_role_id: 'game-role' } }));

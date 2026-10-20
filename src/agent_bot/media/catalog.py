@@ -41,10 +41,17 @@ def read_media_batch(connection, ids) -> tuple[dict[int, ModelMediaCapabilities]
 
 
 def model_view(connection, row) -> ModelView:
-    """组装模型和能力的同事务快照。"""
+    """组装模型、真实供应商名称和能力的同事务快照。"""
     capabilities, initialized = read_model_media(connection, row["id"])
+    provider = query(
+        connection,
+        "SELECT name FROM agent_bot_ai_provider WHERE id=%s",
+        (row["provider_id"],),
+        one=True,
+    )
     return ModelView.model_validate(
-        {**row, "media": capabilities, "media_initialized": initialized}
+        {**row, "provider_name": provider["name"],
+         "media": capabilities, "media_initialized": initialized}
     )
 
 

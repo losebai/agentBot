@@ -1,3 +1,4 @@
+import { chooseSelect } from '../test-select';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { Sessions } from './Sessions';
@@ -15,9 +16,11 @@ it('系统调用独立筛选并分页，返回普通调用后清空系统筛选�
   fireEvent.click(screen.getByRole('tab', { name: '系统调用' }));
   await waitFor(() => expect(requests.at(-1)?.searchParams.get('category')).toBe('system'));
   expect(screen.getByRole('heading', { name: '系统调用' })).toBeVisible();
-  expect(screen.getByRole('option', { name: '自动发言决策' })).toBeInTheDocument();
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '类型' }));
+  expect(await screen.findByRole('option', { name: '自动发言决策' })).toBeInTheDocument();
   expect(screen.queryByRole('option', { name: '普通调用' })).not.toBeInTheDocument();
-  fireEvent.change(screen.getByRole('combobox', { name: '类型' }), { target: { value: 'command' } });
+  fireEvent.keyDown(screen.getByRole('combobox', { name: '类型' }), { key: 'Escape' });
+  await chooseSelect(screen.getByRole('combobox', { name: '类型' }), '指令调用');
   await waitFor(() => expect(screen.getByRole('button', { name: /筛\s*选/ })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: /筛\s*选/ }));
   await waitFor(() => expect(requests.at(-1)?.searchParams.get('system_kind')).toBe('command'));

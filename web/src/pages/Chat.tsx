@@ -1,3 +1,4 @@
+import { ModelSelect, selectedModel } from '../components/ModelSelect';
 import { Alert, Button, Input, Tag } from 'antd';
 import { DeleteOutlined, SendOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -15,6 +16,7 @@ export function Chat({token}:{token:string}) {
   const [mode,setMode]=useState('plain');
   return <><div className="mode-tabs" role="tablist" aria-label="对话模式"><button role="tab" aria-selected={mode==='plain'} onClick={()=>setMode('plain')}>普通对话</button><button role="tab" aria-selected={mode==='agent'} onClick={()=>setMode('agent')}>Agent 对话</button><button role="tab" aria-selected={mode==='media'} onClick={()=>setMode('media')}>媒体生成</button></div>{mode==='agent'?<AgentChat token={token}/>:mode==='media'?<MediaGenerator token={token}/>:<OrdinaryChat token={token}/>}</>;
 }
+/** 普通对话保留默认配置绑定，目录只负责展示供应商和模型名。 */
 function OrdinaryChat({token}:{token:string}) {
   const api=useMemo(()=>new ApiClient(token),[token]);const ai=useMemo(()=>new AiApi(token),[token]);
   const [session,setSession]=useState(newSession);const [messages,setMessages]=useState<ChatMessage[]>([]);
@@ -23,6 +25,7 @@ function OrdinaryChat({token}:{token:string}) {
   const [modelCursor,setModelCursor]=useState<string|null>(null);const [model,setModel]=useState('');const [streaming,setStreaming]=useState(false);
   const [partial,setPartial]=useState<{prompt:string;content:string;state:string}>();const [metadata,setMetadata]=useState<CompletionMetadata>();
   const controller=useRef<AbortController>();const mounted=useRef(true);
+  const configuredModel = selectedModel(models, status?.configured_model ?? '');
   // 模型目录始终来自本地服务，状态刷新不再切换执行后端。
   async function refresh(){try{const value=await api.status();if(mounted.current){setStatus(value);const result=await ai.models();if(mounted.current){setModels(result.items);setModelCursor(result.next_cursor);}}}catch(e){if(mounted.current)setError(errorMessage(e));}}
   useEffect(()=>{mounted.current=true;void refresh();return()=>{mounted.current=false;controller.current?.abort();};},[api]);
@@ -48,7 +51,8 @@ function OrdinaryChat({token}:{token:string}) {
   }
   return <div className="page-content chat-page"><div className="page-heading"><div><p className="eyebrow">CONVERSATION</p><h1>对话测试</h1><p>验证普通文本回复与流式输出。</p></div><div className="heading-actions"><Button disabled={sending} onClick={()=>void refresh()}>刷新模型状态</Button><Button icon={<DeleteOutlined aria-hidden/>} disabled={sending||(!messages.length&&!partial)} onClick={()=>{setMessages([]);setPartial(undefined);setMetadata(undefined);setSession(newSession());setError('');}}>新会话</Button></div></div>
     <div className="chat-scope"><Tag>普通对话</Tag><span>消息只用于测试，不会发送到 QQ。</span></div>
-    <div className="chat-controls"><><label htmlFor="chat-model">测试模型</label><select id="chat-model" disabled={sending} value={model} onChange={e=>setModel(e.target.value)}><option value="">使用配置模型 {status?.configured_model}</option>{models.filter(item=>item.enabled).map(item=><option key={item.id} value={item.alias}>{item.alias}</option>)}</select>{modelCursor&&<Button disabled={sending} onClick={()=>void moreModels()}>加载更多模型</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式输出</label></></div>
+    <div className="chat-controls"><><label htmlFor="chat-model">测试模型</label><ModelSelect id="chat-model" models={models} value={model} nullable disabled={sending}
+      placeholder={configuredModel ? `使用配置模型 ${configuredModel.provider_name} / ${configuredModel.upstream_model}` : '使用配置模型'} onChange={next => setModel(String(next ?? ''))} />{modelCursor&&<Button disabled={sending} onClick={()=>void moreModels()}>加载更多模型</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式输出</label></></div>
     {error&&<Alert type="error" showIcon className="notice" message={error}/>}{metadata&&!metadata.record_saved&&<Alert className="notice" type="warning" showIcon message="回复已生成，但会话记录未保存。请检查数据库，无需重新发送。"/>}
     <div className="conversation" aria-live="polite">{!messages.length&&!partial&&<div className="conversation-empty"><div className="bot-mark">AB</div><h2>开始一段对话</h2><p>发送消息，检查模型配置与服务连接。</p></div>}{messages.map((message,index)=><article className={`message ${message.role}`} key={index}><div className="message-avatar">{message.role==='user'?'你':'AB'}</div><div className="message-body"><span className="message-name">{message.role==='user'?'你':'AgentBot'}</span><MarkdownRenderer content={message.content}/></div></article>)}
       {partial&&<><article className="message user"><div className="message-avatar">你</div><div className="message-body"><MarkdownRenderer content={partial.prompt}/></div></article><article className="message assistant"><div className="message-avatar">AB</div><div className="message-body"><Tag>{partial.state}</Tag><MarkdownRenderer content={partial.content || (sending?'正在等待模型回复…':'此轮没有生成正文。')}/></div></article></>}

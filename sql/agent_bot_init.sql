@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_provider (
 
 CREATE TABLE IF NOT EXISTS agent_bot_ai_model (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-  alias VARCHAR(200) COLLATE utf8mb4_bin NOT NULL COMMENT '区分大小写的模型别名',
+  alias VARCHAR(200) COLLATE utf8mb4_bin NULL COMMENT '历史别名仅供兼容，新模型为空',
   upstream_model VARCHAR(200) COLLATE utf8mb4_bin NOT NULL COMMENT '上游实际模型标识',
   provider_id BIGINT UNSIGNED NOT NULL COMMENT '所属供应商主键',
   enabled TINYINT NOT NULL DEFAULT 0 COMMENT '是否启用：零禁用，一启用',
@@ -187,9 +187,11 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_model (
   PRIMARY KEY (id),
   -- 唯一索引约束业务标识，支持并发写入时的重复检查。
   UNIQUE KEY uq_model_alias (alias),
+  -- 供应商与上游模型共同定义业务身份，二进制排序规则保留大小写。
+  UNIQUE KEY uq_model_provider_upstream (provider_id, upstream_model),
   -- 外键保证引用存在；级联规则沿用原定义，保持删除语义。
   CONSTRAINT fk_agent_bot_model_provider FOREIGN KEY (provider_id) REFERENCES agent_bot_ai_provider (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模型别名目录';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模型目录，稳定主键定义引用身份';
 
 -- 普通调用统一保存在 agent_bot_call_record，不再创建旧执行表。
 

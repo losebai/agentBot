@@ -1,3 +1,4 @@
+import { chooseSelect } from '../test-select';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { TaggedMemories } from './TaggedMemories';
@@ -63,7 +64,7 @@ it('清理只提交预览中的版本，确认前不发送清理写入', async (
   });
   render(<TaggedMemories token="offline" />);
   await screen.findByRole('button', {name: '查看网关限制'});
-  fireEvent.change(screen.getByLabelText('目标作用域'), {target: {value: 'scope-user'}});
+  await chooseSelect(screen.getByRole('combobox', { name: '目标作用域' }), /用户/);
   fireEvent.change(screen.getByLabelText('主题'), {target: {value: '413 网关报错'}});
   fireEvent.click(screen.getByRole('button', {name: '预览主题清理'}));
   const dialog = await screen.findByRole('dialog', {name: '主题清理预览'});
@@ -131,7 +132,7 @@ it('清理预览仍可取消，关闭后中止未完成的读取', async () => {
     ? new Promise<Response>(resolve => { finish = resolve; }) : undefined);
   render(<TaggedMemories token="offline" />);
   await screen.findByRole('button', {name: '查看网关限制'});
-  fireEvent.change(screen.getByLabelText('目标作用域'), {target: {value: 'scope-user'}});
+  await chooseSelect(screen.getByRole('combobox', { name: '目标作用域' }), /用户/);
   fireEvent.change(screen.getByLabelText('主题'), {target: {value: '413 网关报错'}});
   fireEvent.click(screen.getByRole('button', {name: '预览主题清理'}));
   const cancel = await screen.findByRole('button', {name: /取\s*消/});

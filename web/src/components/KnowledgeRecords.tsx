@@ -1,3 +1,4 @@
+import { ChoiceSelect } from './ChoiceSelect';
 import { Alert, Button, Select, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { errorMessage } from '../api';
@@ -125,13 +126,13 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
     {error && <Alert type="error" showIcon message={error} className="notice" />}
     <form className="record-filter" onSubmit={event => { event.preventDefault(); setCursor(undefined); setHistory([]); setFilters({...filterDraft}); }}>
       <label>关键词<input maxLength={200} value={filterDraft.query} onChange={event => setFilterDraft({...filterDraft, query: event.target.value})} /></label>
-      <label>标签<select value={filterDraft.tag} onChange={event => setFilterDraft({...filterDraft, tag: event.target.value})}>
-        <option value="">全部标签</option>{tags.map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}（{tag.count}）</option>)}</select></label>
-      {memory && <><label>作用域类型<select value={filterDraft.scope} onChange={event => setFilterDraft({...filterDraft, scope: event.target.value as MemoryScope | '', scope_id: ''})}>
-        <option value="">全部类型</option>{Object.entries(scopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
-        <label>目标作用域<select value={filterDraft.scope_id} onChange={event => setFilterDraft({...filterDraft, scope_id: event.target.value})}>
+      <label>标签<ChoiceSelect aria-label="标签" value={filterDraft.tag} onChange={event => setFilterDraft({...filterDraft, tag: event})}>
+        <option value="">全部标签</option>{tags.map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}（{tag.count}）</option>)}</ChoiceSelect></label>
+      {memory && <><label>作用域类型<ChoiceSelect aria-label="作用域类型" value={filterDraft.scope} onChange={event => setFilterDraft({...filterDraft, scope: event as MemoryScope | '', scope_id: ''})}>
+        <option value="">全部类型</option>{Object.entries(scopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</ChoiceSelect></label>
+        <label>目标作用域<ChoiceSelect aria-label="目标作用域" value={filterDraft.scope_id} onChange={event => setFilterDraft({...filterDraft, scope_id: event})}>
           <option value="">全部作用域</option>{scopes.filter(scope => !filterDraft.scope || scope.scope === filterDraft.scope).map(scope =>
-            <option key={scope.scope_id} value={scope.scope_id}>{scopeLabel(scope)}</option>)}</select></label></>}
+            <option key={scope.scope_id} value={scope.scope_id}>{scopeLabel(scope)}</option>)}</ChoiceSelect></label></>}
       <Button aria-label="筛选" htmlType="submit" disabled={loading}>筛选</Button>
     </form>
     <div className="panel table-wrap"><table className="data-table"><thead><tr><th>{memory ? '记忆键 / 归属' : '标题'}</th><th>正文摘要</th><th>标签</th><th>创建时间</th><th>操作</th></tr></thead><tbody>
@@ -146,14 +147,14 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
     {adding && <CatalogDialog title={'新增' + label} busy={saving} error={saveError} onCancel={() => setAdding(false)}>
       <form className="catalog-form knowledge-form" onSubmit={event => { event.preventDefault(); void save(); }}>
         {memory ? <>
-          <label>作用域来源<select disabled={saving} value={draft.source} onChange={event => setDraft({...draft, source: event.target.value as 'new' | 'existing', scope_id: ''})}>
-            <option value="new">指定新作用域</option><option value="existing" disabled={!scopes.length}>使用已有作用域</option></select></label>
-          {draft.source === 'existing' ? <label>已有作用域<select required disabled={saving} value={draft.scope_id} onChange={event => {
-            const owner = scopes.find(scope => scope.scope_id === event.target.value);
-            setDraft({...draft, scope_id: event.target.value, scope: owner?.scope ?? draft.scope});
-          }}><option value="">请选择</option>{scopes.map(scope => <option key={scope.scope_id} value={scope.scope_id}>{scopeLabel(scope)}（{scope.count}）</option>)}</select></label>
-            : <><label>作用域<select disabled={saving} value={draft.scope} onChange={event => setDraft({...draft, scope: event.target.value as MemoryScope, target: ''})}>
-              {Object.entries(scopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</select></label>
+          <label>作用域来源<ChoiceSelect aria-label="作用域来源" disabled={saving} value={draft.source} onChange={event => setDraft({...draft, source: event as 'new' | 'existing', scope_id: ''})}>
+            <option value="new">指定新作用域</option><option value="existing" disabled={!scopes.length}>使用已有作用域</option></ChoiceSelect></label>
+          {draft.source === 'existing' ? <label>已有作用域<ChoiceSelect aria-label="已有作用域" required disabled={saving} value={draft.scope_id} onChange={event => {
+            const owner = scopes.find(scope => scope.scope_id === event);
+            setDraft({...draft, scope_id: event, scope: owner?.scope ?? draft.scope});
+          }}><option value="">请选择</option>{scopes.map(scope => <option key={scope.scope_id} value={scope.scope_id}>{scopeLabel(scope)}（{scope.count}）</option>)}</ChoiceSelect></label>
+            : <><label>作用域<ChoiceSelect aria-label="作用域" disabled={saving} value={draft.scope} onChange={event => setDraft({...draft, scope: event as MemoryScope, target: ''})}>
+              {Object.entries(scopeNames).map(([value, name]) => <option key={value} value={value}>{name}</option>)}</ChoiceSelect></label>
               <label>机器人 QQ 号<input required disabled={saving} maxLength={20} pattern="[1-9][0-9]{0,19}" value={draft.bot_id} onChange={event => setDraft({...draft, bot_id: event.target.value})} /></label>
               {draft.scope !== 'global' && <label>{targetLabel}<input required disabled={saving} maxLength={draft.scope === 'session' ? 35 : 20}
                 pattern={draft.scope === 'session' ? 'qq_[a-f0-9]{32}' : '[1-9][0-9]{0,19}'} value={draft.target}

@@ -4,8 +4,17 @@ from datetime import datetime
 from typing import Generic, Literal, TypeVar
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
+from agent_bot.ai.model_reference import model_reference
 from agent_bot.credential_values import CredentialSnapshot, CredentialValue
 from agent_bot.models import ChatMessage, LlmRequestOptions
 
@@ -93,9 +102,9 @@ class ProviderUpdate(AiModel):
 
 
 class ModelCreate(AiModel):
-    """模型别名与显式媒体能力，省略能力时兼容旧目录。"""
+    """以供应商和上游标识登记模型，别名仅供旧客户端兼容。"""
 
-    alias: str = Field(min_length=1, max_length=200)
+    alias: str | None = Field(default=None, min_length=1, max_length=200)
     upstream_model: str = Field(min_length=1, max_length=200)
     provider_id: int = Field(ge=1)
     enabled: bool = False
@@ -103,21 +112,45 @@ class ModelCreate(AiModel):
 
     @field_validator("alias", "upstream_model")
     @classmethod
-    def check_text(cls, value: str) -> str:
+    def check_text(cls, value: str | None) -> str | None:
         """禁止空名称和控制字符进入目录。"""
+        if value is None:
+            return None
         if not value.strip() or any(ord(char) < 32 for char in value):
             raise ValueError("invalid model name")
         return value
 
 
 class ModelView(ModelCreate):
-    """模型目录快照及媒体表安装状态。"""
+    """模型稳定身份、供应商显示名称及媒体表安装状态。"""
 
+    # 空名称只用于旧持久快照；目录读取必须提供真实供应商名称。
+    provider_name: str = ""
     media_initialized: bool = False
-    id: int
+    id: int = Field(ge=1)
     revision: int
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_reference_snapshot(cls, value):
+        """兼容已序列化快照回读，但禁止外部引用覆盖记录身份。"""
+        if isinstance(value, dict) and "reference" in value:
+            supplied = value["reference"]
+            id = value.get("id")
+            if id is None:
+                raise ValueError("model reference requires id")
+            if isinstance(id, bool) or supplied != model_reference(int(id)):
+                raise ValueError("model reference does not match id")
+            return {key: item for key, item in value.items() if key != "reference"}
+        return value
+
+    @computed_field
+    @property
+    def reference(self) -> str:
+        """引用只由记录 ID 派生，供应商改名不影响调用绑定。"""
+        return model_reference(self.id)
 
 
 class ModelUpdate(AiModel):
@@ -152,9 +185,9 @@ class UpstreamModels(AiModel):
 
 
 class ModelImportItem(AiModel):
-    """管理员选择的准确上游 ID 与独立本地别名。"""
+    """准确上游标识及仅为旧客户端保留的可空别名。"""
 
-    alias: str
+    alias: str | None = None
     upstream_model: str
 
     @model_validator(mode="after")
@@ -173,16 +206,18 @@ class ModelImportRequest(AiModel):
 
     @model_validator(mode="after")
     def unique_names(self):
-        """批内重复直接拒绝，避免不明确的别名覆盖。"""
+        """批内上游标识及显式旧别名重复直接拒绝，空别名可重复。"""
         for field in ("alias", "upstream_model"):
-            names = [getattr(item, field) for item in self.models]
+            names = [
+                getattr(item, field) for item in self.models if getattr(item, field) is not None
+            ]
             if len(set(names)) != len(names):
                 raise ValueError("duplicate import model")
         return self
 
 
 class ModelImportResult(AiModel):
-    """区分新登记、已登记和需要管理员另设别名的模型。"""
+    """区分新登记、同供应商已登记及旧客户端显式别名冲突。"""
 
     provider_id: int
     revision: int

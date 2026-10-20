@@ -17,7 +17,7 @@ class JobTools:
         self.store = store
 
     def bind(self, snapshot, request, context):
-        """认证上下文必须与宿主会话和发起人一致，模型只提供任务命令。"""
+        """验证宿主身份并固定模型ID引用，定时执行不依赖可变展示名称或旧别名。"""
         context.ensure_active()
         chat = context.chat_context
         if (
@@ -43,7 +43,7 @@ class JobTools:
             scene=chat.scene,
             group_id=chat.group_id,
             request_id=request.request_id,
-            model=snapshot.resolved.model.alias,
+            model=snapshot.resolved.model.reference,
             system_prompt=system_prompt,
         )
         return JobToolSession(self.store, scope, context)

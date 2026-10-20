@@ -1,3 +1,4 @@
+import { ChoiceSelect } from '../components/ChoiceSelect';
 import { Alert, Button, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AgentApi } from '../agent-api';
@@ -86,9 +87,9 @@ export function CallRecords({token, category = 'conversation'}: {token: string; 
     <div className="page-heading"><div><p className="eyebrow">{system ? 'SYSTEM CALLS' : 'CALL HISTORY'}</p><h1>{system ? '系统调用' : '调用记录'}</h1><p>{system ? '查看自动发言决策和机器人显式指令触发的调用。' : '查看普通对话、Agent 对话和迁入的历史记录。'}</p></div><Button loading={busy} onClick={() => setRefresh(value => value + 1)}>刷新记录</Button></div>
     {error && <Alert className="notice" type="error" message={error} />}
     <form className="record-filter" onSubmit={e => { e.preventDefault(); setPrevious([]); setCursor(undefined); setFilters({...draft}); }}>
-      <label>类型 <select value={system ? draft.system_kind : draft.type} onChange={e => setDraft({...draft, [system ? 'system_kind' : 'type']: e.target.value})}><option value="">全部类型</option>{Object.entries(system ? systemTypes : types).filter(([key]) => system || key !== 'auto_speak').map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
+      <label>类型 <ChoiceSelect aria-label="类型" value={system ? draft.system_kind : draft.type} onChange={e => setDraft({...draft, [system ? 'system_kind' : 'type']: e})}><option value="">全部类型</option>{Object.entries(system ? systemTypes : types).filter(([key]) => system || key !== 'auto_speak').map(([key, name]) => <option key={key} value={key}>{name}</option>)}</ChoiceSelect></label>
       <label>会话 ID <input value={draft.session_id} maxLength={255} onChange={e => setDraft({...draft, session_id: e.target.value})} /></label>
-      <label>状态 <select value={draft.status} onChange={e => setDraft({...draft, status: e.target.value})}><option value="">全部状态</option>{Object.entries(statuses).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label>
+      <label>状态 <ChoiceSelect aria-label="状态" value={draft.status} onChange={e => setDraft({...draft, status: e})}><option value="">全部状态</option>{Object.entries(statuses).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</ChoiceSelect></label>
       <Button htmlType="submit" disabled={busy}>筛选</Button>
     </form>
     <div className="panel table-wrap"><table className="data-table"><thead><tr><th>ID / 时间</th><th>类型 / 会话</th><th>模型</th><th>Token 用量</th><th>状态 / 耗时</th><th>操作</th></tr></thead><tbody>

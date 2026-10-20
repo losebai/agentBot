@@ -1,3 +1,4 @@
+import { ChoiceSelect } from './ChoiceSelect';
 import { Alert, Button } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { errorMessage } from '../api';
@@ -87,10 +88,10 @@ export function MaterialLibrary({token}: {token: string}) {
       event.preventDefault(); setCursor(undefined); setHistory([]); setFilters({...draft});
     }}>
       <label>关键词<input maxLength={200} value={draft.query} onChange={event => setDraft({...draft, query: event.target.value})} /></label>
-      <label>素材类型<select value={draft.kind} onChange={event => setDraft({...draft, kind: event.target.value as MaterialLibraryFilters['kind']})}>
-        <option value="">全部类型</option><option value="image">图片</option><option value="file">文件</option></select></label>
-      <label>来源<select value={draft.entry} onChange={event => setDraft({...draft, entry: event.target.value as MaterialLibraryFilters['entry']})}>
-        <option value="">全部来源</option><option value="qq">QQ</option><option value="admin">管理</option></select></label>
+      <label>素材类型<ChoiceSelect aria-label="素材类型" value={draft.kind} onChange={event => setDraft({...draft, kind: event as MaterialLibraryFilters['kind']})}>
+        <option value="">全部类型</option><option value="image">图片</option><option value="file">文件</option></ChoiceSelect></label>
+      <label>来源<ChoiceSelect aria-label="来源" value={draft.entry} onChange={event => setDraft({...draft, entry: event as MaterialLibraryFilters['entry']})}>
+        <option value="">全部来源</option><option value="qq">QQ</option><option value="admin">管理</option></ChoiceSelect></label>
       <label>会话 ID<input maxLength={256} value={draft.session_id} onChange={event => setDraft({...draft, session_id: event.target.value})} /></label>
       <Button aria-label="筛选" htmlType="submit" disabled={loading}>筛选</Button>
     </form>

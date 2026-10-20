@@ -1,3 +1,4 @@
+import { chooseSelect } from '../test-select';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { Sessions } from './Sessions';
@@ -20,7 +21,7 @@ it('普通和 Agent 共用类型筛选', async () => {
   }));
   render(<Sessions token="offline" />);
   await waitFor(() => expect(screen.getByRole('button', {name: /筛\s*选/})).toBeEnabled());
-  fireEvent.change(screen.getByRole('combobox', {name: '类型'}), {target: {value: 'agent'}});
+  await chooseSelect(screen.getByRole('combobox', {name: '类型'}), 'Agent 调用');
   fireEvent.click(screen.getByRole('button', {name: /筛\s*选/}));
   await waitFor(() => expect(requests.at(-1)).toContain('type=agent'));
 });

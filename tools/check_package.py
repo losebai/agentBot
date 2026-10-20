@@ -10,6 +10,11 @@ def check(path: Path) -> None:
     with ZipFile(path) as archive:
         names = archive.namelist()
         required = {
+            "agent_bot/ai/model_reference.py",
+            "agent_bot/integrations/model_identity_migration.py",
+            "agent_bot/resources/2026-10-20-model-identity.sql",
+            "agent_bot/resources/2026-10-20-model-identity.sqlite.sql",
+            "agent_bot/resources/UPGRADE-MODEL-IDENTITY.md",
             "agent_bot/memory/contracts.py",
             "agent_bot/memory/embeddings.py",
             "agent_bot/integrations/memory_migration.py",

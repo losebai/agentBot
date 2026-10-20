@@ -1,3 +1,5 @@
+import { ChoiceSelect } from './ChoiceSelect';
+import { ModelSelect } from './ModelSelect';
 import { Alert, Button, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AiApi } from '../ai-api';
@@ -18,7 +20,7 @@ export function MediaGenerator({token}:{token:string}){
   const controller=useRef<AbortController>(),mounted=useRef(true);
   useEffect(()=>{mounted.current=true;Promise.all([catalog.models(),api.status()]).then(([page,next])=>{if(mounted.current){setModels(page.items);setCursor(page.next_cursor);setStatus(next);}}).catch(e=>{if(mounted.current)setError(errorMessage(e));});return()=>{mounted.current=false;controller.current?.abort();};},[api,catalog]);
   const available=models.filter(m=>m.enabled&&m.media_initialized&&(kind==='IMAGE'?m.media&&m.media.image_api_profile!=='none':m.media?.audio_chat_enabled));
-  const selected=available.find(m=>m.alias===model),ready=status?.python_media?.storage_available;
+  const selected=available.find(m=>m.reference===model),ready=status?.python_media?.storage_available;
   /** 翻页只补充目录，不中断正在生成的请求。 */
   async function more(){try{const page=await catalog.models(cursor!);if(mounted.current){setModels(previous=>[...previous,...page.items]);setCursor(page.next_cursor);}}catch(e){if(mounted.current)setError(errorMessage(e));}}
   /** 同步清除当前控制器，使旧响应无法覆盖新模式。 */
@@ -31,8 +33,9 @@ export function MediaGenerator({token}:{token:string}){
   }
   return <div className="page-content chat-page"><div className="page-heading"><div><p className="eyebrow">MEDIA GENERATION</p><h1>媒体生成</h1><p>通过模型生成图片或对话音频，文件默认保存 24 小时。</p></div><Button onClick={()=>reset()}>新会话</Button></div>
     <div className="chat-scope"><Tag>媒体生成</Tag>{!ready&&<span>请确认媒体存储已初始化。</span>}</div>
-    <div className="chat-controls"><label htmlFor="media-kind">生成类型</label><select id="media-kind" value={kind} onChange={e=>reset(e.target.value as 'IMAGE'|'AUDIO')}><option value="IMAGE">图片</option><option value="AUDIO">对话音频</option></select><label htmlFor="media-model">生成模型</label><select id="media-model" disabled={busy} value={model} onChange={e=>{setModel(e.target.value);setFormat(kind==='IMAGE'?'png':'wav');}}><option value="">选择具备对应能力的模型</option>{available.map(m=><option key={m.id} value={m.alias}>{m.alias}</option>)}</select>{cursor&&<Button onClick={()=>void more()}>加载更多模型</Button>}
-      <label htmlFor="media-format">文件格式</label><select id="media-format" value={format} disabled={busy||selected?.media?.image_api_profile==='legacy-b64'&&kind==='IMAGE'} onChange={e=>setFormat(e.target.value)}>{(kind==='IMAGE'?['png','jpeg','webp']:['wav','mp3','flac','opus','aac','pcm']).map(f=><option key={f}>{f}</option>)}</select>{kind==='AUDIO'&&<><label htmlFor="media-voice">音色</label><input id="media-voice" maxLength={255} disabled={busy} value={voice} onChange={e=>setVoice(e.target.value)}/></>}
+    <div className="chat-controls"><label htmlFor="media-kind">生成类型</label><ChoiceSelect id="media-kind" value={kind} onChange={value=>reset(value as 'IMAGE'|'AUDIO')}><option value="IMAGE">图片</option><option value="AUDIO">对话音频</option></ChoiceSelect><label htmlFor="media-model">生成模型</label><ModelSelect id="media-model" models={available} value={model} disabled={busy}
+      placeholder="选择具备对应能力的模型" onChange={next=>{setModel(String(next ?? ''));setFormat(kind==='IMAGE'?'png':'wav');}} />{cursor&&<Button onClick={()=>void more()}>加载更多模型</Button>}
+      <label htmlFor="media-format">文件格式</label><ChoiceSelect id="media-format" value={format} disabled={busy||selected?.media?.image_api_profile==='legacy-b64'&&kind==='IMAGE'} onChange={value=>setFormat(value)}>{(kind==='IMAGE'?['png','jpeg','webp']:['wav','mp3','flac','opus','aac','pcm']).map(f=><option key={f}>{f}</option>)}</ChoiceSelect>{kind==='AUDIO'&&<><label htmlFor="media-voice">音色</label><input id="media-voice" maxLength={255} disabled={busy} value={voice} onChange={e=>setVoice(e.target.value)}/></>}
     </div>{error&&<Alert className="notice" type="error" message={error}/>}{result&&!result.record_saved&&<Alert className="notice" type="warning" message="文件已生成，但运行记录未保存。请下载附件，无需重新提交。"/>}
     <form className="composer" onSubmit={e=>{e.preventDefault();void generate();}}><label htmlFor="media-prompt">生成描述</label><textarea id="media-prompt" rows={4} value={prompt} maxLength={2000} disabled={busy} onChange={e=>setPrompt(e.target.value)}/><div className="composer-footer"><span>{prompt.length} / 2000</span>{busy?<Button danger onClick={()=>controller.current?.abort()}>停止生成</Button>:<Button type="primary" htmlType="submit" disabled={!ready||!selected||!prompt.trim()}>开始生成</Button>}</div></form>
     {state&&<p role="status">{state}</p>}{result&&<section className="media-results">{result.text&&<p>{result.text}</p>}{result.attachments.map(asset=><MediaAttachment api={api} asset={asset} key={asset.id}/>)}<p className="result-metadata">{result.model} · {result.duration_ms} ms · 执行 {result.execution_id}</p></section>}

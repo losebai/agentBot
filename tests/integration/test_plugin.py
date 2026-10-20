@@ -1192,7 +1192,7 @@ async def test_natural_chat_includes_all_quoted_content_in_current_request(
     monkeypatch: pytest.MonkeyPatch,
     chat_plugin,
 ) -> None:
-    """Verify natural chat includes all quoted content in current request."""
+    """当前模型请求保留引用，但长期记忆证据只绑定当前发言人的原始文本。"""
 
     respond = mock_response(monkeypatch, chat_plugin, "引用回答")
     event = private_event("这段内容是什么意思？")
@@ -1230,6 +1230,9 @@ async def test_natural_chat_includes_all_quoted_content_in_current_request(
     assert "被引用者" in respond.await_args.args[1]
     assert "引用正文" in respond.await_args.args[1]
     assert "这段内容是什么意思？" in respond.await_args.args[1]
+    queued = chat_plugin.conversation_queue.enqueue.await_args.args[0]
+    assert queued.memory_source_text == "这段内容是什么意思？"
+    assert "引用正文" not in queued.memory_source_text
     assert respond.await_args.kwargs["image_urls"] == ()
     ids = respond.await_args.kwargs["image_material_ids"]
     assert len(ids) == 1 and ids[0] in respond.await_args.args[1]

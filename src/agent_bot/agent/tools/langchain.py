@@ -9,6 +9,7 @@ from langsmith import tracing_context
 from agent_bot.agent.contracts import ToolCall, ToolDefinition, ToolResult
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.tools.runtime import BoundTools
+from agent_bot.agent.tools.validation import rejected_call
 
 
 class LangChainTools:
@@ -52,10 +53,18 @@ class LangChainTools:
             coroutine=invoke,
         )
 
-    def validate_batch(self, calls: tuple[ToolCall, ...]) -> None:
-        """整批调用全部验证通过后，调用方才可以开始任何副作用。"""
+    def validate_batch(self, calls: tuple[ToolCall, ...]) -> dict[str, ToolResult]:
+        """参数错误反馈整批未执行；权限、配置和其他错误仍立即终止且不触发副作用。"""
+        rejected: dict[str, ToolResult] = {}
         for call in calls:
-            self.bound.validate(call)
+            try:
+                self.bound.validate(call)
+            except AgentError as error:
+                if error.code != "AGENT_TOOL_ARGUMENTS_INVALID":
+                    raise
+                rejected[call.call_id] = rejected_call(call, error)
+        return {call.call_id: rejected.get(call.call_id) or rejected_call(call)
+                for call in calls} if rejected else {}
 
     async def call(self, call: ToolCall) -> ToolResult:
         """通过真实 LangChain 异步工具接口执行，附件仅走 artifact 通道。"""

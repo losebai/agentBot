@@ -8,13 +8,29 @@ import time
 import uuid
 from collections import OrderedDict, deque
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Protocol
 
 from agent_bot.models import ChatMessage
 
 REQUEST_RECEIPT_TTL_SECONDS = 86_400
 _MAX_REQUEST_RECEIPTS = 100_000
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ConversationSourceBinding:
+    """同步平台请求的服务器来源绑定，限制于当前异步上下文和准确会话。"""
+
+    session_id: str
+    source: dict[str, str]
+    created_at: datetime
+
+
+current_conversation_source: ContextVar[ConversationSourceBinding | None] = ContextVar(
+    "current_conversation_source", default=None,
+)
 
 
 def validate_request_id(request_id: str | None) -> str | None:
@@ -103,6 +119,26 @@ class ConversationTurn:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class ConversationEvent:
+    """压缩来源保留服务器事件身份与时间，昵称不参与主体绑定。"""
+
+    id: str
+    role: str
+    content: str
+    request_id: str | None
+    created_at: str | None
+    source: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class MemorySummary:
+    """结构化摘要条目与来源状态；不把模型压缩当作长期记忆证据。"""
+
+    entries: tuple[dict, ...]
+    source_integrity: str = "verified_events"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class MemoryCompression:
     """一次会话记忆压缩快照；revision 用于拒绝过期结果。"""
 
@@ -111,6 +147,8 @@ class MemoryCompression:
     previous_memory: str
     turns: tuple[ConversationTurn, ...]
     generation_id: str
+    events: tuple[ConversationEvent, ...] = ()
+    previous_facts: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -150,7 +188,9 @@ class ConversationStoreProtocol(Protocol):
         request_id: str | None = None,
     ) -> MemoryCompression | None: ...
 
-    def apply_memory(self, compression: MemoryCompression, summary: str) -> bool: ...
+    def apply_memory(
+        self, compression: MemoryCompression, summary: str | MemorySummary,
+    ) -> bool: ...
 
     def clear(self, session_id: str) -> bool: ...
 

@@ -256,6 +256,8 @@ class PluginConfig(BaseModel):
         ge=10,
     )
     chat_memory_enabled: bool = True
+    # 语义召回须显式选择数据库目录模型；留空时仍允许标签检索。
+    chat_memory_embedding_model: str = Field(default="", max_length=200)
     chat_tagged_memory_enabled: bool = True
     chat_memory_max_chars: int = Field(default=4000, ge=256, le=8000)
     chat_memory_compression_max_tokens: int = Field(
@@ -442,6 +444,7 @@ class PluginConfig(BaseModel):
         "chat_model",
         "chat_vision_model",
         "chat_image_model",
+        "chat_memory_embedding_model",
     )
     @classmethod
     def validate_model_id(cls, value: str) -> str:
@@ -852,6 +855,7 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_group_recent_context_max_chars": "当前群最近文本最大字符数",
     "chat_group_recent_context_ttl_seconds": "当前群最近文本存活时间 (秒)",
     "chat_memory_enabled": "是否启用会话心智记忆与自动压缩",
+    "chat_memory_embedding_model": "长期记忆 Embedding 模型别名，留空禁用语义召回",
     "chat_tagged_memory_enabled": "是否启用由 LLM 自主存取的标签记忆工具",
     "chat_memory_max_chars": "单会话心智记忆最大字符数",
     "chat_memory_compression_max_tokens": "记忆压缩最大生成 Token 数",

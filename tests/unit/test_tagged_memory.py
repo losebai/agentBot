@@ -129,6 +129,8 @@ def memory_store(tmp_path):
                 return self.current.execute("SELECT 1 AS acquired")
             if sql.startswith("SELECT RELEASE_LOCK("):
                 return self.current.execute("SELECT 1 AS released")
+            # 新生命周期 DDL 的中文索引说明不能妨碍 SQLite 识别主键声明。
+            sql = re.sub(r"--[^\n]*", "", sql)
             sql = sql.replace("%s", "?").replace(
                 "ON DUPLICATE KEY UPDATE scope = VALUES(scope)",
                 "ON CONFLICT(scope_id) DO UPDATE SET scope = excluded.scope",
@@ -197,7 +199,7 @@ def memory_store(tmp_path):
 
 
 def test_store_scopes_duplicate_rejection_and_forget(memory_store) -> None:
-    """验证关联查询和同键拒绝，遗忘后不残留目录标签。"""
+    """授权范围分别隔离；同源同文保存为空操作，遗忘后不残留目录标签。"""
     first = MemoryIdentity(bot_id="10000", user_id="10001", session_id="a", group_id="20000")
     other = MemoryIdentity(bot_id="10000", user_id="10002", session_id="b", group_id="20000")
     private = MemoryIdentity(bot_id="10000", user_id="10001", session_id="c")
@@ -224,9 +226,11 @@ def test_store_scopes_duplicate_rejection_and_forget(memory_store) -> None:
     }
     assert memory_store.execute(foreign, read).records == ()
     save = MemoryArguments(action="save", key="新的游戏", content="永劫", tags=["永劫"])
-    memory_store.execute(first, save)
-    with pytest.raises(RuntimeError, match="记忆键已存在"):
-        memory_store.execute(first, save)
+    created = memory_store.execute(first, save)
+    duplicate = memory_store.execute(first, save)
+    assert duplicate.status == "unchanged"
+    assert duplicate.records[0].id == created.records[0].id
+    assert duplicate.records[0].revision == created.records[0].revision
     records = memory_store.execute(first, MemoryArguments(action="recall", tags=["永劫"])).records
     assert len(records) == 1
     assert records[0].content == "永劫"
@@ -328,13 +332,14 @@ def test_memory_queries_are_parameterized_and_results_bounded(memory_store) -> N
             MemoryArguments(
                 action="save",
                 key=f"key-{index}",
-                content="原文' --",
+                content=f"原文' -- {index}",
                 tags=[tag, f"topic-{index}"],
             ),
         )
     result = memory_store.execute(identity, MemoryArguments(action="recall", tags=[tag]))
     assert len(result.records) == 8
-    assert all(record.content == "原文' --" for record in result.records)
+    assert all(record.content in {f"原文' -- {index}" for index in range(70)}
+               for record in result.records)
     first = memory_store.execute(identity, MemoryArguments(action="tags"))
     second = memory_store.execute(identity, MemoryArguments(action="tags", offset=64))
     assert len(first.tags) == 64 and first.next_offset == 64
@@ -380,7 +385,11 @@ async def test_mcp_memory_catalog_and_recall_use_the_token_identity(memory_store
     from agent_bot.services.tagged_memory import MemorySession
     from agent_bot.services.tool_sessions import ToolSessionStore
 
-    identity = MemoryIdentity(bot_id="bot", user_id="user", session_id="session")
+    identity = MemoryIdentity(
+        bot_id="bot", user_id="user", session_id="session",
+        source_text="我爱吃甜点。请记住事实0、事实1、事实2和其他事实。",
+        source_event_id="offline-diet-message",
+    )
     sessions = ToolSessionStore(ttl_seconds=30, max_sessions=3)
     server = ChatMcpServer(
         store=sessions,
@@ -404,6 +413,9 @@ async def test_mcp_memory_catalog_and_recall_use_the_token_identity(memory_store
             "key": "口味",
             "content": "爱吃甜点",
             "tags": ["饮食"],
+            "kind": "preference",
+            "source_excerpt": "爱吃甜点",
+            "retention_reason": "stable_preference",
         },
     )
     assert not save.is_error
@@ -437,9 +449,12 @@ async def test_mcp_memory_catalog_and_recall_use_the_token_identity(memory_store
                 "memory",
                 {
                     "action": "save",
+                    "scope": "user",
                     "key": f"key-{index}",
-                    "content": "fact",
+                    "content": f"事实{index}",
                     "tags": ["topic"],
+                    "source_excerpt": f"事实{index}",
+                    "retention_reason": "reusable_fact",
                 },
             )
         ).is_error
@@ -449,9 +464,12 @@ async def test_mcp_memory_catalog_and_recall_use_the_token_identity(memory_store
             "memory",
             {
                 "action": "save",
+                "scope": "user",
                 "key": "new-key",
-                "content": "fact",
+                "content": "其他事实",
                 "tags": ["topic"],
+                "source_excerpt": "其他事实",
+                "retention_reason": "reusable_fact",
             },
         )
     ).is_error
@@ -467,7 +485,7 @@ def test_plain_chat_selects_authorized_memory_without_keywords() -> None:
 
 
 def test_scope_capacity_requires_forget_before_new_key(memory_store) -> None:
-    """容量达到硬上限后不能编辑，明确遗忘旧事实才可新增另一键。"""
+    """不同事实填满名额后必须明确整理，同键 save 不能冒充修订。"""
     identity = MemoryIdentity(bot_id="bot", user_id="user", session_id="session")
     for index in range(256):
         memory_store.execute(
@@ -475,7 +493,7 @@ def test_scope_capacity_requires_forget_before_new_key(memory_store) -> None:
             MemoryArguments(
                 action="save",
                 key=str(index),
-                content="fact",
+                content=f"fact-{index}",
                 tags=["topic"],
             ),
         )
@@ -485,7 +503,7 @@ def test_scope_capacity_requires_forget_before_new_key(memory_store) -> None:
             MemoryArguments(
                 action="save",
                 key="257",
-                content="fact",
+                content="distinct-over-capacity-fact",
                 tags=["new"],
             ),
         )
@@ -522,7 +540,8 @@ def test_schema_script_matches_automatic_initialization() -> None:
     )
     normalized = " ".join(re.sub(r"--[^\n]*", "", script).split())
     for statement in SCHEMA_STATEMENTS:
-        assert " ".join(statement.split()) + ";" in normalized
+        statement_sql = " ".join(re.sub(r"--[^\n]*", "", statement).split())
+        assert statement_sql + ";" in normalized
 
 
 @pytest.mark.asyncio

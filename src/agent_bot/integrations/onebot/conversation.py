@@ -659,6 +659,7 @@ class ConversationHandler:
             groupId=str(event.group_id) if isinstance(event, GroupMessageEvent) else None,
             userId=user_id,
             prompt=normalized_prompt,
+            memorySourceText=event.original_message.extract_plain_text(),
             user=llm_user,
             userName=user_name,
             chatContext=chat_context,

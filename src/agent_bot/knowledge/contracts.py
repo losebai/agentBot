@@ -7,6 +7,7 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from agent_bot.ai.contracts import AiModel
 from agent_bot.materials.contracts import MaterialId
+from agent_bot.memory.contracts import MemoryEvidence, MemoryKind
 from agent_bot.services.tagged_memory import MemoryScope, normalize_memory_tags
 
 
@@ -55,6 +56,11 @@ class MemoryCreate(TaggedText):
     scope_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     bot_id: str | None = Field(default=None, pattern=r"^[1-9][0-9]{0,19}$")
     target: str | None = Field(default=None, min_length=1, max_length=67)
+    topic: str | None = Field(default=None, min_length=1, max_length=80)
+    kind: MemoryKind = "fact"
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    observed_at: datetime | None = None
     _key = field_validator("key")(TaggedText.valid_text.__func__)
 
     @model_validator(mode="after")
@@ -87,6 +93,38 @@ class MemoryView(AiModel):
     tags: tuple[str, ...]
     created_at: datetime
     material_ids: tuple[MaterialId, ...] = ()
+    revision: int = 1
+    topic: str = ""
+    kind: MemoryKind = "fact"
+    status: str = "active"
+    effective_status: str = "active"
+    subject_type: str = "unknown"
+    subject_id: str = ""
+    source_kind: str = "legacy_unknown"
+    sources: tuple[MemoryEvidence, ...] = ()
+    importance: float = 0.5
+    observed_at: datetime | None = None
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    last_used_at: datetime | None = None
+    updated_at: datetime | None = None
+    task_state: str | None = None
+    merged_into_id: int | None = None
+    conflict_set_id: str | None = None
+    created_time_basis: str = "utc"
+    updated_time_basis: str = "utc"
+
+
+class MemoryRevisionView(AiModel):
+    """只有认证管理接口可读取旧版本及遗忘原文。"""
+
+    id: int
+    memory_id: int
+    revision: int
+    operation: str
+    snapshot: MemoryView
+    reason: str
+    created_at: datetime
 
 
 class TagCount(AiModel):

@@ -38,9 +38,12 @@ def project_local_schema(name: str, schema: dict) -> dict:
         return projected
 
     def visit(value):
-        """模型侧移除不支持的 pattern，原约束仍在调用前强制执行。"""
+        """模型侧移除不支持的本地格式注解，原始参数仍由Pydantic强制校验。"""
         if isinstance(value, dict):
             value.pop("pattern", None)
+            # 日期、时区和有效区间由原模型校验，不向远程schema开放format关键字。
+            if value.get("format") == "date-time":
+                value.pop("format")
             for child in value.values():
                 visit(child)
         elif isinstance(value, list):

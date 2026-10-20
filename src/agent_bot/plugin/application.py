@@ -176,6 +176,9 @@ _material_receiver = MaterialReceiver(_media_resources.materials)
 _session_delivery_store = SessionDeliveryStore(
     lambda: conversation_store, receipts_provider=lambda: _tool_operations(),
     live_receipts_provider=lambda: _outgoing_recorder.confirmed_receipts,
+    memory_store_provider=lambda: (
+        _tagged_memory_store if plugin_config.chat_tagged_memory_enabled else None
+    ),
 )
 _group_member_store = GroupMemberStore(_database_params, connect=_database_pool.connect)
 _workflow_store = (_context.runtime.workflow_store if _context is not None else
@@ -353,6 +356,7 @@ _tool_session_manager = ChatToolSessionManager(
     ),
     material_store_provider=lambda: _media_resources.materials,
     operation_store_provider=_tool_operations,
+    catalog_provider=lambda: model_guard.catalog,
 )
 
 _runtime_gate = _context.runtime.gate if _context is not None else RuntimeLeaseGate()

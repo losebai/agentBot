@@ -22,9 +22,10 @@ from agent_bot.sent_messages import SentMessageUncertainError
 from agent_bot.settings import DatabaseParams
 from agent_bot.state import (
     ConversationContext,
+    ConversationEvent,
     ConversationTurn,
     MemoryCompression,
-    _fallback_memory,
+    MemorySummary,
     validate_request_id,
 )
 
@@ -32,6 +33,7 @@ _T = TypeVar("_T")
 _TABLE = "chat_session_context"
 _MAX_CONTENT_CHARS = 1_032_000
 _MODEL_MESSAGE_CHARS = 32_000
+EMPTY_MEMORY_FACTS_JSON = '{"schema_version":1,"entries":[],"source_integrity":"unknown"}'
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +74,10 @@ class _Session:
     messages: list[dict[str, Any]] = field(default_factory=list)
     memory: str = ""
     memory_revision: int = 0
+    memory_facts: dict[str, Any] = field(
+        default_factory=lambda: json.loads(EMPTY_MEMORY_FACTS_JSON),
+    )
+    legacy_memory_summary: str = ""
     metadata: dict[str, Any] = field(default_factory=lambda: {
         "deliveries": {}, "requests": {}, "next_sequence": 0,
     })
@@ -83,12 +89,14 @@ class SessionContextStore:
     def __init__(
         self, params: DatabaseParams, *, policy: SessionContextPolicy,
         connect: Callable[..., Any] | None = None, clock: Callable[[], datetime] | None = None,
+        summary_filter: Callable[[Any, str, tuple[dict, ...]], tuple[dict, ...]] | None = None,
     ) -> None:
         """仅绑定已有数据库；新表由显式初始化或升级创建，普通调用不执行 DDL。"""
         self.params = params
         self.connect = connect or database_connector(params)
         self._policy = policy
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._summary_filter = summary_filter
 
     @property
     def policy(self) -> SessionContextPolicy:
@@ -141,7 +149,8 @@ class SessionContextStore:
                 ):
                     total -= len(messages.pop(0).content)
             return ConversationContext(
-                memory=session.memory if self._policy.memory_enabled else "",
+                memory=self._memory_for_model(connection, session)
+                if self._policy.memory_enabled else "",
                 messages=tuple(messages), generation_id=session.generation_id,
             )
 
@@ -154,6 +163,7 @@ class SessionContextStore:
     def record_received(
         self, session_id: str, content: str, *, request_id: str,
         created_at: datetime | None = None, generation_id: str | None = None,
+        source: dict[str, str] | None = None,
     ) -> MemoryCompression | None:
         """模型执行前登记接收原文；相同请求保留首个时间，迟到事件按 UTC 排序。"""
         _validate_content(content)
@@ -163,6 +173,7 @@ class SessionContextStore:
         if generation_id is not None:
             _validate_generation(generation_id)
         at = _utc(created_at) if created_at is not None else self._now()
+        bound_source = _validate_source(source)
 
         def append(session: _Session) -> MemoryCompression | None:
             """接收去重独立于消息窗口，裁切或清空不能恢复旧请求的写入权限。"""
@@ -171,14 +182,15 @@ class SessionContextStore:
             receipt = session.metadata["requests"].get(request_id)
             identity = _digest(content)
             if receipt is not None:
-                if receipt["user_hash"] != identity:
+                if receipt["user_hash"] != identity or receipt.get("source", {}) != bound_source:
                     raise ValueError("received message identity conflicts")
                 return None
             session.metadata["requests"][request_id] = {
                 "generation_id": session.generation_id, "user_hash": identity,
                 "committed": False, "active": True,
+                "source": bound_source,
             }
-            self._append(session, "user", content, request_id, at)
+            self._append(session, "user", content, request_id, at, source=bound_source)
             return self._compact(session)
 
         return self._merge(session_id, append)
@@ -228,10 +240,16 @@ class SessionContextStore:
 
         return self._merge(session_id, append)
 
-    def apply_memory(self, compression: MemoryCompression, summary: str) -> bool:
+    def apply_memory(self, compression: MemoryCompression, summary: str | MemorySummary) -> bool:
         """只仲裁压缩结果的代际和快照；不因普通消息追加而拒绝它们或摘要。"""
-        normalized = summary.strip()
-        if not normalized or not self._policy.memory_enabled:
+        if not self._policy.memory_enabled:
+            return False
+        structured = summary if isinstance(summary, MemorySummary) else MemorySummary(
+            ({"kind": "context", "subject_id": "unknown", "content": summary.strip(),
+              "source_event_refs": [], "memory_refs": [], "observed_at": None},),
+            source_integrity="unknown",
+        )
+        if isinstance(summary, str) and not summary.strip():
             return False
 
         def apply(session: _Session) -> bool:
@@ -242,11 +260,17 @@ class SessionContextStore:
                 or session.metadata.get("compression_pending") != _compression_key(compression)
             ):
                 return False
-            session.memory = normalized[:self._policy.max_memory_chars]
+            session.memory_facts = _facts_document(structured)
+            session.memory_facts["entries"] = list(_bounded_entries(
+                structured.entries, self._policy.max_memory_chars,
+            ))
+            session.memory = _render_memory(structured.entries, self._policy.max_memory_chars)
             session.metadata.pop("compression_pending", None)
             return True
 
-        return self._merge(compression.session_id, apply, create=False, missing=False)
+        return self._merge(
+            compression.session_id, apply, create=False, missing=False, validate_memory=True,
+        )
 
     def clear(self, session_id: str) -> bool:
         """更换代际并清空消息摘要，保留全部发送和请求身份，禁止清空后重复发送。"""
@@ -255,6 +279,8 @@ class SessionContextStore:
             session.generation_id = uuid.uuid4().hex
             session.messages.clear()
             session.memory = ""
+            session.memory_facts = json.loads(EMPTY_MEMORY_FACTS_JSON)
+            session.legacy_memory_summary = ""
             session.memory_revision += 1
             session.metadata.pop("compression_pending", None)
             return True
@@ -435,7 +461,7 @@ class SessionContextStore:
         _validate_generation(generation_id)
         if not isinstance(memory_summary, str):
             raise ValueError("invalid session context memory")
-        session = _Session(session_id, generation_id, memory=memory_summary)
+        session = _Session(session_id, generation_id, legacy_memory_summary=memory_summary)
         for event in events:
             role, content = event["role"], event["content"]
             if role not in {"user", "assistant"}:
@@ -501,10 +527,12 @@ class SessionContextStore:
             with connection.cursor() as cursor:
                 cursor.execute(
                     f"INSERT IGNORE INTO {_TABLE} (session_id,generation_id,messages_json,"
-                    "memory_summary,memory_revision,deliveries_json,create_time,update_time) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "memory_summary,memory_revision,deliveries_json,create_time,update_time,"
+                    "memory_facts_json,legacy_memory_summary) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (session_id, session.generation_id, _json(session.messages), session.memory,
-                     session.memory_revision, _json(session.metadata), now, now),
+                     session.memory_revision, _json(session.metadata), now, now,
+                     _json(session.memory_facts), session.legacy_memory_summary),
                 )
                 return cursor.rowcount == 1
 
@@ -513,6 +541,7 @@ class SessionContextStore:
     def _merge(
         self, session_id: str, operation: Callable[[_Session], _T], *,
         create: bool = True, missing: Any = None,
+        validate_memory: bool = False,
     ) -> _T:
         """写前取得行锁，每次重新读合并；不把消息更新变成版本比较失败。"""
         _validate_session(session_id)
@@ -522,21 +551,33 @@ class SessionContextStore:
             if create:
                 now = self._now()
                 query(connection, f"INSERT INTO {_TABLE} (session_id,generation_id,messages_json,"
-                      "memory_summary,memory_revision,deliveries_json,create_time,update_time) "
-                      "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE "
+                      "memory_summary,memory_revision,deliveries_json,create_time,update_time,"
+                      "memory_facts_json,legacy_memory_summary) "
+                      "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON DUPLICATE KEY UPDATE "
                       "session_id=VALUES(session_id)",
                       (session_id, uuid.uuid4().hex, "[]", "", 0,
-                       _json(_Session(session_id, "").metadata), now, now))
+                       _json(_Session(session_id, "").metadata), now, now,
+                       EMPTY_MEMORY_FACTS_JSON, ""))
             session = self._read(connection, session_id, lock=True)
             if session is None:
                 return missing
             result = operation(session)
+            if validate_memory and result:
+                entries = tuple(session.memory_facts["entries"])
+                if self._summary_filter is not None:
+                    entries = self._summary_filter(connection, session.session_id, entries)
+                else:
+                    entries = tuple(entry for entry in entries if not entry.get("memory_refs"))
+                session.memory_facts["entries"] = list(entries)
+                session.memory = _render_memory(entries, self._policy.max_memory_chars)
             session.messages.sort(key=_event_order)
             query(connection, f"UPDATE {_TABLE} SET generation_id=%s,messages_json=%s,"
-                  "memory_summary=%s,memory_revision=%s,deliveries_json=%s,update_time=%s "
+                  "memory_summary=%s,memory_revision=%s,deliveries_json=%s,update_time=%s,"
+                  "memory_facts_json=%s,legacy_memory_summary=%s "
                   "WHERE session_id=%s", (session.generation_id, _json(session.messages),
                   session.memory, session.memory_revision, _json(session.metadata),
-                  self._now(), session_id))
+                  self._now(), _json(session.memory_facts), session.legacy_memory_summary,
+                  session_id))
             return result
 
         return self._transaction(write)
@@ -550,6 +591,11 @@ class SessionContextStore:
         return _Session(session_id=row["session_id"], generation_id=row["generation_id"],
                         messages=json.loads(row["messages_json"]), memory=row["memory_summary"],
                         memory_revision=row["memory_revision"],
+                        memory_facts=json.loads(row["memory_facts_json"])
+                        if row["memory_facts_json"] is not None
+                        else json.loads(EMPTY_MEMORY_FACTS_JSON),
+                        legacy_memory_summary=row["legacy_memory_summary"]
+                        if row["legacy_memory_summary"] is not None else "",
                         metadata=json.loads(row["deliveries_json"]))
 
     def _transaction(self, operation: Callable[[Any], _T]) -> _T:
@@ -666,15 +712,122 @@ class SessionContextStore:
         compression = MemoryCompression(
             session_id=session.session_id, revision=session.memory_revision,
             previous_memory=session.memory, turns=tuple(turns), generation_id=session.generation_id,
+            events=tuple(ConversationEvent(
+                id=event["id"], role=event["role"], content=event["content"],
+                request_id=event["request_id"], created_at=event["created_at"],
+                source=event.get("source", {}),
+            ) for event in evicted),
+            previous_facts=tuple(session.memory_facts["entries"]),
         )
-        session.memory = _fallback_memory(compression, self._policy.max_memory_chars)
+        fallback = MemorySummary(tuple(session.memory_facts["entries"]) + tuple({
+            "kind": "context", "subject_id": event.source.get("speaker_id", "unknown"),
+            "content": event.source.get("source_text", event.content),
+            "source_event_refs": [event.source.get("source_event_id", event.id)],
+            "source_request_refs": [event.request_id] if event.request_id else [],
+            "source_kind": event.source.get("source_kind", event.role)
+            if event.role != "assistant" else "assistant", "memory_refs": [],
+            "observed_at": event.created_at, "status": "unverified",
+        } for event in compression.events
+            if event.source.get("source_text", event.content)), source_integrity="unverified")
+        session.memory_facts = _facts_document(fallback)
+        session.memory_facts["entries"] = list(_bounded_entries(
+            fallback.entries, self._policy.max_memory_chars,
+        ))
+        session.memory = _render_memory(fallback.entries, self._policy.max_memory_chars)
         session.metadata["compression_pending"] = _compression_key(compression)
         return compression
+
+    def _memory_for_model(self, connection: Any, session: _Session) -> str:
+        """只有结构化条目进入模型；关联记忆在读取时按当前授权版本重新复核。"""
+        entries = tuple(session.memory_facts["entries"])
+        if self._summary_filter is not None:
+            entries = self._summary_filter(connection, session.session_id, entries)
+        else:
+            # 缺少生命周期仓库集成时宁可省略关联事实，不能把旧正文重新注入。
+            entries = tuple(entry for entry in entries if not entry.get("memory_refs"))
+        return _render_memory(entries, self._policy.max_memory_chars)
 
 
 def _json(value: Any) -> str:
     """固定 JSON 编码，身份摘要不依赖 ASCII 转义或默认分隔空格。"""
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _facts_document(summary: MemorySummary) -> dict[str, Any]:
+    """保存摘要模型副本及可审计来源，不将压缩器声明当作独立证据。"""
+    return {"schema_version": 1, "entries": list(summary.entries),
+            "source_integrity": summary.source_integrity}
+
+
+def _bounded_entries(entries: tuple[dict, ...], maximum: int) -> tuple[dict, ...]:
+    """按明确事实优先级保留完整条目，超大原文不截成可能改变含义的伪事实。"""
+    priority = {"correction": 0, "relationship": 1, "preference": 2, "agreement": 3,
+                "task": 4, "fact": 5, "context": 6}
+    selected: list[dict] = []
+    used = 0
+    for entry in sorted(entries, key=lambda item: (
+        priority.get(item.get("kind"), 6), item.get("status") in {"completed", "cancelled"},
+    )):
+        size = len(_render_entry(entry)) + 1
+        if size > maximum:
+            entry = {**entry, "content": "[原文过长，未保留未经验证的部分正文]",
+                     "status": "truncated"}
+            size = len(_render_entry(entry)) + 1
+        if used + size > maximum:
+            continue
+        selected.append(entry)
+        used += size
+    return tuple(selected)
+
+
+def _render_entry(entry: dict) -> str:
+    """同时渲染事实类别、任务状态和来源，已完成或取消的任务不能被复述为待办。"""
+    status = "未验证历史上下文" if entry.get("status") in {
+        "unverified", "truncated",
+    } else "历史上下文"
+    subject = entry.get("subject_id", "unknown")
+    observed = entry.get("observed_at") or "未知时间"
+    refs = ",".join(entry.get("source_event_refs", ())) or "未知来源"
+    kind = entry.get("kind", "context")
+    category = {
+        "correction": "用户更正", "relationship": "人物关系", "preference": "明确偏好",
+        "agreement": "约定", "task": "任务", "fact": "历史事实", "context": "对话背景",
+    }.get(kind, "对话背景")
+    details = category
+    if kind == "task":
+        task_state = {"open": "未完成", "completed": "已完成", "cancelled": "已取消"}.get(
+            entry.get("status"), "未明确",
+        )
+        details = f"任务状态：{task_state}"
+    return (
+        f"[{status}；{details}；主体={subject}；时间={observed}；事件={refs}] {entry['content']}"
+    )
+
+
+def _render_memory(entries: tuple[dict, ...], maximum: int) -> str:
+    """每次从受限结构化事实渲染，禁止绕过引用复核读取旧文本副本。"""
+    return "\n".join(_render_entry(entry) for entry in _bounded_entries(entries, maximum))
+
+
+def _validate_source(source: dict[str, str] | None) -> dict[str, str]:
+    """来源只能由收消息入口传递，正文里的昵称和角色文本没有提升身份的能力。"""
+    if source is None:
+        return {}
+    allowed = {"speaker_id", "scene", "source_kind", "bot_id", "group_id", "platform",
+               "source_event_id", "source_text"}
+    if not isinstance(source, dict) or source.keys() - allowed or any(
+        not isinstance(value, str)
+        or "\0" in value
+        or (key != "source_text" and (not value or len(value) > 256))
+        or (key == "source_text" and len(value) > 20_000)
+        for key, value in source.items()
+    ):
+        raise ValueError("invalid received message source")
+    if source.get("source_kind", "unknown") not in {"user", "assistant", "tool", "unknown"}:
+        raise ValueError("invalid received message source kind")
+    if source.get("scene", "unknown") not in {"private", "group", "unknown"}:
+        raise ValueError("invalid received message scene")
+    return dict(source)
 
 
 def _digest(*values: Any) -> str:
@@ -698,8 +851,11 @@ def _check_delivery_identity(delivery: dict[str, Any], identity: str) -> None:
 
 def _compression_key(compression: MemoryCompression) -> str:
     """只绑定摘要来源，不将普通追加消息当作版本冲突。"""
-    return _digest(compression.previous_memory,
-                   [(turn.user, turn.assistant, turn.request_id) for turn in compression.turns])
+    return _digest(
+        compression.previous_memory, compression.previous_facts,
+        [(turn.user, turn.assistant, turn.request_id) for turn in compression.turns],
+        [(event.id, event.created_at, event.source) for event in compression.events],
+    )
 
 
 def _event_order(event: dict[str, Any]) -> tuple[str, int]:

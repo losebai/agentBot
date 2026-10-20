@@ -52,15 +52,18 @@ def test_admin_added_memory_is_visible_only_to_matching_identity(managed_memory,
     assert store.admin_tags()[0].count == 1
 
 
-async def test_concurrent_same_key_has_one_success(managed_memory):
-    """并发新增由作用域写锁和唯一约束保证只出现一条有效记忆。"""
+async def test_concurrent_same_key_reuses_one_fact_and_revision(managed_memory):
+    """同源同文并发请求均成功复用原事实，只生成一条当前记录和一个创建版本。"""
     store, _ = managed_memory
     body = MemoryCreate(scope="global", bot_id="10001", key="规则", content="原文", tags=["主题"])
     results = await asyncio.gather(
         *(asyncio.to_thread(store.admin_create, body) for _ in range(4)), return_exceptions=True
     )
-    assert sum(not isinstance(value, Exception) for value in results) == 1
+    assert all(not isinstance(value, Exception) for value in results)
+    assert len({value.id for value in results}) == 1
+    assert {value.revision for value in results} == {1}
     assert len(store.admin_list().items) == 1
+    assert len(store.admin_revisions(results[0].id).items) == 1
 
 
 async def test_concurrent_different_keys_cannot_exceed_scope_capacity(managed_memory):
@@ -70,11 +73,13 @@ async def test_concurrent_different_keys_cannot_exceed_scope_capacity(managed_me
     store, _ = managed_memory
     for index in range(255):
         store.admin_create(MemoryCreate(
-            scope="global", bot_id="10001", key=f"old-{index}", content="事实", tags=["主题"],
+            scope="global", bot_id="10001", key=f"old-{index}", content=f"已有事实{index}",
+            tags=["主题"],
         ))
     results = await asyncio.gather(*(
         asyncio.to_thread(store.admin_create, MemoryCreate(
-            scope="global", bot_id="10001", key=f"new-{index}", content="事实", tags=["主题"],
+            scope="global", bot_id="10001", key=f"new-{index}", content=f"并发新增事实{index}",
+            tags=["主题"],
         )) for index in range(8)
     ), return_exceptions=True)
     assert sum(not isinstance(item, Exception) for item in results) == 1
@@ -89,7 +94,7 @@ def test_admin_deleted_memory_retains_history(managed_memory):
         scope="user", bot_id="10001", target="10002", key="偏好", content="原文", tags=["原标签"]
     )
     item = store.admin_create(body)
-    store.admin_delete(item.id)
+    store.admin_delete(item.id, expected_revision=item.revision)
     assert not store.admin_list().items
     assert store.admin_tags() == ()
     with pytest.raises(KnowledgeError) as error:

@@ -28,6 +28,7 @@ class SessionContextSchema:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         "SELECT session_id,generation_id,messages_json,memory_summary,"
+                        "memory_facts_json,legacy_memory_summary,"
                         "memory_revision,deliveries_json,create_time,update_time "
                         "FROM chat_session_context LIMIT 0"
                     )

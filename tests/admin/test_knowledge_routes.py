@@ -1,4 +1,4 @@
-"""知识与记忆管理遵循管理员认证和禁止编辑的 HTTP 边界。"""
+"""知识只增只读，记忆修订与遗忘遵循管理员认证和版本边界。"""
 
 import sqlite3
 
@@ -40,16 +40,17 @@ async def test_knowledge_and_memory_routes_require_admin_auth(knowledge_api):
         assert (await api.get("/api/v1/" + path, headers=HEADERS)).status_code == 200
 
 
-async def test_routes_offer_no_edit_methods(knowledge_api):
-    """直接调用更新方法也不能覆盖已保存知识或记忆。"""
+async def test_knowledge_stays_read_only_and_memory_patch_requires_revision(knowledge_api):
+    """知识禁止编辑，记忆不能通过无版本的 PATCH 或任意 PUT 覆盖当前事实。"""
     api, _ = knowledge_api
     for path in ("knowledge/1", "memories/1"):
         for method in ("PATCH", "PUT"):
+            expected = 422 if path == "memories/1" and method == "PATCH" else 405
             assert (
                 await api.request(
                     method, "/api/v1/" + path, headers=HEADERS, json={"content": "覆盖"}
                 )
-            ).status_code == 405
+            ).status_code == expected
 
 
 async def test_admin_create_delete_and_conflicts(knowledge_api):
@@ -80,7 +81,10 @@ async def test_admin_create_delete_and_conflicts(knowledge_api):
     assert duplicate.status_code == 409
     id = first.json()["id"]
     assert (await api.get(f"/api/v1/memories/{id}", headers=HEADERS)).json()["content"] == "原文"
-    assert (await api.delete(f"/api/v1/memories/{id}", headers=HEADERS)).status_code == 204
+    deleted = await api.delete(
+        f"/api/v1/memories/{id}?expected_revision={first.json()['revision']}", headers=HEADERS,
+    )
+    assert deleted.status_code == 204
     assert (await api.post("/api/v1/memories", headers=HEADERS, json=body)).status_code == 409
 
 

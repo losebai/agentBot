@@ -27,6 +27,8 @@ class BoundTools:
         if definition is None or call.name not in self.handlers:
             raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
         ToolSchema.validate_arguments(definition, call.arguments)
+        if definition.source == "builtin" and definition.name == "web_search":
+            SearchTool.normalize_query(call.arguments["query"])
         if definition.source == "builtin" and definition.name == "knowledge_search":
             KnowledgeSearchTool.validate(call.arguments)
         if definition.source == "builtin" and definition.name in {

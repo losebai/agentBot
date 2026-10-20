@@ -124,7 +124,45 @@ CREATE TABLE IF NOT EXISTS chat_tagged_memory (
     -- 规范化主题标签数组，不再依赖标签关联表。
     tags_json TEXT NOT NULL CHECK (json_valid(tags_json)),
     -- 引用素材标识数组，原件授权仍按当前会话校验。
-    material_ids_json TEXT NOT NULL CHECK (json_valid(material_ids_json))
+    material_ids_json TEXT NOT NULL CHECK (json_valid(material_ids_json)),
+    -- 事实乐观锁版本
+    revision INT NOT NULL DEFAULT 1,
+    -- 用于整理的规范主题
+    topic VARCHAR(80) NOT NULL DEFAULT '',
+    -- 事实类型
+    kind VARCHAR(20) NOT NULL DEFAULT 'fact',
+    -- 生命周期状态
+    status VARCHAR(16) NOT NULL DEFAULT 'active',
+    -- 被描述主体类型
+    subject_type VARCHAR(16) NOT NULL DEFAULT 'unknown',
+    -- 匿名主体标识
+    subject_id VARCHAR(64) NOT NULL DEFAULT '',
+    -- 最近确认的来源类型
+    source_kind VARCHAR(24) NOT NULL DEFAULT 'legacy_unknown',
+    -- 重要性排序权重非正确概率
+    importance DOUBLE NOT NULL DEFAULT 0.5,
+    -- 已知事实时间未知为空
+    observed_at DATETIME NULL,
+    -- UTC有效区间起点含边界
+    valid_from DATETIME NULL,
+    -- UTC有效区间终点不含边界
+    valid_until DATETIME NULL,
+    -- 任务未完成完成或取消
+    task_state VARCHAR(16) NULL,
+    -- 合并后的当前事实标识
+    merged_into_id INT NULL,
+    -- 待解决冲突集合
+    conflict_set_id VARCHAR(64) NULL,
+    -- 规范正文摘要用于精确去重候选
+    content_fingerprint CHAR(64) NOT NULL DEFAULT '',
+    -- 实际采用时间不是事实时间
+    last_used_at DATETIME NULL,
+    -- 幂等累计采用次数
+    use_count INT NOT NULL DEFAULT 0,
+    -- 创建时间的UTC或旧未知时区依据
+    created_time_basis VARCHAR(24) NOT NULL DEFAULT 'utc',
+    -- 更新时间的UTC或旧未知时区依据
+    updated_time_basis VARCHAR(24) NOT NULL DEFAULT 'utc'
 );
 -- 唯一索引保护业务标识。
 CREATE UNIQUE INDEX IF NOT EXISTS uk_tagged_memory_scope_key ON chat_tagged_memory (scope_id, memory_key);
@@ -815,6 +853,10 @@ CREATE TABLE IF NOT EXISTS chat_session_context (
     messages_json TEXT NOT NULL,
     -- 超出近期窗口的历史摘要。
     memory_summary TEXT NOT NULL,
+    -- 带真实主体、来源事件和记忆引用的结构化摘要。
+    memory_facts_json TEXT NULL CHECK (memory_facts_json IS NULL OR json_valid(memory_facts_json)),
+    -- 旧纯文本摘要归档，不默认注入模型。
+    legacy_memory_summary TEXT NULL,
     -- 摘要快照序号，不拒绝普通消息并发更新。
     memory_revision INTEGER NOT NULL DEFAULT 0,
     -- 请求去重、发送占位及回执，不再依赖出站正文表。
@@ -827,3 +869,125 @@ CREATE TABLE IF NOT EXISTS chat_session_context (
 
 -- 普通接口按来源、原始 UTC 微秒和执行标识稳定分页。
 CREATE INDEX IF NOT EXISTS idx_call_source_created ON agent_bot_call_record(source, created_at_utc, execution_id);
+
+-- 支持授权状态、主体去重与主题整理查询。
+CREATE INDEX IF NOT EXISTS idx_memory_status ON chat_tagged_memory (scope_id,status);
+-- 支持授权状态、主体去重与主题整理查询。
+CREATE INDEX IF NOT EXISTS idx_memory_fingerprint ON chat_tagged_memory (scope_id,subject_id,content_fingerprint);
+-- 支持授权状态、主体去重与主题整理查询。
+CREATE INDEX IF NOT EXISTS idx_memory_topic ON chat_tagged_memory (scope_id,subject_id,topic);
+-- 支持授权状态、主体去重与主题整理查询。
+CREATE INDEX IF NOT EXISTS idx_memory_merged ON chat_tagged_memory (merged_into_id);
+
+-- 记忆生命周期：当前事实的历史、来源、幂等和向量缓存；新库直接创建。
+-- 历史版本标识
+-- 当前事实标识
+-- 不可变事实版本
+-- 变更操作
+-- 完整事实与来源快照
+-- 管理员用户或迁移来源
+-- 变更理由不含内部推理
+-- UTC版本提交时间
+-- 记忆生命周期辅助表：各字段、唯一约束和外键见下方中文说明。
+CREATE TABLE IF NOT EXISTS chat_memory_revision (
+      -- 历史版本标识
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      -- 当前事实标识
+      memory_id INT NOT NULL,
+      -- 不可变事实版本
+      revision INT NOT NULL,
+      -- 变更操作
+      operation VARCHAR(20) NOT NULL,
+      -- 完整事实与来源快照
+      snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+      -- 管理员用户或迁移来源
+      actor_type VARCHAR(20) NOT NULL,
+      -- 变更理由不含内部推理
+      reason VARCHAR(300) NOT NULL,
+      -- UTC版本提交时间
+      created_at DATETIME NOT NULL,
+      -- 主键稳定标识历史记录，联合唯一约束禁止覆盖同一事实版本。
+      -- 唯一约束防止同版本或来源重复。
+      UNIQUE (memory_id,revision),
+      -- 外键防止历史版本脱离当前事实根记录。
+      -- 外键保证辅助记录归属于已有事实。
+      FOREIGN KEY (memory_id) REFERENCES chat_tagged_memory(id)
+    );
+
+CREATE TABLE IF NOT EXISTS chat_memory_evidence (
+      -- 来源证据标识
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      -- 归属事实
+      memory_id INT NOT NULL,
+      -- 首次纳入版本
+      first_revision INT NOT NULL,
+      -- 来源类别不由模型指定
+      source_kind VARCHAR(24) NOT NULL,
+      -- 可核对来源引用
+      source_ref VARCHAR(200) NULL,
+      -- 匿名发言人
+      source_actor_id VARCHAR(64) NULL,
+      -- 来源会话权限边界
+      source_session_id VARCHAR(128) NULL,
+      -- 真实来源事件引用
+      source_event_id VARCHAR(200) NULL,
+      -- 来源UTC时间未知为空
+      source_time DATETIME NULL,
+      -- 证据记录UTC时间
+      recorded_at DATETIME NOT NULL,
+      -- 真实片段不是可执行指令
+      excerpt VARCHAR(300) NOT NULL,
+      -- 独立来源去重摘要
+      evidence_fingerprint CHAR(64) NOT NULL,
+      -- 合并前原始事实
+      original_memory_id INT NULL,
+      -- 主键稳定标识证据，联合唯一约束防止同一来源反复佐证。
+      -- 唯一约束防止同版本或来源重复。
+      UNIQUE (memory_id,evidence_fingerprint),
+      -- 来源撤回按事件和会话定向定位，避免锁定无关事实证据。
+      -- 外键防止来源证据脱离当前事实根记录。
+      -- 外键保证辅助记录归属于已有事实。
+      FOREIGN KEY (memory_id) REFERENCES chat_tagged_memory(id)
+    );
+
+CREATE TABLE IF NOT EXISTS chat_memory_operation (
+      -- 写入权限作用域
+      scope_id CHAR(64) NOT NULL,
+      -- 原始请求标识
+      request_id VARCHAR(128) NOT NULL,
+      -- 幂等操作标识
+      operation_id VARCHAR(128) NOT NULL,
+      -- 参数摘要防止复用身份篡改
+      arguments_digest CHAR(64) NOT NULL,
+      -- 写入或采用操作
+      operation_kind VARCHAR(20) NOT NULL,
+      -- 仅状态和标识不复制正文
+      result_json TEXT NOT NULL CHECK (json_valid(result_json)),
+      -- 提交UTC时间
+      created_at DATETIME NOT NULL,
+      -- 复合主键在授权作用域内隔离请求与操作，防止重放写入。
+      -- 复合主键隔离不同事实版本和请求。
+      PRIMARY KEY (scope_id,request_id,operation_id)
+    );
+
+CREATE TABLE IF NOT EXISTS chat_memory_embedding (
+      -- 事实标识
+      memory_id INT NOT NULL,
+      -- 向量对应的事实版本
+      revision INT NOT NULL,
+      -- 向量模型及配置版本
+      model_key VARCHAR(200) NOT NULL,
+      -- 有限数值向量数组
+      vector_json TEXT NOT NULL CHECK (json_valid(vector_json)),
+      -- 计算UTC时间
+      created_at DATETIME NOT NULL,
+      -- 复合主键禁止跨事实版本或模型版本复用向量。
+      -- 复合主键隔离不同事实版本和请求。
+      PRIMARY KEY (memory_id,revision,model_key),
+      -- 外键保证向量仅附着于已有事实，遗忘仍由状态和版本筛选。
+      -- 外键保证辅助记录归属于已有事实。
+      FOREIGN KEY (memory_id) REFERENCES chat_tagged_memory(id)
+    );
+
+-- 来源撤回按事件和会话定向定位，避免扫描并锁定无关证据。
+CREATE INDEX IF NOT EXISTS idx_memory_evidence_event ON chat_memory_evidence (source_event_id,source_session_id);

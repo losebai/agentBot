@@ -43,7 +43,7 @@ class MediaAgentProvider:
         """测试不依赖特定模型选项。"""
 
     async def stream_turn(self, call):
-        """首轮请求真实绘图，后续返回文本或稳定错误。"""
+        """首轮请求真实绘图；参数拒绝后如实说明未执行，后续保留稳定错误。"""
         self.calls += 1
         if self.calls == 1:
             calls = (workflow_call(),)
@@ -59,8 +59,9 @@ class MediaAgentProvider:
         elif self.fail_final:
             raise AgentError("AI_UPSTREAM_UNAVAILABLE")
         else:
-            yield ModelEvent(kind="text_delta", delta="图片已生成")
-            yield ModelEvent(kind="turn_end", turn=ModelTurn(model="actual", content="图片已生成"))
+            text = "参数错误，未执行绘图" if self.invalid else "图片已生成"
+            yield ModelEvent(kind="text_delta", delta=text)
+            yield ModelEvent(kind="turn_end", turn=ModelTurn(model="actual", content=text))
 
 
 def build_agent(database, params, store, tools, provider):
@@ -92,15 +93,22 @@ AUTHORITY = ExecutionAuthority(entry="admin", allowed_tools=("local_workflow_gen
 async def test_later_invalid_local_call_prevents_entire_batch(
     media_model, media_database, agent_params, tmp_path, media_clock
 ):
-    """剥离 pattern 后仍必须对整批执行原参数模型验证，首项也不能生效。"""
+    """本地参数校验失败返回模型且写失败步骤；同批首项不能触发绘图副作用。"""
     async with storage(media_database, agent_params, tmp_path / "media", media_clock) as store:
         tools, workflow, _, _ = adapters(store, tmp_path)
         service = build_agent(
             media_database, agent_params, store, tools, MediaAgentProvider(invalid=True)
         )
-        with pytest.raises(AgentError, match="AGENT_TOOL_ARGUMENTS_INVALID"):
-            await service.complete(request(), AUTHORITY)
+        result = await service.complete(request(), AUTHORITY)
         workflow.generate.assert_not_called()
+        assert result.content == "参数错误，未执行绘图" and result.attachments == ()
+        failed = [step for step in (await service.records.list_steps(result.execution_id)).items
+                  if step.status == "failed"]
+        assert len(failed) == 2
+        assert all(step.result["executed"] is False for step in failed)
+        invalid = next(step for step in failed if step.call_id == "bad")
+        assert invalid.summary == "AGENT_TOOL_ARGUMENTS_INVALID"
+        assert invalid.result["validation_errors"][0]["field"] == "workflow_key"
 
 
 async def test_artifact_sequence_and_done_match(

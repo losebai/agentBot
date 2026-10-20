@@ -81,6 +81,11 @@ class ConversationJob(BaseModel):
     group_id: str | None = Field(default=None, alias="groupId", pattern=_QQ_ID_PATTERN)
     user_id: str = Field(alias="userId", pattern=_QQ_ID_PATTERN)
     prompt: str = Field(min_length=1, max_length=20_000)
+    # 与可混入引用和转发的模型prompt分开，旧持久任务不能自动补造本人来源。
+    memory_source_text: str | None = Field(
+        default=None, alias="memorySourceText", max_length=20_000,
+        exclude_if=lambda value: value is None, repr=False,
+    )
     user: str | None = Field(default=None, min_length=1, max_length=128)
     user_name: str | None = Field(default=None, alias="userName", max_length=128)
     chat_context: ChatContext | None = Field(default=None, alias="chatContext")
@@ -136,6 +141,14 @@ class ConversationJob(BaseModel):
         """旧队列任务移除已下线的发送工具，恢复后统一生成最终正文。"""
         if isinstance(value, (list, tuple)):
             return tuple(tool for tool in value if tool != "send_reply")
+        return value
+
+    @field_validator("memory_source_text")
+    @classmethod
+    def validate_memory_source_text(cls, value: str | None) -> str | None:
+        """原话只保留可持久化的真实文本，不接受NUL以免证据和摘要边界产生歧义。"""
+        if value is not None and "\0" in value:
+            raise ValueError("memory source text cannot contain NUL")
         return value
 
     @model_validator(mode="after")

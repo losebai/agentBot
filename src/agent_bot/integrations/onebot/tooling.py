@@ -6,13 +6,23 @@ import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from nonebot import get_bots
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent
 
+from agent_bot.ai.catalog import AiCatalog
 from agent_bot.config import RuntimeConfig
 from agent_bot.integrations.gpt_sovits import GptSoVitsClient
+from agent_bot.integrations.memory_vectors import MemoryVectorIndex
+from agent_bot.integrations.onebot.memory_source import (
+    direct_memory_source,
+    has_user_memory_source,
+    queued_source_event_id,
+)
 from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
+from agent_bot.memory.embeddings import EmbeddingClient
+from agent_bot.memory.retrieval import HybridMemorySearch
 from agent_bot.models import ChatContext, ChatToolName
 from agent_bot.services.chat_reply import ChatReplyCollector
 from agent_bot.services.chat_tools import ChatToolContext, ImageTaskService, SpeechCollector
@@ -67,6 +77,7 @@ class ChatToolSessionManager:
         memory_store_provider: Callable[[], TaggedMemoryStore | None] = lambda: None,
         image_tasks_provider: Callable[[], ImageTaskService | None] = lambda: None,
         material_store_provider: Callable[[], object | None] = lambda: None,
+        catalog_provider: Callable[[], AiCatalog | None] = lambda: None,
     ) -> None:
         """保存热更新配置和工具依赖提供器。"""
 
@@ -81,6 +92,7 @@ class ChatToolSessionManager:
         self._memory_store_provider = memory_store_provider
         self._image_tasks_provider = image_tasks_provider
         self._material_store_provider = material_store_provider
+        self._catalog_provider = catalog_provider
 
     def available_tools(self, event: MessageEvent) -> tuple[ChatToolName, ...]:
         """计算当前事件可用的工具白名单。"""
@@ -173,15 +185,26 @@ class ChatToolSessionManager:
             tts_collector=speech_collector,
             deadline_at=time.monotonic() + remaining_timeout(config.chat_timeout_seconds),
         )
-        context.memory_session = self._memory_session(context)
-        async with store.open(context) as token:
-            yield ChatToolSessionLease(
-                tools=tools,
-                token=token,
-                collector=collector,
-                speech_collector=speech_collector,
-                reply_collector=context.reply_collector,
-            )
+        context.memory_session = self._memory_session(
+            context, source_text=event.original_message.extract_plain_text(),
+            source_event_id=f"qq:{bot.self_id}:{event.message_id}",
+            source_time=datetime.fromtimestamp(event.time, timezone.utc),
+        )
+        with direct_memory_source(
+            session_id=session_id, bot_id=bot.self_id, user_id=str(event.user_id),
+            message_id=event.message_id, created_at=event.time,
+            secret=config.chat_session_secret.get_secret_value(),
+            group_id=str(event.group_id) if isinstance(event, GroupMessageEvent) else None,
+            source_text=event.original_message.extract_plain_text(),
+        ):
+            async with store.open(context) as token:
+                yield ChatToolSessionLease(
+                    tools=tools,
+                    token=token,
+                    collector=collector,
+                    speech_collector=speech_collector,
+                    reply_collector=context.reply_collector,
+                )
 
     def queued_bot(self, bot_id: str) -> Bot:
         """获取队列任务指定的已连接 OneBot 实例。"""
@@ -255,7 +278,15 @@ class ChatToolSessionManager:
             operation_store=self._operation_store_provider(),
             deadline_at=time.monotonic() + remaining_timeout(config.chat_timeout_seconds),
         )
-        context.memory_session = self._memory_session(context)
+        # 只有真人 QQ 入队请求可将持久化原提示作为来源；自动发言和任务产物无本人原话。
+        has_source = has_user_memory_source(job)
+        context.memory_session = self._memory_session(
+            context, source_text=job.memory_source_text if has_source else None,
+            source_event_id=queued_source_event_id(job),
+            source_time=(datetime.fromtimestamp(job.created_at, timezone.utc)
+                         if has_source else None),
+            request_id=job.request_id,
+        )
         if context.operation_store is not None:
             if "mention_member" in job.chat_tools:
                 saved = await context.operation_store.completed(job.job_id, "send_reply")
@@ -280,19 +311,33 @@ class ChatToolSessionManager:
                 reply_collector=context.reply_collector,
             )
 
-    def _memory_session(self, context: ChatToolContext) -> MemorySession | None:
+    def _memory_session(
+        self, context: ChatToolContext, *, source_text: str | None = None,
+        source_event_id: str | None = None, source_time: datetime | None = None,
+        request_id: str | None = None,
+    ) -> MemorySession | None:
         """把真实事件或队列任务身份绑定到独立的单请求记忆权限。"""
         store = self._memory_store_provider()
         if "memory" not in context.allowed_tools or store is None:
             return None
         if not context.bot_user_id:
             raise ValueError("memory requires a bound bot")
+        config = self._config_provider()
+        catalog = self._catalog_provider() if config.chat_memory_embedding_model else None
+        semantic_search = (
+            HybridMemorySearch(MemoryVectorIndex(store), EmbeddingClient(
+                catalog, config.chat_memory_embedding_model,
+            )) if catalog is not None else None
+        )
         return MemorySession(
             store=store,
             identity=MemoryIdentity(
                 bot_id=context.bot_user_id, user_id=context.user_id,
                 session_id=context.session_id,
                 group_id=str(context.group_id) if context.group_id is not None else None,
+                source_text=source_text, source_event_id=source_event_id, source_time=source_time,
+                request_id=request_id,
             ),
             deadline_at=context.deadline_at,
+            semantic_search=semantic_search,
         )

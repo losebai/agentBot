@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from contextlib import aclosing
 from typing import TYPE_CHECKING, TypedDict
@@ -11,7 +12,13 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from agent_bot.agent.contracts import AgentCompletionMetadata, AgentEvent, ModelTurn, TurnMessage
+from agent_bot.agent.contracts import (
+    AgentCompletionMetadata,
+    AgentEvent,
+    ModelTurn,
+    ToolResult,
+    TurnMessage,
+)
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.prompting import AgentPromptBuilder
 from agent_bot.agent.tools.langchain import LangChainTools
@@ -34,6 +41,7 @@ class AgentState(TypedDict, total=False):
     seen: set[str]
     completed: ModelTurn
     usage: TokenUsage
+    rejections: dict[str, ToolResult]
 
 
 def build_agent_graph(
@@ -169,7 +177,7 @@ def build_agent_graph(
         return await model_node(state, final_only=True)
 
     def validate_batch(state: AgentState) -> AgentState:
-        """先验证整批数量、ID、权限和参数，再允许任何外部副作用。"""
+        """先检查数量、ID 和权限；参数错误保留为工具反馈，整批都不能执行。"""
         calls = state["completed"].calls
         if len(calls) > 8 or state.get("total", 0) + len(calls) > 40:
             raise AgentError("AGENT_TOOL_LIMIT", status_code=422)
@@ -178,11 +186,11 @@ def build_agent_graph(
             if call.call_id in seen:
                 raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
             seen.add(call.call_id)
-        tools.validate_batch(calls)
-        return {"seen": seen}
+        rejections = tools.validate_batch(calls)
+        return {"seen": seen, "rejections": rejections}
 
     async def tools_node(state: AgentState) -> AgentState:
-        """顺序执行工具，实际入参与返回值走私有记录字段，附件只保存元数据。"""
+        """预检反馈也记录真实调用 ID；修正使用原有轮数和预算，不重放已执行工具。"""
         completed, turn = state["completed"], state["turn"]
         messages = [
             *state["messages"],
@@ -197,24 +205,37 @@ def build_agent_graph(
         for call in completed.calls:
             remaining_timeout(prepared.request.timeout_seconds)
             started = time.monotonic()
-            await emit(
-                "tool_start", turn, tool=call.name, call_id=call.call_id,
-                arguments=call.arguments,
-            )
-            result = await tools.call(call)
+            result = state["rejections"].get(call.call_id)
+            rejected = result is not None
+            if rejected:
+                error = json.loads(result.content)["error"]
+                code, message = error["code"], error["message"]
+                details = {"phase": "validation", "executed": False,
+                           "validation_errors": error["issues"]}
+            else:
+                await emit(
+                    "tool_start", turn, tool=call.name, call_id=call.call_id,
+                    arguments=call.arguments,
+                )
+                result = await tools.call(call)
+                code = "AGENT_TOOL_FAILED" if result.is_error else None
+                message = "工具执行失败" if result.is_error else "工具执行完成"
+                details = {}
             messages.append(TurnMessage(role="tool", tool_result=result))
+            # 被拒绝的请求也计入调用总量，不能通过反复填错参数绕过原有上限。
             total += 1
             await emit(
                 "tool_result",
                 turn,
                 tool=call.name,
                 call_id=call.call_id,
-                code="AGENT_TOOL_FAILED" if result.is_error else None,
-                message="工具执行失败" if result.is_error else "工具执行完成",
-                duration_ms=int((time.monotonic() - started) * 1000),
+                code=code,
+                message=message,
+                duration_ms=0 if rejected else int((time.monotonic() - started) * 1000),
                 arguments=call.arguments,
                 result={
                     **result.model_dump(),
+                    **details,
                     "attachments": [
                         attachment.model_dump(mode="json") for attachment in result.attachments
                     ],

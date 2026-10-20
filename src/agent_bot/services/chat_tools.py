@@ -824,6 +824,8 @@ async def _memory(arguments: dict[str, object], context: ChatToolContext) -> Mem
     """把模型参数交给当前令牌绑定的记忆会话。"""
     if context.memory_session is None:
         raise ChatToolError("UNAVAILABLE", "当前请求未启用记忆")
+    from agent_bot.memory.embeddings import EmbeddingError
+
     try:
         return await context.memory_session.execute(MemoryArguments.model_validate(arguments))
     except TaggedMemoryConflictError as error:
@@ -832,6 +834,8 @@ async def _memory(arguments: dict[str, object], context: ChatToolContext) -> Mem
         raise ChatToolError("MEMORY_CAPACITY", str(error)) from error
     except TaggedMemoryStoreError as error:
         raise ChatToolError("MEMORY_UNAVAILABLE", "记忆数据库不可用，请检查初始化与连接") from error
+    except EmbeddingError as error:
+        raise ChatToolError("MEMORY_SEMANTIC_FAILED", str(error)) from error
 
 
 def build_chat_tool_registry() -> ChatToolRegistry:

@@ -4,7 +4,7 @@ import asyncio
 import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -12,6 +12,20 @@ from agent_bot.models import ChatMessage
 from agent_bot.services.tool_operations import DeliveryEffect
 from agent_bot.session_delivery import SessionDeliveryStore
 from agent_bot.state import ConversationContext
+
+
+async def test_adoption_is_recorded_only_after_confirmed_delivery():
+    """未知投递不加热，确认正文才交给真实召回回执进行幂等核对。"""
+    delivery = SimpleNamespace(content="正文【记忆 #1 v2】", request_id="req")
+    store = SimpleNamespace(finish_delivery=Mock(return_value=delivery))
+    memory = SimpleNamespace(record_adoption=Mock())
+    facade = SessionDeliveryStore(lambda: store, memory_store_provider=lambda: memory)
+    assert await facade.finish_delivery("delivery", "42", session_id="s") is delivery
+    memory.record_adoption.assert_called_once_with("s", "req", delivery.content)
+    store.finish_delivery.side_effect = RuntimeError("未知平台结果")
+    with pytest.raises(RuntimeError):
+        await facade.finish_delivery("failed", None, session_id="s")
+    assert memory.record_adoption.call_count == 1
 
 
 class ContextStore:
@@ -29,10 +43,15 @@ class ContextStore:
     def context(self, session_id, *, exclude_request_id=None):
         """读取同一消息流并按请求身份排除当前用户消息。"""
         self.threads.append(threading.get_ident())
-        return ConversationContext(memory="", generation_id="generation", messages=tuple(
-            message for message in self.messages
-            if not (message.role == "user" and message.history_request_id == exclude_request_id)
-        ))
+        return ConversationContext(
+            memory="",
+            generation_id="generation",
+            messages=tuple(
+                message
+                for message in self.messages
+                if not (message.role == "user" and message.history_request_id == exclude_request_id)
+            ),
+        )
 
     def pending_deliveries(self, session_id, generation_id):
         """只提供等待确认的身份，不向 facade 泄露正文。"""
@@ -55,8 +74,9 @@ class ContextStore:
         """保留输入的原始事件时间和代际，不在 facade 重写。"""
         self.threads.append(threading.get_ident())
         self.received.append((session_id, content, values))
-        self.messages.append(ChatMessage(role="user", content=content,
-                                        history_request_id=values["request_id"]))
+        self.messages.append(
+            ChatMessage(role="user", content=content, history_request_id=values["request_id"])
+        )
         return "compression"
 
     def list_messages(self, session_id, generation_id, limit=100):
@@ -82,13 +102,22 @@ async def test_facade_dispatches_to_current_store_and_preserves_receive_identity
     old = stores[0]
     stores[0] = ContextStore()
     created = datetime(2026, 10, 19, tzinfo=UTC)
-    result = await facade.record_received("s", "用户输入", request_id="request",
-                                          created_at=created, generation_id="generation")
+    result = await facade.record_received(
+        "s", "用户输入", request_id="request", created_at=created, generation_id="generation"
+    )
     assert result == "compression"
     assert old.received == []
-    assert stores[0].received == [("s", "用户输入", {
-        "request_id": "request", "created_at": created, "generation_id": "generation",
-    })]
+    assert stores[0].received == [
+        (
+            "s",
+            "用户输入",
+            {
+                "request_id": "request",
+                "created_at": created,
+                "generation_id": "generation",
+            },
+        )
+    ]
     assert all(thread != threading.get_ident() for thread in stores[0].threads)
 
 
@@ -106,9 +135,14 @@ async def test_context_reconciles_confirmed_receipt_before_reading_same_stream()
     """重启后的队列回执只补记确认，未知占位不自动重发；当前输入不重复。"""
     store = ContextStore()
     store.record_received("s", "当前输入", request_id="current")
-    receipts = SimpleNamespace(completed=AsyncMock(side_effect=[
-        DeliveryEffect(signature="a" * 64, message_id="platform-1"), None,
-    ]))
+    receipts = SimpleNamespace(
+        completed=AsyncMock(
+            side_effect=[
+                DeliveryEffect(signature="a" * 64, message_id="platform-1"),
+                None,
+            ]
+        )
+    )
     facade = SessionDeliveryStore(lambda: store, receipts_provider=lambda: receipts)
     context = await facade.context("s", exclude_request_id="current")
     assert [message.content for message in context.messages] == ["已确认通知"]
@@ -133,8 +167,15 @@ async def test_claim_finish_and_record_keep_session_scope_and_legacy_arguments()
     """投递确认显式携带 session，避免跨会话查找投递身份；其他参数保持兼容。"""
     store = ContextStore()
     facade = SessionDeliveryStore(lambda: store)
-    values = dict(session_id="s", generation_id="generation", delivery_id="pending",
-                  request_id="r", message_id=None, content="已发送", material_ids=("asset",))
+    values = dict(
+        session_id="s",
+        generation_id="generation",
+        delivery_id="pending",
+        request_id="r",
+        message_id=None,
+        content="已发送",
+        material_ids=("asset",),
+    )
     claimed = await facade.claim_delivery(**values)
     assert claimed.content == "已发送" and claimed.material_ids == ("asset",)
     finished = await facade.finish_delivery("pending", "platform-2", session_id="s")
@@ -157,10 +198,17 @@ async def test_cancelled_write_waits_for_transaction_to_finish():
         return True
 
     facade = SessionDeliveryStore(lambda: SimpleNamespace(record=record))
-    task = asyncio.create_task(facade.record(
-        session_id="s", generation_id="generation", delivery_id="d", request_id="r",
-        message_id="m", content="已发送", material_ids=(),
-    ))
+    task = asyncio.create_task(
+        facade.record(
+            session_id="s",
+            generation_id="generation",
+            delivery_id="d",
+            request_id="r",
+            message_id="m",
+            content="已发送",
+            material_ids=(),
+        )
+    )
     assert await asyncio.to_thread(started.wait, 1)
     task.cancel()
     await asyncio.sleep(0)

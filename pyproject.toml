@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-bot"
-version = "0.5.3"
+version = "0.5.4"
 description = "Independent Agent bot service with browser administration"
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -85,6 +85,9 @@ dev-mode-dirs = ["."]
 path = "tools/build_hook.py"
 
 [tool.hatch.build.targets.wheel.force-include]
+"sql/2026-10-20-memory-lifecycle.sql" = "agent_bot/resources/2026-10-20-memory-lifecycle.sql"
+"sql/2026-10-20-memory-lifecycle.sqlite.sql" = "agent_bot/resources/2026-10-20-memory-lifecycle.sqlite.sql"
+"sql/UPGRADE-MEMORY-LIFECYCLE.md" = "agent_bot/resources/UPGRADE-MEMORY-LIFECYCLE.md"
 "assets/desktop/agentbot-icon-v2.ico" = "agent_bot/desktop_icon.ico"
 "src/static" = "agent_bot/static"
 "src/resources" = "agent_bot/resources"

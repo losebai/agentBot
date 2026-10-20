@@ -18,8 +18,12 @@
 
 ## Windows 一键安装
 
-当前 Windows 发布版本：**0.5.3**。后续安装与更新以下载站的
+当前 Windows 发布版本：**0.5.4**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。
+
+0.5.4 更新：统一会话上下文、普通调用归档和长期标签记忆存储，增加素材与队列管理。
+已有部署升级前请按 [0.5.4 升级说明](sql/UPGRADE-0.5.4.md) 停服、备份并执行适用迁移；
+[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.4-sql.zip) 同时提供完整初始化与增量脚本。
 
 适用于 Windows 10/11 x64，无需安装 Python、uv 或 Node.js。
 

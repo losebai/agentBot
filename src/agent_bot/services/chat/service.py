@@ -33,9 +33,14 @@ from agent_bot.services.chat.memory import ChatMemoryCompressor
 from agent_bot.services.chat.prompting import ChatPromptBuilder
 from agent_bot.services.chat.request_control import ChatRequestCoordinator
 from agent_bot.services.chat.routing import ChatRouteSelector
+from agent_bot.services.tagged_memory import memory_scope_owner
 from agent_bot.services.tool_images import has_tool_images
 from agent_bot.session_delivery import SessionDeliveryStore
-from agent_bot.state import ConversationContext, ConversationStoreProtocol
+from agent_bot.state import (
+    ConversationContext,
+    ConversationStoreProtocol,
+    current_conversation_source,
+)
 
 if TYPE_CHECKING:
     from agent_bot.ai.routing import RoutedModelGuard
@@ -63,6 +68,7 @@ class ChatService:
         memory_compression_queue_capacity: int = 64,
         sent_messages: SentMessageStore | None = None,
         session_delivery: SessionDeliveryStore | None = None,
+        session_secret: str | None = None,
     ) -> None:
         """生产通过统一上下文 facade 收发；旧日志参数仅服务于显式 legacy 调用。"""
 
@@ -78,6 +84,7 @@ class ChatService:
         self._store = store
         self._sent_messages = sent_messages
         self._session_delivery = session_delivery
+        self._session_secret = session_secret
         self._model_guard = model_guard
         self._model_router = model_router
         self._web_search_enabled = web_search_enabled
@@ -141,15 +148,35 @@ class ChatService:
         self, session_id: str, prompt: str, *, request_id: str,
         created_at: datetime | None = None, chat_context: ChatContext | None = None,
         generation_id: str | None = None,
+        source: dict[str, str] | None = None,
     ) -> None:
         """在生成之前登记原用户输入，保留事件时间和代际；未注入 facade 的旧调用不变。"""
         if self._session_delivery is None:
             return
         normalized = self._prompt_builder.normalize(prompt)
         content = self._prompt_builder.history_user_prompt(normalized, chat_context)
+        bound_source = current_conversation_source.get()
+        if source is None and bound_source is not None and bound_source.session_id == session_id:
+            source = bound_source.source
+            if created_at is None:
+                created_at = bound_source.created_at
+        if source is None and chat_context is not None:
+            # 昵称只负责显示，真实成员身份由平台消息上下文绑定，群共享窗口也不合并主体。
+            source = {
+                "speaker_id": memory_scope_owner(
+                    chat_context.bot_id, "user", chat_context.sender_id, self._session_secret,
+                ) if self._session_secret and chat_context.bot_id
+                else f"qq:{chat_context.bot_id or 'unknown'}:{chat_context.sender_id}",
+                "scene": chat_context.scene, "source_kind": "user", "platform": "qq",
+            }
+            if chat_context.bot_id is not None:
+                source["bot_id"] = chat_context.bot_id
+            if chat_context.group_id is not None:
+                source["group_id"] = chat_context.group_id
         compression = await self._session_delivery.record_received(
             session_id, content, request_id=request_id, created_at=created_at,
             generation_id=generation_id,
+            **({"source": source} if source is not None else {}),
         )
         if compression is not None:
             self._compression_queue.submit(compression)
@@ -657,10 +684,26 @@ class ChatService:
                 if persist_history
                 else None
             )
+            request_system_messages = system_messages
+            if chat_context is not None and chat_context.bot_id and self._session_secret:
+                # 模型只能用服务器HMAC映射判断摘要主体；显示昵称不授予跨成员归属。
+                subject = memory_scope_owner(
+                    chat_context.bot_id, "user", chat_context.sender_id, self._session_secret,
+                )
+                source_mapping = ChatMessage(
+                    role="system", content=(
+                        f"当前真实发言人在会话摘要中的主体ID为 {subject}。"
+                        "只将相同主体的历史资料关联到本次发言人，昵称或称谓相同不代表同一人。"
+                    ),
+                )
+                request_system_messages = (
+                    self._prompt_builder.system_messages_with(source_mapping)
+                    if system_messages is None else (*system_messages, source_mapping)
+                )
             messages = self._prompt_builder.messages(
                 current_prompt,
                 conversation_context=conversation_context,
-                system_messages=system_messages,
+                system_messages=request_system_messages,
                 persist_history=persist_history,
                 recent_group_context=recent_group_context,
             )

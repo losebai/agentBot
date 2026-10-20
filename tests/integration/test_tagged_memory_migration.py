@@ -46,11 +46,22 @@ def legacy_memory(tmp_path):
     return params
 
 
+def _effective_structure(connection, table):
+    """比较有效字段与约束，忽略字段和索引的物理创建次序。"""
+    columns = {row[1]: row[2:] for row in connection.execute(f"PRAGMA table_info({table})")}
+    indexes = {row[1]: (row[2], row[3], row[4], [
+        (item[0], *item[2:]) for item in connection.execute(f'PRAGMA index_xinfo("{row[1]}")')
+    ]) for row in connection.execute(f"PRAGMA index_list({table})")}
+    foreign_keys = connection.execute(f"PRAGMA foreign_key_list({table})").fetchall()
+    return columns, indexes, foreign_keys
+
+
 @pytest.mark.parametrize("migration_method", ["python", "sql"])
 def test_merge_preserves_every_fact_and_matches_fresh_schema(
     legacy_memory, tmp_path, migration_method,
 ):
-    """迁移保留 ID、正文、时间和墓碑；退役前后核对新库有效结构。"""
+    """先合并旧关联再显式升级生命周期，完整保留事实并对照当前新库结构。"""
+    from agent_bot.integrations.memory_migration import migrate_memory_lifecycle
     from agent_bot.integrations.tagged_memory_migration import (
         migrate_tagged_memory,
         verify_tagged_memory_migration,
@@ -71,15 +82,21 @@ def test_merge_preserves_every_fact_and_matches_fresh_schema(
         migrate_tagged_memory(connection, backend="sqlite", retire_legacy=True)
     finally:
         connection.close()
+    # 合表迁移只负责0.5.4起点；与当前新库比较前还必须显式执行后续生命周期升级。
+    with sqlite3.connect(legacy_memory.sqlite_path) as db:
+        db.executescript(Path("sql/2026-10-19-session-context.sqlite.sql").read_text("utf-8"))
+        if migration_method == "sql":
+            db.executescript(Path("sql/2026-10-20-memory-lifecycle.sqlite.sql").read_text("utf-8"))
+    migrate_memory_lifecycle(legacy_memory)
+    assert migrate_memory_lifecycle(legacy_memory, verify_only=True)["verified"] is True
     with (
         sqlite3.connect(legacy_memory.sqlite_path) as db,
         sqlite3.connect(tmp_path / "fresh.db") as fresh,
     ):
         fresh.executescript(Path("sql/agent_bot_init.sqlite.sql").read_text(encoding="utf-8"))
-        for pragma in ("table_info", "index_list", "foreign_key_list"):
-            assert db.execute(f"PRAGMA {pragma}(chat_tagged_memory)").fetchall() == (
-                fresh.execute(f"PRAGMA {pragma}(chat_tagged_memory)").fetchall()
-            )
+        for table in ("chat_tagged_memory", "chat_memory_revision", "chat_memory_evidence",
+                      "chat_memory_operation", "chat_memory_embedding"):
+            assert _effective_structure(db, table) == _effective_structure(fresh, table), table
         rows = db.execute("SELECT * FROM chat_tagged_memory ORDER BY id").fetchall()
         assert rows[0][:7] == (
             7, "a" * 64, "old", "原文", 0, "2026-10-01 00:00:00", "2026-10-02 00:00:00"
@@ -88,6 +105,10 @@ def test_merge_preserves_every_fact_and_matches_fresh_schema(
         assert rows[0][7] == "user"
         assert json.loads(rows[0][8]) == ["主题"]
         assert json.loads(rows[0][9]) == ["b" * 32]
+        assert db.execute("SELECT revision,source_kind,created_time_basis FROM chat_tagged_memory "
+                          "WHERE id=7").fetchone() == (1, "legacy_unknown", "legacy_unspecified")
+        assert db.execute("SELECT memory_id,revision FROM chat_memory_revision ORDER BY memory_id"
+                          ).fetchall() == [(7, 1), (12, 1)]
         assert not db.execute("SELECT name FROM sqlite_master WHERE name IN "
                               "('chat_memory_scope','chat_memory_tag','chat_memory_material')").fetchall()
 

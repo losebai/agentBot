@@ -61,6 +61,7 @@ async def test_queue_records_original_user_time_before_generation_and_skips_synt
         receive.assert_awaited_once_with(
             "s", "用户原问题", request_id="request", created_at=datetime.fromtimestamp(10, UTC),
             chat_context=None, generation_id="a" * 32,
+            source={"source_kind": "unknown", "scene": "private"},
         )
     else:
         receive.assert_not_awaited()

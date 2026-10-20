@@ -1,15 +1,26 @@
-"""Stable web_search interface backed by one registered search MCP."""
+"""通过单个已登记搜索 MCP 提供稳定搜索接口，预检与执行共用关键词约束。"""
 
 import json
+
+from pydantic import ConfigDict, Field, ValidationError
 
 from agent_bot.agent.contracts import ToolCall, ToolDefinition, ToolResult
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.tools.public_http import safe_url
 from agent_bot.agent.tools.schema import ToolSchema
+from agent_bot.ai.contracts import AiModel
 from agent_bot.services.request_deadline import remaining_timeout
 
 
+class _SearchQuery(AiModel):
+    """去除关键词两端空白，使用字段级错误反馈而不回显原输入。"""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+    query: str = Field(min_length=1)
+
+
 class SearchTool:
+    """模型侧保留原搜索参数，实际执行继续使用指定搜索服务。"""
     definition = ToolDefinition(
         name="web_search",
         source="builtin",
@@ -30,14 +41,20 @@ class SearchTool:
     def __init__(self, connector, server):
         self.connector, self.server = connector, server
 
+    @staticmethod
+    def normalize_query(query: str) -> str:
+        """整批预检和单次执行使用同一非空白校验，防止前项已执行后才拒绝搜索。"""
+        try:
+            return _SearchQuery(query=query).query
+        except ValidationError as error:
+            raise AgentError("AGENT_TOOL_ARGUMENTS_INVALID", status_code=422) from error
+
     async def call(self, call):
         """校验搜索配置后调用指定服务；配置缺失不可按网络故障重试。"""
         args = ToolSchema.validate_arguments(self.definition, call.arguments)
         if self.server is None or self.server.category != "search":
             raise AgentError("AGENT_SEARCH_UNAVAILABLE", status_code=409)
-        query = args["query"].strip()
-        if not query:
-            raise AgentError("AGENT_TOOL_ARGUMENTS_INVALID", status_code=422)
+        query = self.normalize_query(args["query"])
         limit, budget = args.get("numResults", 5), args.get("contextMaxCharacters", 10000)
         mapped = {"query": query}
         if self.server.search_tool == "searxng_web_search":

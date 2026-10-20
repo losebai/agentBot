@@ -22,6 +22,7 @@ from agent_bot.ai.chat_errors import (
     ChatAiUnavailableError,
 )
 from agent_bot.config import RuntimeConfig
+from agent_bot.integrations.onebot.memory_source import has_user_memory_source, queued_memory_source
 from agent_bot.integrations.onebot.outgoing import OutgoingRecorder
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway
 from agent_bot.integrations.workflow_store import WorkflowNotFoundError
@@ -613,10 +614,16 @@ class ConversationQueueProcessor:
             self._receive_queued is not None and not job.background_image
             and job.ai_job_id is None and job.auto_speak_max_reply_chars is None
         ):
+            # 旧任务没有独立原话，必须显式未知，不能让ChatContext重新把拼装prompt当本人证据。
+            source_options = {"source": {"source_kind": "unknown", "scene": job.scene}}
+            if has_user_memory_source(job):
+                secret = self._config_provider().chat_session_secret.get_secret_value()
+                source_options["source"] = queued_memory_source(job, secret)
             await self._receive_queued(
                 job.session_id, job.prompt, request_id=job.request_id,
                 created_at=datetime.fromtimestamp(job.created_at, UTC),
                 chat_context=job.chat_context, generation_id=job.history_generation_id,
+                **source_options,
             )
 
     def _requires_image_completion(

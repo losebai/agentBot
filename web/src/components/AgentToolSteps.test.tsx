@@ -28,3 +28,21 @@ it('历史未保存或工具未返回时明确显示缺失，不制造空对象�
   expect(screen.getByText('未保存入参')).toBeInTheDocument();
   expect(screen.getByText('未记录返回值')).toBeInTheDocument();
 });
+
+it('预检失败明确展示工具未执行、错误字段与规则，同批跳过不会显示成功', () => {
+  render(<AgentToolSteps steps={[{
+    execution_id: 'a'.repeat(32), sequence: 4, turn: 3, kind: 'tool_result', tool: 'web_search',
+    call_id: 'invalid', status: 'failed', duration_ms: 0, summary: 'AGENT_TOOL_ARGUMENTS_INVALID',
+    arguments: {numResults: 99}, result: {phase: 'validation', executed: false,
+      validation_errors: [{field: 'numResults', rule: 'maximum', message: '不能大于 5'}]},
+  }, {
+    execution_id: 'a'.repeat(32), sequence: 5, turn: 3, kind: 'tool_result', tool: 'read_url',
+    call_id: 'skipped', status: 'failed', duration_ms: 0, summary: 'AGENT_TOOL_BATCH_REJECTED',
+    result: {phase: 'validation', executed: false, validation_errors: []},
+  }]} />);
+  expect(screen.getByText(/参数校验失败/)).toBeVisible();
+  expect(screen.getByText(/同批取消/)).toBeVisible();
+  expect(screen.getAllByText(/工具未执行/)).toHaveLength(2);
+  expect(screen.getByText('numResults · maximum：不能大于 5')).toBeVisible();
+  expect(screen.queryByText(/已完成/)).not.toBeInTheDocument();
+});

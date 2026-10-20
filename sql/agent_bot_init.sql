@@ -82,12 +82,39 @@ CREATE TABLE IF NOT EXISTS chat_tagged_memory (
     scope VARCHAR(16) NOT NULL COMMENT 'global/session/user/group',
     tags_json JSON NOT NULL COMMENT '规范化主题标签数组',
     material_ids_json JSON NOT NULL COMMENT '引用素材标识数组',
+    revision INT NOT NULL DEFAULT 1 COMMENT '事实乐观锁版本',
+    topic VARCHAR(80) NOT NULL DEFAULT '' COMMENT '用于整理的规范主题',
+    kind VARCHAR(20) NOT NULL DEFAULT 'fact' COMMENT '事实类型',
+    status VARCHAR(16) NOT NULL DEFAULT 'active' COMMENT '生命周期状态',
+    subject_type VARCHAR(16) NOT NULL DEFAULT 'unknown' COMMENT '被描述主体类型',
+    subject_id VARCHAR(64) NOT NULL DEFAULT '' COMMENT '匿名主体标识',
+    source_kind VARCHAR(24) NOT NULL DEFAULT 'legacy_unknown' COMMENT '最近确认的来源类型',
+    importance DOUBLE NOT NULL DEFAULT 0.5 COMMENT '重要性排序权重非正确概率',
+    observed_at DATETIME NULL COMMENT '已知事实时间未知为空',
+    valid_from DATETIME NULL COMMENT 'UTC有效区间起点含边界',
+    valid_until DATETIME NULL COMMENT 'UTC有效区间终点不含边界',
+    task_state VARCHAR(16) NULL COMMENT '任务未完成完成或取消',
+    merged_into_id INT NULL COMMENT '合并后的当前事实标识',
+    conflict_set_id VARCHAR(64) NULL COMMENT '待解决冲突集合',
+    content_fingerprint CHAR(64) NOT NULL DEFAULT '' COMMENT '规范正文摘要用于精确去重候选',
+    last_used_at DATETIME NULL COMMENT '实际采用时间不是事实时间',
+    use_count INT NOT NULL DEFAULT 0 COMMENT '幂等累计采用次数',
+    created_time_basis VARCHAR(24) NOT NULL DEFAULT 'utc' COMMENT '创建时间的UTC或旧未知时区依据',
+    updated_time_basis VARCHAR(24) NOT NULL DEFAULT 'utc' COMMENT '更新时间的UTC或旧未知时区依据',
     -- 主键定义记录身份，防止同一业务记录重复创建。
     PRIMARY KEY (id),
     -- 唯一索引约束业务标识，支持并发写入时的重复检查。
     UNIQUE KEY uk_tagged_memory_scope_key (scope_id, memory_key),
     -- 联合索引支持对应字段过滤和有序读取，避免全表扫描。
-    KEY idx_tagged_memory_scope_time (scope_id, is_deleted, update_time)
+    KEY idx_tagged_memory_scope_time (scope_id, is_deleted, update_time),
+    -- 支持授权状态、主体去重与主题整理查询。
+    KEY idx_memory_status (scope_id,status),
+    -- 支持授权状态、主体去重与主题整理查询。
+    KEY idx_memory_fingerprint (scope_id,subject_id,content_fingerprint),
+    -- 支持授权状态、主体去重与主题整理查询。
+    KEY idx_memory_topic (scope_id,subject_id,topic),
+    -- 支持授权状态、主体去重与主题整理查询。
+    KEY idx_memory_merged (merged_into_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM 自主保存的标签记忆';
 
 -- 旧关联表已合入 chat_tagged_memory，不再单独创建。
@@ -566,6 +593,8 @@ CREATE TABLE IF NOT EXISTS chat_session_context (
     generation_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '仅显式清空时切换，隔离旧后台任务',
     messages_json MEDIUMTEXT NOT NULL COMMENT '按消息时间和稳定序号排列的双向上下文 JSON',
     memory_summary MEDIUMTEXT NOT NULL COMMENT '超出近期窗口后的历史摘要',
+    memory_facts_json JSON NULL COMMENT '带主体来源和引用的结构化摘要，空值表示尚未生成',
+    legacy_memory_summary MEDIUMTEXT NULL COMMENT '升级前纯文本摘要原样归档，不默认注入模型',
     memory_revision BIGINT NOT NULL DEFAULT 0 COMMENT '摘要快照序号，仅防止旧压缩结果覆盖新摘要',
     deliveries_json MEDIUMTEXT NOT NULL COMMENT '请求去重、发送占位及回执 JSON，不另存发送正文表',
     create_time DATETIME(6) NOT NULL COMMENT '会话创建时间，UTC',
@@ -573,3 +602,68 @@ CREATE TABLE IF NOT EXISTS chat_session_context (
     -- 主键保证每个 session 仅一行，并为短事务合并提供行锁。
     PRIMARY KEY (session_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='无过期的统一会话上下文';
+
+-- 记忆生命周期：当前事实的历史、来源、幂等和向量缓存；新库直接创建。
+-- 记忆生命周期辅助表：各字段、唯一约束和外键见下方中文说明。
+CREATE TABLE IF NOT EXISTS chat_memory_revision (
+      id INT NOT NULL AUTO_INCREMENT COMMENT '历史版本标识',
+      memory_id INT NOT NULL COMMENT '当前事实标识',
+      revision INT NOT NULL COMMENT '不可变事实版本',
+      operation VARCHAR(20) NOT NULL COMMENT '变更操作',
+      snapshot_json JSON NOT NULL COMMENT '完整事实与来源快照',
+      actor_type VARCHAR(20) NOT NULL COMMENT '管理员用户或迁移来源',
+      reason VARCHAR(300) NOT NULL COMMENT '变更理由不含内部推理',
+      created_at DATETIME NOT NULL COMMENT 'UTC版本提交时间',
+      -- 主键稳定标识历史记录，联合唯一约束禁止覆盖同一事实版本。
+      PRIMARY KEY (id),
+      UNIQUE KEY uk_memory_revision (memory_id,revision),
+      -- 外键防止历史版本脱离当前事实根记录。
+      FOREIGN KEY (memory_id) REFERENCES chat_tagged_memory(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='不可变长期记忆版本';
+
+CREATE TABLE IF NOT EXISTS chat_memory_evidence (
+      id INT NOT NULL AUTO_INCREMENT COMMENT '来源证据标识',
+      memory_id INT NOT NULL COMMENT '归属事实',
+      first_revision INT NOT NULL COMMENT '首次纳入版本',
+      source_kind VARCHAR(24) NOT NULL COMMENT '来源类别不由模型指定',
+      source_ref VARCHAR(200) NULL COMMENT '可核对来源引用',
+      source_actor_id VARCHAR(64) NULL COMMENT '匿名发言人',
+      source_session_id VARCHAR(128) NULL COMMENT '来源会话权限边界',
+      source_event_id VARCHAR(200) NULL COMMENT '真实来源事件引用',
+      source_time DATETIME NULL COMMENT '来源UTC时间未知为空',
+      recorded_at DATETIME NOT NULL COMMENT '证据记录UTC时间',
+      excerpt VARCHAR(300) NOT NULL COMMENT '真实片段不是可执行指令',
+      evidence_fingerprint CHAR(64) NOT NULL COMMENT '独立来源去重摘要',
+      original_memory_id INT NULL COMMENT '合并前原始事实',
+      -- 主键稳定标识证据，联合唯一约束防止同一来源反复佐证。
+      PRIMARY KEY (id),
+      UNIQUE KEY uk_memory_evidence (memory_id,evidence_fingerprint),
+      -- 来源撤回按事件和会话定向定位，避免锁定无关事实证据。
+      KEY idx_memory_evidence_event (source_event_id,source_session_id),
+      -- 外键防止来源证据脱离当前事实根记录。
+      FOREIGN KEY (memory_id) REFERENCES chat_tagged_memory(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='长期记忆的可核对来源';
+
+CREATE TABLE IF NOT EXISTS chat_memory_operation (
+      scope_id CHAR(64) NOT NULL COMMENT '写入权限作用域',
+      request_id VARCHAR(128) NOT NULL COMMENT '原始请求标识',
+      operation_id VARCHAR(128) NOT NULL COMMENT '幂等操作标识',
+      arguments_digest CHAR(64) NOT NULL COMMENT '参数摘要防止复用身份篡改',
+      operation_kind VARCHAR(20) NOT NULL COMMENT '写入或采用操作',
+      result_json JSON NOT NULL COMMENT '仅状态和标识不复制正文',
+      created_at DATETIME NOT NULL COMMENT '提交UTC时间',
+      -- 复合主键在授权作用域内隔离请求与操作，防止重放写入。
+      PRIMARY KEY (scope_id,request_id,operation_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='记忆写入与采用幂等回执';
+
+CREATE TABLE IF NOT EXISTS chat_memory_embedding (
+      memory_id INT NOT NULL COMMENT '事实标识',
+      revision INT NOT NULL COMMENT '向量对应的事实版本',
+      model_key VARCHAR(200) NOT NULL COMMENT '向量模型及配置版本',
+      vector_json JSON NOT NULL COMMENT '有限数值向量数组',
+      created_at DATETIME NOT NULL COMMENT '计算UTC时间',
+      -- 复合主键禁止跨事实版本或模型版本复用向量。
+      PRIMARY KEY (memory_id,revision,model_key),
+      -- 外键保证向量仅附着于已有事实，遗忘仍由状态和版本筛选。
+      FOREIGN KEY (memory_id) REFERENCES chat_tagged_memory(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='现有数据库内的记忆向量缓存';

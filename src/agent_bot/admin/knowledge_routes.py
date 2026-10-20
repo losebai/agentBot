@@ -1,4 +1,6 @@
-"""已认证管理入口的知识与标签记忆新增、读取和逻辑删除。"""
+"""已认证管理入口的知识维护和记忆版本、来源与预览批次管理。"""
+
+from typing import Literal
 
 from fastapi import APIRouter, Path, Query
 
@@ -13,11 +15,22 @@ from agent_bot.knowledge.contracts import (
     KnowledgeCreate,
     KnowledgeView,
     MemoryCreate,
+    MemoryRevisionView,
     MemoryView,
     ScopeView,
     TagCount,
 )
 from agent_bot.knowledge.errors import KnowledgeError
+from agent_bot.memory.contracts import (
+    MemoryCleanup,
+    MemoryCleanupPreview,
+    MemoryKind,
+    MemoryMerge,
+    MemoryResolve,
+    MemoryStatus,
+    MemoryUpdate,
+)
+from agent_bot.memory.policy import normalized_content
 from agent_bot.services.tagged_memory import MemoryScope, normalize_memory_tags
 
 
@@ -32,7 +45,7 @@ def normalized_tag(tag: str) -> str:
 
 
 def install_knowledge_routes(router: APIRouter, runtime) -> None:
-    """只安装 GET/POST/DELETE，读写均在宿主租约内完成连接收尾。"""
+    """知识保持只增只读，记忆修订与批量操作在宿主租约内完成事务收尾。"""
 
     async def knowledge(action: str, *args, **kwargs):
         """不依赖 QQ 插件和机器人连接，不缓存过期配置快照。"""
@@ -52,9 +65,15 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
             def operate():
                 """标题只装饰管理响应，QQ 记忆调用与不可逆权限键保持原有边界。"""
                 result = getattr(store, action)(*args, **kwargs)
-                if action not in {"admin_list", "admin_get", "admin_create", "admin_scopes"}:
+                preview = action in {"admin_merge_preview", "admin_cleanup_preview"}
+                if action not in {
+                    "admin_list", "admin_get", "admin_create", "admin_update", "admin_merge",
+                    "admin_scopes", "admin_merge_preview", "admin_cleanup_preview",
+                    "admin_conflicts", "admin_resolve",
+                }:
                     return result
-                rows = (result.items if isinstance(result, Page) else result
+                rows = (result["items"] if preview else result.items
+                        if isinstance(result, Page) else result
                         if action == "admin_scopes" else (result,))
                 if not rows:
                     return result
@@ -63,16 +82,22 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
                             for row in rows]
                 if isinstance(result, Page):
                     return result.model_copy(update={"items": enriched})
+                if preview:
+                    # 预览摘要只绑定事实与版本，目录标题不参与写入身份或摘要计算。
+                    return {**result, "items": enriched}
                 return tuple(enriched) if action == "admin_scopes" else enriched[0]
 
             try:
                 return await finish_database_write(operate)
             except TaggedMemoryConflictError as error:
-                raise KnowledgeError("MEMORY_CONFLICT", status_code=409) from error
+                code = "MEMORY_CONFLICT" if action == "admin_create" else "MEMORY_REVISION_CONFLICT"
+                raise KnowledgeError(code, status_code=409) from error
             except TaggedMemoryCapacityError as error:
                 raise KnowledgeError("MEMORY_CAPACITY", status_code=409) from error
             except TaggedMemoryStoreError as error:
                 raise KnowledgeError("MEMORY_UNAVAILABLE", status_code=503) from error
+            except ValueError as error:
+                raise KnowledgeError("MEMORY_INVALID_INPUT", status_code=422) from error
 
     @router.get("/knowledge", response_model=Page[KnowledgeView])
     async def list_knowledge(
@@ -114,6 +139,10 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
         tag: str = Query("", max_length=64),
         scope: MemoryScope | None = None,
         scope_id: str | None = Query(None, pattern=r"^[a-f0-9]{64}$"),
+        topic: str = Query("", max_length=80),
+        status: MemoryStatus | Literal["future", "all"] | None = None,
+        kind: MemoryKind | None = None,
+        subject: str | None = Query(None, max_length=128),
     ):
         """管理员筛选匿名归属，不把管理范围授予 QQ 召回。"""
         return await memory(
@@ -124,22 +153,75 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
             tag=normalized_tag(tag),
             scope=scope,
             scope_id=scope_id,
+            topic=normalized_content(topic).casefold(),
+            status=status,
+            kind=kind,
+            subject=subject,
         )
 
     @router.post("/memories", response_model=MemoryView, status_code=201)
     async def create_memory(body: MemoryCreate):
-        """同作用域同键统一返回冲突，已删除键也不能恢复。"""
+        """重复事实由存储去重，已有键冲突不通过换键或恢复绕开。"""
         return await memory("admin_create", body)
+
+    @router.post("/memories/merge-preview")
+    async def preview_memory_merge(body: MemoryMerge):
+        """只预览显式目标版本，授权管理能力不扩大 QQ 工具的可见范围。"""
+        return await memory("admin_merge_preview", body)
+
+    @router.post("/memories/merge", response_model=MemoryView)
+    async def merge_memories(body: MemoryMerge):
+        """服务端校验预览摘要后原子修订目标和来源墓碑。"""
+        if body.digest is None:
+            raise KnowledgeError("MEMORY_INVALID_INPUT", status_code=422)
+        return await memory("admin_merge", body)
+
+    @router.post("/memories/cleanup-preview")
+    async def preview_memory_cleanup(body: MemoryCleanupPreview):
+        """主题仅用于有界预览，不能作为正式清理时的动态条件。"""
+        normalized = body.model_copy(update={"topic": normalized_content(body.topic).casefold()})
+        return await memory("admin_cleanup_preview", normalized)
+
+    @router.post("/memories/cleanup")
+    async def cleanup_memories(body: MemoryCleanup):
+        """只处理预览列出的 ID 和版本，随后新增的同主题事实保持原状。"""
+        return await memory("admin_cleanup", body)
+
+    @router.post("/memories/resolve", response_model=MemoryView)
+    async def resolve_memories(body: MemoryResolve):
+        """同时校验整组冲突版本，采用目标并原子失效其他结论。"""
+        return await memory("admin_resolve", body)
 
     @router.get("/memories/{id}", response_model=MemoryView)
     async def get_memory(id: int = Path(ge=1)):
-        """详情保留正文，不提供更新接口。"""
+        """读取当前事实及可验证来源，遗忘记录不通过普通详情返回。"""
         return await memory("admin_get", id)
 
+    @router.patch("/memories/{id}", response_model=MemoryView)
+    async def update_memory(body: MemoryUpdate, id: int = Path(ge=1)):
+        """保留未提交字段；陈旧版本返回冲突而不自动覆盖当前事实。"""
+        return await memory("admin_update", id, body)
+
+    @router.get("/memories/{id}/revisions", response_model=Page[MemoryRevisionView])
+    async def memory_revisions(
+        id: int = Path(ge=1),
+        limit: int = Query(20, ge=1, le=100),
+        cursor: str | None = Query(None, max_length=4096),
+    ):
+        """版本原文仅供管理认证审计，不暴露给 QQ 历史读取工具。"""
+        return await memory("admin_revisions", id, limit=limit, cursor=cursor)
+
+    @router.get("/memories/{id}/conflicts", response_model=Page[MemoryView])
+    async def memory_conflicts(id: int = Path(ge=1)):
+        """整组返回有界冲突候选，管理员必须核对全部受影响版本。"""
+        return await memory("admin_conflicts", id)
+
     @router.delete("/memories/{id}", status_code=204)
-    async def delete_memory(id: int = Path(ge=1)):
-        """明确逻辑删除，底层不会改写正文和标签。"""
-        await memory("admin_delete", id)
+    async def delete_memory(
+        id: int = Path(ge=1), expected_revision: int = Query(..., ge=1),
+    ):
+        """遗忘绑定已看到的版本并保留审计历史，不提供自动恢复。"""
+        await memory("admin_delete", id, expected_revision=expected_revision)
 
     @router.get("/memory-tags", response_model=tuple[TagCount, ...])
     async def memory_tags(

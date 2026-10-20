@@ -2,7 +2,7 @@ import { Alert, Button, Select, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { errorMessage } from '../api';
 import { KnowledgeApi } from '../knowledge-api';
-import type { MemoryFilters, MemoryScope, MemoryScopeInfo, TagCount, TaggedEntry, TaggedPage } from '../knowledge-types';
+import type { MemoryEntry, MemoryFilters, MemoryScope, MemoryScopeInfo, TagCount, TaggedEntry, TaggedPage } from '../knowledge-types';
 import { CatalogDialog } from './CatalogDialog';
 import { DetailDialog } from './DetailDialog';
 
@@ -105,7 +105,8 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
     if (!deleting || deleteBusy) return;
     setDeleteBusy(true); setDeleteError('');
     try {
-      if (memory) await api.deleteMemory(deleting.id); else await api.deleteKnowledge(deleting.id);
+      if (memory) await api.deleteMemory(deleting.id, (deleting as MemoryEntry).revision);
+      else await api.deleteKnowledge(deleting.id);
       if (mounted.current) {
         setDeleting(undefined); closeDetail(); setCursor(undefined); setHistory([]); setRefresh(value => value + 1);
       }

@@ -1,6 +1,6 @@
 import { ApiClient } from './api';
 import type { Page } from './ai-types';
-import type { KnowledgeDraft, KnowledgeEntry, KnowledgeFilters, MemoryDraft, MemoryEntry, MemoryFilters, MemoryScopeInfo, TagCount } from './knowledge-types';
+import type { KnowledgeDraft, KnowledgeEntry, KnowledgeFilters, MemoryDraft, MemoryEntry, MemoryFilters, MemoryMerge, MemoryPreview, MemoryResolve, MemoryRevision, MemoryScopeInfo, MemoryUpdate, MemoryVersion, TagCount } from './knowledge-types';
 
 /** 省略空筛选，分页游标始终携带当前提交的条件。 */
 function queryString(filters: MemoryFilters = {}, cursor?: string) {
@@ -10,7 +10,7 @@ function queryString(filters: MemoryFilters = {}, cursor?: string) {
   return params.toString();
 }
 
-/** 知识与记忆只提供新增、读取和删除，无更新方法。 */
+/** 知识保持原有行为；记忆写入携带版本，批量操作必须先预览。 */
 export class KnowledgeApi extends ApiClient {
   /** 列表查询允许页面离开或变更筛选时取消。 */
   listKnowledge(filters: KnowledgeFilters = {}, cursor?: string, signal?: AbortSignal) {
@@ -28,12 +28,42 @@ export class KnowledgeApi extends ApiClient {
   listMemories(filters: MemoryFilters = {}, cursor?: string, signal?: AbortSignal) {
     return this.request<Page<MemoryEntry>>(`memories?${queryString(filters, cursor)}`, 'GET', undefined, signal);
   }
-  /** 读取完整事实，页面详情为只读。 */
+  /** 读取完整事实供详情或编辑使用，不从列表摘要建立草稿。 */
   getMemory(id: number, signal?: AbortSignal) { return this.request<MemoryEntry>(`memories/${id}`, 'GET', undefined, signal); }
-  /** 已有键返回冲突，客户端不改用更新或恢复。 */
+  /** 新增由服务端执行去重，不能恢复已经遗忘的事实。 */
   createMemory(body: MemoryDraft) { return this.request<MemoryEntry>('memories', 'POST', body); }
-  /** 逻辑删除不能被后续同键保存恢复。 */
-  deleteMemory(id: number) { return this.request<void>(`memories/${id}`, 'DELETE'); }
+  /** 仅提交编辑过的字段，避免旧表单覆盖新的无关修改。 */
+  updateMemory(id: number, body: MemoryUpdate) { return this.request<MemoryEntry>(`memories/${id}`, 'PATCH', body); }
+  /** 历史读取可取消，版本正文只用于追溯，不提供恢复遗忘入口。 */
+  memoryRevisions(id: number, cursor?: string, signal?: AbortSignal) {
+    return this.request<Page<MemoryRevision>>(`memories/${id}/revisions?${queryString({}, cursor)}`, 'GET', undefined, signal);
+  }
+  /** 冲突必须读取整组候选，不能只修订其中一条而遗漏其他有效结论。 */
+  memoryConflicts(id: number, signal?: AbortSignal) {
+    return this.request<Page<MemoryEntry>>(`memories/${id}/conflicts`, 'GET', undefined, signal);
+  }
+  /** 采用已核对的某一结论，409 后不自动重试或刷新草稿版本。 */
+  resolveMemories(body: MemoryResolve) { return this.request<MemoryEntry>('memories/resolve', 'POST', body); }
+  /** 遗忘绑定用户实际看到的版本，冲突后不自动重新提交。 */
+  deleteMemory(id: number, expectedRevision: number) {
+    return this.request<void>(`memories/${id}?expected_revision=${expectedRevision}`, 'DELETE');
+  }
+  /** 合并预览不会写入，离开页面时可以安全取消。 */
+  previewMemoryMerge(body: MemoryMerge, signal?: AbortSignal) {
+    return this.request<MemoryPreview>('memories/merge-preview', 'POST', body, signal);
+  }
+  /** 正式合并固定预览批次，不能重新抓取同主题新增数据。 */
+  mergeMemories(body: MemoryMerge & {digest: string}) {
+    return this.request<MemoryEntry>('memories/merge', 'POST', body);
+  }
+  /** 清理预览只检查指定主题与作用域。 */
+  previewMemoryCleanup(body: {scope_id: string; topic: string; action: 'expire' | 'forget'}, signal?: AbortSignal) {
+    return this.request<MemoryPreview>('memories/cleanup-preview', 'POST', body, signal);
+  }
+  /** 提交已确认的预览版本，摘要过期时由服务端明确拒绝。 */
+  cleanupMemories(body: {items: MemoryVersion[]; action: 'expire' | 'forget'; digest: string; reason: string}) {
+    return this.request<unknown>('memories/cleanup', 'POST', body);
+  }
   /** 当前作用域的标签数用于筛选选项。 */
   memoryTags(filters: MemoryFilters = {}, signal?: AbortSignal) {
     const scope = {scope: filters.scope, scope_id: filters.scope_id};

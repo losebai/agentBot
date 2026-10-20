@@ -49,10 +49,13 @@ def test_missing_sent_table_and_expired_legacy_session_are_imported(database):
         "sessions": 1, "imported": 1, "skipped": 0, "messages": 2,
     }
     context = _context(database).context("session")
-    assert context.memory == "已有摘要"
+    assert context.memory == ""
     assert [message.content for message in context.messages] == ["用户消息", "原整段回复"]
     with sqlite3.connect(database.sqlite_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM chat_memory_turn").fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT legacy_memory_summary FROM chat_session_context WHERE session_id='session'",
+        ).fetchone()[0] == "已有摘要"
 
 
 def test_actual_sent_parts_replace_old_combined_reply_and_pending_stays_hidden(database):

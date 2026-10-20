@@ -111,6 +111,9 @@ async def test_memory_identity_is_bound_in_direct_and_queued_sessions(chat_plugi
         assert context.memory_session.identity.session_id == "bound-session"
         assert context.memory_session.identity.user_id == "10001"
         assert context.memory_session.identity.group_id is None
+        assert context.memory_session.identity.source_text == "生成语音"
+        assert context.memory_session.identity.source_event_id == "qq:90001:1"
+        assert context.memory_session.identity.source_time.timestamp() == 1_700_000_000
     monkeypatch.setattr(manager, "queued_bot", lambda _bot_id: bot)
     job = ConversationJob(
         job_id="memory-test", request_id="memory-test", created_at=1,
@@ -122,11 +125,54 @@ async def test_memory_identity_is_bound_in_direct_and_queued_sessions(chat_plugi
         assert context.memory_session.identity.session_id == "group-session"
         assert context.memory_session.identity.user_id == "10002"
         assert context.memory_session.identity.group_id == "20000"
+        assert context.memory_session.identity.source_text is None
+    human_job = job.model_copy(update={"request_id": "qq-memory-test", "created_at": 1700000000,
+                                       "recent_group_context": "群友说喜欢辣椒",
+                                       "memory_source_text": "你好"})
+    async with manager.open_queued_session(human_job) as lease:
+        context = await sessions.resolve(lease.token)
+        assert context.memory_session.identity.source_text == "你好"
+        assert context.memory_session.identity.source_event_id == "queue:90001:memory-test"
+        assert context.memory_session.identity.source_time.timestamp() == 1700000000
+    legacy_job = human_job.model_copy(update={"memory_source_text": None})
+    async with manager.open_queued_session(legacy_job) as lease:
+        context = await sessions.resolve(lease.token)
+        assert context.memory_session.identity.source_text is None
+        assert context.memory_session.identity.source_event_id is None
     config = config.model_copy(update={"chat_tagged_memory_enabled": False})
     assert manager.available_tools(_private_event()) == ()
     with pytest.raises(RuntimeError, match="configuration changed"):
         async with manager.open_queued_session(job):
             pytest.fail("a disabled tool must not open")
+
+
+async def test_memory_embedding_service_uses_explicit_runtime_catalog(chat_plugin):
+    """显式模型与目录一起装配语义检索，留空模型保留标签检索。"""
+    from unittest.mock import Mock
+
+    from agent_bot.memory.retrieval import HybridMemorySearch
+    from agent_bot.services.tool_sessions import ToolSessionStore
+
+    config = chat_plugin.plugin_config.model_copy(update={
+        "chat_mcp_enabled": True, "chat_memory_embedding_model": "embed-explicit",
+    })
+    sessions = ToolSessionStore(ttl_seconds=30, max_sessions=3)
+    catalog = object()
+    manager = ChatToolSessionManager(
+        config_provider=lambda: config, store_provider=lambda: sessions,
+        naraka_service_provider=lambda: None,
+        group_member_refresher=lambda _bot, _group: None,
+        memory_store_provider=lambda: Mock(), catalog_provider=lambda: catalog,
+    )
+    async with manager.open_chat_session(Mock(self_id="90001"), _private_event(), "test") as lease:
+        context = await sessions.resolve(lease.token)
+        search = context.memory_session.semantic_search
+        assert isinstance(search, HybridMemorySearch)
+        assert search._embedder._catalog is catalog
+        assert search._embedder._model_alias == "embed-explicit"
+    config = config.model_copy(update={"chat_memory_embedding_model": ""})
+    async with manager.open_chat_session(Mock(self_id="90001"), _private_event(), "test") as lease:
+        assert (await sessions.resolve(lease.token)).memory_session.semantic_search is None
 
 
 @pytest.mark.parametrize("configured,mcp", [(True, True), (False, True), (True, False)])

@@ -17,6 +17,7 @@ from agent_bot.integrations.gpt_sovits import GptSoVitsClient
 from agent_bot.integrations.naraka import NarakaClient
 from agent_bot.integrations.onebot.auto_speak import AutoSpeakBot, AutoSpeakService
 from agent_bot.media.resources import MediaResources
+from agent_bot.memory.summary_filter import MemorySummaryFilter
 from agent_bot.memory_store import (
     GroupContextPolicy,
     MySqlRecentGroupContextStore,
@@ -125,6 +126,7 @@ def build_runtime_state(
             database,
             policy=conversation_policy,
             connect=database_pool.connect,
+            summary_filter=MemorySummaryFilter(),
         )
     )
     group_context_policy = GroupContextPolicy(
@@ -158,6 +160,7 @@ def build_runtime_state(
         memory_compression_queue_capacity=config.chat_memory_compression_queue_capacity,
         sent_messages=sent_messages,
         session_delivery=session_delivery,
+        session_secret=session_secret,
     )
     message_counter = MessageCounter(
         limit=config.chat_user_message_limit,

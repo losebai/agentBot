@@ -5,9 +5,10 @@ import type { AiModel, Page } from '../ai-types';
 
 export const modelSettingNames = new Set([
   'chat_model', 'chat_vision_model', 'chat_image_model', 'chat_tts_model',
+  'chat_memory_embedding_model',
 ]);
 
-/** 四个配置字段共享目录，只在模型设置可见时读取；分类切换和凭据变化取消旧请求。 */
+/** 模型配置字段共享目录，只在模型设置可见时读取；分类切换和凭据变化取消旧请求。 */
 export function useSettingsModels(token: string, enabled: boolean) {
   const api = useMemo(() => new AiApi(token), [token]);
   const [page, setPage] = useState<Page<AiModel>>({ items: [], next_cursor: null });

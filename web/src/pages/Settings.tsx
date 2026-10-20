@@ -216,11 +216,14 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
           });
         };
         const id = `setting-${field.name}`;
+        // 向量模型用空字符串表示未配置，允许清空选择，但不将服务端字符串字段改成 null。
+        const modelCanClear = field.nullable || field.name === 'chat_memory_embedding_model';
         return <div className="setting-row" key={field.name}>
           <div className="setting-description"><label htmlFor={id}>{field.description}</label>{field.restart_required && <Tag>重启生效</Tag>}<code>{field.name}</code></div>
           <div className="setting-control">
             {modelSettingNames.has(field.name) ? <SettingsModelSelect id={id} value={String(value)}
-              readOnly={readOnly} nullable={field.nullable} directory={models} onChange={change} />
+              readOnly={readOnly} nullable={modelCanClear}
+              directory={models} onChange={change} />
               : field.name === 'nickname' ? <Input.TextArea id={id} disabled={readOnly}
               value={String(value)} placeholder="每行填写一个名称或别名，如：桃桃"
               autoSize={{minRows: 2, maxRows: 6}} onChange={event => change(event.target.value)} />

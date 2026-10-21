@@ -855,7 +855,9 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_group_recent_context_max_chars": "当前群最近文本最大字符数",
     "chat_group_recent_context_ttl_seconds": "当前群最近文本存活时间 (秒)",
     "chat_memory_enabled": "是否启用会话心智记忆与自动压缩",
-    "chat_memory_embedding_model": "长期记忆 Embedding 模型 (供应商 / 模型)，留空禁用语义召回",
+    "chat_memory_embedding_model": (
+        "长期记忆 Embedding 模型 (供应商 / 模型)，留空使用本地关键词检索"
+    ),
     "chat_tagged_memory_enabled": "是否启用由 LLM 自主存取的标签记忆工具",
     "chat_memory_max_chars": "单会话心智记忆最大字符数",
     "chat_memory_compression_max_tokens": "记忆压缩最大生成 Token 数",

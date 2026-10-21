@@ -380,7 +380,7 @@ async def test_search_returns_at_most_eight_authorized_current_facts(index):
 
 
 async def test_memory_session_limits_semantic_queries_without_blocking_tags(index):
-    """单轮最多两次付费语义检索，标签目录不消耗语义额度。"""
+    """单轮最多两次付费语义检索，之后用关键词兜底，标签目录不消耗额度。"""
     from agent_bot.services.tagged_memory import (
         MemoryArguments,
         MemoryIdentity,
@@ -416,8 +416,9 @@ async def test_memory_session_limits_semantic_queries_without_blocking_tags(inde
     for _ in range(2):
         result = await session.execute(MemoryArguments(action="recall", query="甜点"))
         assert result.mode == "hybrid"
-    with pytest.raises(ValueError, match=r"semantic.*limit"):
-        await session.execute(MemoryArguments(action="recall", query="甜点"))
+    fallback = await session.execute(MemoryArguments(action="recall", query="甜点"))
+    assert fallback.mode == "lexical"
+    assert fallback.fallback_reason == "semantic_budget_exhausted"
     assert (await session.execute(MemoryArguments(action="tags"))).status == "tags"
 
 

@@ -67,6 +67,28 @@ def _source_support(kind: str, source: str) -> float:
     return weights.get(source, 0.0)
 
 
+def lexical_recall(query: str, candidates: list[dict]) -> list[dict]:
+    """仅用正文、主题和标签的实际词项命中兜底，元信息不能引入无关事实。"""
+    query_terms = _terms(query)
+    if not query_terms:
+        return []
+    ranked = []
+    for row in candidates:
+        terms = _terms(" ".join([row["content"], row.get("topic", ""), *row.get("tags", [])]))
+        matches = query_terms & terms
+        if not matches:
+            continue
+        relevance = len(matches) / len(query_terms)
+        importance = max(0.0, min(1.0, float(row.get("importance", 0.5))))
+        score = (
+            0.85 * relevance + 0.07 * importance
+            + 0.05 * _source_support(row.get("kind", "fact"), row.get("source_kind", ""))
+            + 0.03 * _recency(row.get("last_used_at"))
+        )
+        ranked.append({**row, "relevance": relevance, "score": score})
+    return sorted(ranked, key=lambda row: (-row["score"], row["id"]))[:8]
+
+
 class HybridMemorySearch:
     """先过滤授权有效版本，再合并语义和词项两路，元信息仅参与相关项排序。"""
 

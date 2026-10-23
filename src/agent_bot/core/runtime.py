@@ -127,7 +127,6 @@ def build_core_state(
         media_service=media_service,
         agent_code=config.chat_python_agent_code,
         agent_max_steps=config.chat_agent_max_steps,
-        web_search_max_steps=config.chat_web_search_max_steps,
         agent_service=AgentService(
             agent_catalog,
             AgentRunStore(
@@ -166,6 +165,7 @@ def build_core_state(
             material_store=media_resources.materials if media_resources else None,
             image_downloader=QQImageDownloader(remaining=lambda: remaining_timeout(15)),
             maximum_images=config.chat_max_images_per_message,
+            maximum_tool_calls=config.chat_agent_max_steps,
         ),
         job_service=JobService(job_store, python_service),
     )

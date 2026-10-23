@@ -81,6 +81,7 @@ def check(path: Path) -> None:
             "agent_bot/resources/sdxl_lightning_4step_api.json",
             "agent_bot/resources/minimax_h3_r2v_upscale2x_api.json",
             "agent_bot/resources/minimax_h3_r2v_ultrasharp1080p_api.json",
+            "agent_bot/resources/minimax_h3_r2v_ultrasharp720p_api.json",
             "agent_bot/resources/h3_frame_upscale.py",
             "agent_bot/resources/h3_temporal_consistency.py",
             "agent_bot/resources/minimax_h3_video_guide.md",

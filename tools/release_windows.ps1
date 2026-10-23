@@ -1,0 +1,92 @@
+﻿# 一键构建 Windows 发布版并部署下载站；不升级数据库，不修改项目版本或启动配置。
+param(
+    [string]$Server = 'root@192.168.1.5',
+    [string]$RemoteDirectory = '/www/public/agentbot',
+    [string]$BaseUrl = 'https://public.loserbai.cn/agentbot',
+    [string]$NapCatPayloadDirectory = 'runtime/napcat',
+    [string]$IsccPath = $env:ISCC_PATH,
+    [switch]$BuildOnly,
+    [switch]$SkipTests
+)
+
+$ErrorActionPreference = 'Stop'
+$repoRoot = Split-Path -Parent $PSScriptRoot
+
+function Invoke-ReleaseStep {
+    # 外部命令失败立即终止，不能把旧安装器或半成品继续上传。
+    param([string]$Label, [scriptblock]$Action)
+    Write-Host "`n$Label"
+    & $Action
+    if ($LASTEXITCODE -ne 0) { throw "$Label failed (exit $LASTEXITCODE)." }
+}
+
+Push-Location $repoRoot
+try {
+    foreach ($command in @('uv', 'npm.cmd')) {
+        Get-Command $command -ErrorAction Stop | Out-Null
+    }
+    if (-not $BuildOnly) {
+        foreach ($command in @('ssh', 'scp')) {
+            Get-Command $command -ErrorAction Stop | Out-Null
+        }
+    }
+    # 仅读取项目版本；明确核对相关版本，避免替换同号第三方依赖。
+    $version = & uv run --no-project --python 3.12 python tools/windows_release.py version $repoRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Release version validation failed.' }
+    $version = $version.Trim()
+    if (-not $BuildOnly) {
+        Invoke-ReleaseStep 'Check public version' {
+            uv run --no-project --python 3.12 python tools/windows_release.py check-version $BaseUrl $version
+        }
+    }
+    Invoke-ReleaseStep 'Check packaging inputs' {
+        uv run --no-project --python 3.12 python tools/ci/check_build_inputs.py
+    }
+    Invoke-ReleaseStep 'Install locked development dependencies' {
+        uv sync --locked --extra dev --python 3.12
+    }
+    Invoke-ReleaseStep 'Python lint' { uv run --no-sync ruff check . }
+    if (-not $SkipTests) {
+        Invoke-ReleaseStep 'Offline backend tests' {
+            uv run --no-sync pytest -m 'not e2e' -k 'not database_onebot_token_reaches_adapter_without_log_disclosure' --allow-hosts=127.0.0.1,::1
+        }
+        Invoke-ReleaseStep 'Install frontend test dependencies' { npm.cmd --prefix web ci }
+        Invoke-ReleaseStep 'Frontend tests' {
+            npm.cmd --prefix web test -- --run --maxWorkers=1 --testTimeout=20000
+        }
+    } else {
+        Write-Warning 'Tests explicitly skipped; package and startup checks remain enabled.'
+    }
+    if (-not $IsccPath -and (Test-Path -LiteralPath 'build/ci-tools/inno/ISCC.exe')) {
+        $IsccPath = (Resolve-Path -LiteralPath 'build/ci-tools/inno/ISCC.exe').Path
+    }
+    $output = "dist/windows-release-$version"
+    $stage = "$output/installer"
+    Invoke-ReleaseStep 'Build frontend, Windows bundle and installer' {
+        & "$PSScriptRoot/build_windows.ps1" -OutputDirectory $output -BuildInstaller `
+            -NapCatPayloadDirectory $NapCatPayloadDirectory -IsccPath $IsccPath
+    }
+    Invoke-ReleaseStep 'Build wheel and source archive' {
+        uv build --out-dir "dist/release-$version"
+    }
+    Invoke-ReleaseStep 'Check wheel contents' {
+        uv run --no-sync python tools/check_package.py "dist/release-$version/agent_bot-$version-py3-none-any.whl"
+    }
+    Invoke-ReleaseStep 'Check frozen CLI and API' {
+        uv run --no-sync python tools/check_windows.py "$output/AgentBot"
+    }
+    Invoke-ReleaseStep 'Check zero-config startup' {
+        uv run --no-sync python tools/check_windows.py "$output/AgentBot" --first-run
+    }
+    Invoke-ReleaseStep 'Collect SQL, migration tools and checksums' {
+        uv run --no-sync python tools/windows_release.py prepare $repoRoot $stage $version
+    }
+    if (-not $BuildOnly) {
+        Invoke-ReleaseStep 'Upload, activate and verify public downloads' {
+            uv run --no-sync python tools/windows_release.py publish $stage $Server $RemoteDirectory $BaseUrl $version
+        }
+    }
+    Write-Host "Release $version ready: $repoRoot/$stage"
+} finally {
+    Pop-Location
+}

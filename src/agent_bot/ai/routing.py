@@ -283,7 +283,8 @@ class RoutingAiClient:
                         messages or (ChatMessage(role="user", content=prompt),), chat_context
                     ),
                     mcp_services=services,
-                    max_steps=self.agent_max_steps if use_agent else self.web_search_max_steps,
+                    # 普通聊天与联网工具共用设置预算，不再读取旧联网轮次字段。
+                    max_steps=self.agent_max_steps,
                     options=request_options or self.default_options,
                     timeout_seconds=self.timeout_seconds,
                 )

@@ -53,7 +53,8 @@ class AgentCreate(CodedItem):
     skill_ids: tuple[int, ...] = Field(default=(), max_length=256)
     tools: tuple[str, ...] = Field(default=(), max_length=256)
     mcp_ids: tuple[int, ...] = Field(default=(), max_length=3)
-    max_steps: int = Field(default=3, ge=1, le=5)
+    # 历史数据库兼容字段；执行预算统一来自机器人配置，不再读取预设轮次。
+    max_steps: int = Field(default=3, ge=1)
     options: LlmRequestOptions = Field(default_factory=LlmRequestOptions)
 
     @field_validator("skill_ids", "tools", "mcp_ids")
@@ -175,7 +176,8 @@ class AgentRequest(AiModel):
     request_id: str = Field(min_length=1, max_length=256)
     tools: tuple[str, ...] | None = Field(default=None, max_length=256)
     mcp_services: tuple[str, ...] | None = Field(default=None, max_length=3)
-    max_steps: int | None = Field(default=None, ge=1, le=5)
+    # 旧请求字段现在按实际工具调用计数，只能收紧运行配置预算。
+    max_steps: int | None = Field(default=None, ge=1)
     options: LlmRequestOptions = Field(default_factory=LlmRequestOptions)
     timeout_seconds: float = Field(default=300, gt=0, le=3600, allow_inf_nan=False)
 
@@ -292,8 +294,10 @@ class AgentModelCall(AiModel):
 
 
 class ModelTurn(AiModel):
+    """模型单轮结果；调用数量由运行配置控制，不在协议层写死。"""
+
     content: str = ""
-    calls: tuple[ToolCall, ...] = Field(default=(), max_length=8)
+    calls: tuple[ToolCall, ...] = ()
     model: str = Field(min_length=1, max_length=255)
     usage: TokenUsage = Field(default_factory=TokenUsage)
     continuation: tuple[dict, ...] = Field(default=(), exclude=True, repr=False)
@@ -419,7 +423,7 @@ class StepWrite(AiModel):
 
     execution_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     sequence: int = Field(ge=1)
-    turn: int = Field(ge=0, le=6)
+    turn: int = Field(ge=0)
     kind: str = Field(max_length=32)
     tool: str | None = Field(default=None, max_length=200)
     call_id: str | None = Field(default=None, max_length=256)

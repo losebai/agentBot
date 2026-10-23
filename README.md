@@ -18,6 +18,15 @@
 
 ## Windows 一键安装
 
+维护者构建并发布到下载站：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1
+```
+
+脚本读取项目版本，完成测试、安装器与 SQL 包构建、上传校验及公网验证。
+发布前同步版本号并提供该版本升级说明；参数与环境要求见 [发布说明](deploy/README.md#一键构建并发布)。
+
 当前 Windows 发布版本：**0.5.5**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。
 
@@ -249,9 +258,9 @@ QQ 当前上下文统一保存在 `chat_session_context`，每个 `session_id` �
 
 1. 完成供应商和模型登记，选择支持原生工具调用的模型。
 2. 按需在“MCP 服务”登记 Streamable HTTP 或 SSE 地址、工具白名单和访问令牌。网页搜索使用 `search` 分类并填写搜索工具名称；`read_url` 只读取公网网页。搜索 MCP 代码不再提供管理设置入口，已有搜索绑定保留。
-3. 按需创建 Skill，再创建 Agent，选择模型、内置工具和 Skill。Agent 可关联最多 3 个通用 MCP 服务，连接后自动向模型提供服务白名单内的工具，无需在 Agent 中逐个勾选；MCP 白名单为 `*` 时提供服务返回的全部工具。白名单筛选后所有服务合计最多 32 个 MCP 工具，超限时明确报错；工具轮次预算为 1–5，Skill 所需的内置工具也必须在 Agent 中授权。
+3. 按需创建 Skill，再创建 Agent，选择模型、内置工具和 Skill。Agent 可关联最多 3 个通用 MCP 服务，连接后自动向模型提供服务白名单内的工具，无需在 Agent 中逐个勾选；MCP 白名单为 `*` 时提供服务返回的全部工具。白名单筛选后所有服务合计最多 32 个 MCP 工具，超限时明确报错；Skill 所需的内置工具也必须在 Agent 中授权。工具调用次数统一在“机器人配置 → LLM设置”调整，默认 5 次，可填写任意正整数或清空为不限次数；不再受单轮 8 次、整次 40 次、最多 5 轮等固定调用预算限制，请求超时与权限校验仍生效。批量调用按每个工具请求计数，参数校验失败也占用预算；超出预算的项返回未执行结果，并进入最终回答。
 4. 在“对话测试 → Agent 对话”选择 Agent；执行步骤和结果可在“会话记录 → Agent 运行记录”查看。
-5. 在“机器人配置 → LLM设置”通过下拉框选择聊天、图片理解、图片生成和语音模型，只展示已启用模型，多个用途可以重复选择同一模型。此处还可设置默认 Agent 预设代码 `chat_python_agent_code`、工具轮次、通用 MCP 服务 `chat_mcp_services`、联网搜索和群成员 @ 工具授权。Agent 管理页只维护预设，运行字段集中在机器人配置；保存沿用配置版本校验和热刷新，分类切换保留草稿。预设代码留空时仍走 Agent，使用当前 Chat 模型、提示词和预算。旧 `chat_agent_enabled` 开关已移除，数据库中的历史值不再生效，下次保存配置时清理；不需要 SQL 结构迁移。每个 MCP 服务独立保存地址与令牌，编辑令牌留空保留、明确清除才删除，保存后新请求立即使用新配置。
+5. 在“机器人配置 → LLM设置”通过下拉框选择聊天、图片理解、图片生成和语音模型，只展示已启用模型，多个用途可以重复选择同一模型。此处还可设置默认 Agent 预设代码 `chat_python_agent_code`、工具调用次数 `chat_agent_max_steps`、通用 MCP 服务 `chat_mcp_services`、联网搜索和群成员 @ 工具授权。Agent 管理页只维护预设，运行字段集中在机器人配置；保存沿用配置版本校验和热刷新，分类切换保留草稿。预设代码留空时仍走 Agent，使用当前 Chat 模型、提示词和预算。旧预设字段 `max_steps` 和旧联网字段 `chat_web_search_max_steps` 保留兼容读取但不再决定执行预算，QQ 和管理页聊天均服从统一设置；旧设置中的正整数现在按调用次数计数，已保存的 null 表示不限次数。旧 `chat_agent_enabled` 开关已移除，数据库中的历史值不再生效，下次保存配置时清理；不需要 SQL 结构迁移。每个 MCP 服务独立保存地址与令牌，编辑令牌留空保留、明确清除才删除，保存后新请求立即使用新配置。
 
 在 MCP 服务编辑页点击“获取全部工具”，可读取已保存连接的完整工具列表并逐项启用、关闭，也可启用全部或关闭全部。开关修改在“保存 MCP”后更新工具白名单，空集合表示关闭全部工具，执行时不再连接该服务；获取列表本身不会执行工具或修改配置。搜索服务必须保留已指定的搜索工具。新增服务或修改连接地址、协议、令牌后，先保存再获取列表。
 
@@ -302,7 +311,7 @@ ComfyUI 工作流需要配置 `chat_local_workflow_*` 并启用本地工作流�
 
 “同步配置目录”读取机器人服务所在机器当前生效的 `CHAT_LOCAL_WORKFLOW_DIRECTORY`，不会自动从远程 ComfyUI 拉取工作流。修改该启动目录后需要重启服务；未配置目录时仍可直接导入 JSON。同步新增记录或更新已有技术内容，保留管理员维护的名称、说明、附加提示词和启用状态，也不会删除目录中已移除文件对应的数据库记录。工作流存入当前选定的 MySQL 或 SQLite，后续绘图任务读取最新记录。
 
-H3 图生视频可导入 [`minimax_h3_r2v_ultrasharp1080p_api.json`](src/resources/minimax_h3_r2v_ultrasharp1080p_api.json)，或同步受支持的平铺 H3 画布。导入后明确启用，并在目标 Agent 中授权 `local_workflow_list` 和 `local_workflow_generate_video`；不会自动给已有 Agent 添加权限，也不能把视频设为默认生图工作流。当前清晰增强模板生成 8 秒音视频，使用 UltraSharp 超分和相邻三帧光流时序降噪，输出 1080×1920；ComfyUI 需安装配套 `h3_frame_upscale.py`、`h3_temporal_consistency.py` 节点及本地 RAFT-small 权重。旧两倍超分模板仍保留。视频保存在媒体目录，QQ 后台任务和发送重试只持有附件引用；管理端支持认证播放和下载。视频上限为 100 MiB，图片仍为 10 MiB。长耗时设备需要显式调整 Comfy、管理端或队列预算，详见 [H3 部署说明](src/resources/minimax_h3_video_guide.md)。
+H3 图生视频可导入 [`minimax_h3_r2v_ultrasharp720p_api.json`](src/resources/minimax_h3_r2v_ultrasharp720p_api.json)，或同步受支持的平铺 H3 画布。导入后明确启用，并在目标 Agent 中授权 `local_workflow_list` 和 `local_workflow_generate_video`；不会自动给已有 Agent 添加权限，也不能把视频设为默认生图工作流。当前模板按时序一致性优先：原始帧可选降噪、相邻三帧 RAFT 融合、保守超分、可选轻锐化，输出 720×1280、8 秒音视频；降噪和额外锐化默认关闭，模型增强只混入 35%。ComfyUI 需安装配套 `h3_frame_upscale.py`、`h3_temporal_consistency.py` 及本地模型。历史 1080p 和两倍模板仍保留。视频保存在媒体目录，QQ 后台任务和发送重试只持有附件引用；管理端支持认证播放和下载。视频上限为 100 MiB，图片仍为 10 MiB。长耗时设备需要显式调整 Comfy、管理端或队列预算，详见 [H3 部署说明](src/resources/minimax_h3_video_guide.md)。
 
 QQ 绘图任务允许持久化排队：当前绘图名额用满或队列正在恢复时，后续请求仍可保存到所选 SQLite 或 Redis 队列，等待空闲名额后执行。`chat_queue_media_workers` 只限制同时执行数量，队列容量、取消和任务有效期仍按原规则执行；普通聊天并发满额仍立即拒绝。
 

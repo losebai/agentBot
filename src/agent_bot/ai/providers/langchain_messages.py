@@ -78,7 +78,7 @@ def to_langchain_messages(messages: tuple[TurnMessage, ...]) -> list[BaseMessage
 
 
 def to_model_turn(message: AIMessage, call: AgentModelCall) -> ModelTurn:
-    """只取可见文本及已完整解析的工具调用，拒绝 SDK 容忍的非法参数。"""
+    """校验文本和工具协议，调用次数由执行层配置控制，不在协议转换时截断。"""
     if message.invalid_tool_calls:
         raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
     for raw in message.additional_kwargs.get("tool_calls", []):
@@ -97,7 +97,6 @@ def to_model_turn(message: AIMessage, call: AgentModelCall) -> ModelTurn:
     text = str(message.text)
     if (
         len(text.encode()) > 1048576
-        or len(calls) > 8
         or len({item.call_id for item in calls}) != len(calls)
         or (call.final_only and calls)
         or (not calls and not text.strip())

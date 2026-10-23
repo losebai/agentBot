@@ -7,7 +7,7 @@ import { AgentModelSelect } from '../components/AgentModelSelect';
 import { AgentToolSelects } from '../components/AgentToolSelects';
 import { DirectoryEditor } from '../components/DirectoryEditor';
 
-const empty:AgentDraft={name:'',code:'',description:'',enabled:false,model_id:0,vision_model_id:null,fallback_model_id:null,system_prompt:'',tools:[],skill_ids:[],mcp_ids:[],max_steps:3,options:{}};
+const empty:AgentDraft={name:'',code:'',description:'',enabled:false,model_id:0,vision_model_id:null,fallback_model_id:null,system_prompt:'',tools:[],skill_ids:[],mcp_ids:[],options:{}};
 /** 管理消息模型路由及显式错误接管；工具和 MCP 权限不因模型切换扩大。 */
 export function Agents({token}:{token:string}) {
   const api=useMemo(()=>new AgentApi(token),[token]);
@@ -26,7 +26,8 @@ export function Agents({token}:{token:string}) {
       onVisionChange={vision_model_id=>set(previous=>({...previous,vision_model_id}))}
       onFallbackChange={fallback_model_id=>set(previous=>({...previous,fallback_model_id}))}/>
     <label>系统提示词<textarea rows={7} maxLength={32000} value={draft.system_prompt} onChange={e=>set({...draft,system_prompt:e.target.value})}/></label>
-    <label>工具轮次<input type="number" required min={1} max={5} value={draft.max_steps} onChange={e=>set({...draft,max_steps:Number(e.target.value)})}/></label>
+    {/* 次数预算统一由机器人配置管理，预设不再设置独立轮次。 */}
+    <Alert type="info" message="工具调用次数在“机器人配置 → LLM设置”中统一调整。"/>
     <AgentToolSelects token={token} tools={draft.tools} mcpIds={draft.mcp_ids}
       onToolsChange={tools=>set(previous=>({...previous,tools}))}
       onMcpsChange={mcp_ids=>set(previous=>({...previous,mcp_ids}))}/>

@@ -87,7 +87,7 @@ async def test_argument_preflight_records_failures_and_model_can_correct_within_
     service = service_for(agent_database, agent_params, tools=tools)
     service.providers["openai-chat"] = provider
     events = [event async for event in service.stream(
-        request().model_copy(update={"max_steps": 2}),
+        request().model_copy(update={"max_steps": 3}),
         ExecutionAuthority(entry=entry, allowed_tools=("lookup",)),
     )]
     assert events[-1].kind == "done"

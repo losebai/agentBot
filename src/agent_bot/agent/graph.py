@@ -196,10 +196,8 @@ def build_agent_graph(
         return await model_node(state, final_only=True)
 
     def validate_batch(state: AgentState) -> AgentState:
-        """先检查数量、ID 和权限；参数错误保留为工具反馈，整批都不能执行。"""
+        """整批检查 ID 和权限；参数错误保留为反馈，次数由执行节点按配置控制。"""
         calls = state["completed"].calls
-        if len(calls) > 8 or state.get("total", 0) + len(calls) > 40:
-            raise AgentError("AGENT_TOOL_LIMIT", status_code=422)
         seen = set(state.get("seen", set()))
         for call in calls:
             if call.call_id in seen:
@@ -226,7 +224,16 @@ def build_agent_graph(
             started = time.monotonic()
             result = state["rejections"].get(call.call_id)
             rejected = result is not None
-            if rejected:
+            exhausted = prepared.max_steps is not None and total >= prepared.max_steps
+            if exhausted:
+                # 超预算项必须补齐协议结果，但不能执行副作用或占用新的调用额度。
+                result = ToolResult(
+                    call_id=call.call_id, name=call.name, is_error=True,
+                    content='{"code":"AGENT_TOOL_LIMIT","message":"工具调用次数已达配置上限"}',
+                )
+                code, message = "AGENT_TOOL_LIMIT", "工具调用次数已达配置上限"
+                details = {"executed": False}
+            elif rejected:
                 error = json.loads(result.content)["error"]
                 code, message = error["code"], error["message"]
                 details = {"phase": "validation", "executed": False,
@@ -241,8 +248,9 @@ def build_agent_graph(
                 message = "工具执行失败" if result.is_error else "工具执行完成"
                 details = {}
             messages.append(TurnMessage(role="tool", tool_result=result))
-            # 被拒绝的请求也计入调用总量，不能通过反复填错参数绕过原有上限。
-            total += 1
+            # 参数错误同样占用预算，超预算且未执行的项只补齐协议结果。
+            if not exhausted:
+                total += 1
             await emit(
                 "tool_result",
                 turn,
@@ -250,7 +258,9 @@ def build_agent_graph(
                 call_id=call.call_id,
                 code=code,
                 message=message,
-                duration_ms=0 if rejected else int((time.monotonic() - started) * 1000),
+                duration_ms=(
+                    0 if rejected or exhausted else int((time.monotonic() - started) * 1000)
+                ),
                 arguments=call.arguments,
                 result={
                     **result.model_dump(),
@@ -276,10 +286,14 @@ def build_agent_graph(
         return "validate_batch" if state["completed"].calls else END
 
     def after_tools(state: AgentState) -> str:
-        """后台图片入队后结束，否则按轮数收尾；图递归上限仅防止错误连边。"""
+        """后台图片入队后结束，否则仅在配置的实际调用预算耗尽时收尾。"""
         if state.get("image_queued"):
             return END
-        return "finalize" if state["turn"] >= prepared.max_steps else "model"
+        return (
+            "finalize"
+            if prepared.max_steps is not None and state["total"] >= prepared.max_steps
+            else "model"
+        )
 
     graph = StateGraph(AgentState)
     graph.add_node("model", model_node)

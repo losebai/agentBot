@@ -136,6 +136,48 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_windows.ps1 -Bui
 
 ### Windows 一键安装下载站
 
+#### 一键构建并发布
+
+在 Windows 仓库根目录执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1
+```
+
+默认发布到 `root@192.168.1.5:/www/public/agentbot`，公开入口为
+`https://public.loserbai.cn/agentbot/`。需要 Python 3.12、uv、Node.js 22、OpenSSH、
+Inno Setup 6，以及已准备并验证的 `runtime/napcat` Shell 载荷；SSH 使用既有密钥认证。
+下载站服务器需安装 Python 3.9 或更新版本，用于上传后校验与切换清单。
+编译器优先使用显式 `-IsccPath` 或 `ISCC_PATH`，其次使用本机已有的
+`build/ci-tools/inno/ISCC.exe`，否则沿用标准安装位置或 PATH。
+
+发布前同步 `pyproject.toml`、`src/agent_bot/__init__.py`、`web/package.json`、
+`web/package-lock.json` 和 `uv.lock` 中的项目版本；不要替换第三方依赖的同号版本。
+同时提供 `sql/UPGRADE-<版本>.md`，说明升级起点、顺序及数据影响。
+被 Git 忽略的 SQL 仍是构建输入，缺少时须先恢复相应完整与增量脚本。
+服务器版本必须低于待发布版本，同版本覆盖及降级发布均明确拒绝。
+
+脚本默认运行 Ruff、完整离线后端测试与前端测试，再构建前端、双入口 Windows 包、
+安装器、wheel 和源码包；随后检查 wheel、隔离启动与管理 API。
+SQL 下载包包含完整 SQL、增量、升级说明及 `tools/migrate_*.py`。
+上传独立暂存目录后先核对全部 SHA256，保留旧清单和校验文件备份，最后原子切换 `latest.json`；
+公网完整下载核验通过后才报告成功。若切换后的公网核验失败，命令返回失败，
+站点保留已经切换的新版本，须检查网络与下载文件。
+不执行数据库迁移，不修改 `.env`、密钥、业务数据或 Git 提交，也不升级服务器上的 Web 容器。
+
+```powershell
+# 仅在本地构建与校验，不连接服务器。
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -BuildOnly
+
+# 已单独完成测试时显式跳过测试；仍保留构建、包检查和隔离启动检查。
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -SkipTests
+
+# 显式指定编译器或更换服务器、目录和公网入口。
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -IsccPath 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' -Server root@192.168.1.5 -RemoteDirectory /www/public/agentbot -BaseUrl https://public.loserbai.cn/agentbot
+```
+
+默认产物保存在 `dist/windows-release-<版本>/installer/`，Python 包位于 `dist/release-<版本>/`。
+
 `https://public.loserbai.cn/agentbot/` 使用服务器 `192.168.1.5` 的
 `/www/public/agentbot/` 静态目录，沿用现有下载站。该目录发布安装器、校验文件、
 版本清单、安装脚本、版本化 SQL 包、升级说明及同版 wheel，不上传配置、数据库、日志或媒体。

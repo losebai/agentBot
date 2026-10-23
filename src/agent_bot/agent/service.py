@@ -1,4 +1,4 @@
-"""智能体执行配额、配置快照、输入租约、取消和尽力保存的记录。"""
+"""智能体运行配置预算、配置快照、输入租约、取消和尽力保存的记录。"""
 
 import asyncio
 import time
@@ -51,14 +51,16 @@ class AgentService:
         material_store=None,
         image_downloader=None,
         maximum_images=4,
+        maximum_tool_calls: int | None = None,
     ):
-        """注入媒体边界以便离线验证，不在构造时下载或读文件。"""
+        """注入运行配置调用预算和媒体边界，不在构造时下载或读文件。"""
         self.catalog, self.records, self.credentials = catalog, records, model_credentials
         self.providers, self.tool_runtime, self.search_code = providers, tool_runtime, search_code
         self.active = 0
         self.media_store, self.image_downloader = media_store, image_downloader
         self.material_store = material_store
         self.maximum_images = min(maximum_images, 8)
+        self.maximum_tool_calls = maximum_tool_calls
 
     @property
     def active_requests(self) -> int:
@@ -113,9 +115,10 @@ class AgentService:
             has_images=has_images, timeout_seconds=request.timeout_seconds,
         )
         model, provider, credential = router.resolved, router.provider, router.credential
-        maximum = snapshot.agent.max_steps if snapshot.agent else 3
+        # 运行配置是统一预算来源，旧预设轮次不再限制请求；调用方仅可收紧预算。
+        maximum = self.maximum_tool_calls
         if request.max_steps is not None:
-            if snapshot.agent and request.max_steps > maximum:
+            if maximum is not None and request.max_steps > maximum:
                 raise AgentError("AGENT_TOOL_LIMIT", status_code=422)
             maximum = request.max_steps
         messages = [TurnMessage(role=m.role, text=m.content) for m in request.messages]

@@ -107,13 +107,14 @@ class PluginConfig(BaseModel):
     chat_llm_stop: list[str] | None = None
     chat_llm_enable_thinking: bool | None = None
     chat_llm_forward_user_name: bool = False
-    # 显式设置时统一工具推理轮次；未设置时保留联网与画图的原有预算。
-    chat_agent_max_steps: int | None = Field(default=None, ge=1, le=5)
+    # 默认五次，可由设置任意调整；空值不限制次数，普通聊天与联网共用预算。
+    chat_agent_max_steps: int | None = Field(default=5, ge=1)
     # 仅保存本项目已登记的通用 MCP 服务 code，不接受端点或凭据。
     chat_mcp_services: list[str] = Field(default_factory=list, max_length=3)
     # 仅控制 Agent 是否挂载受限联网搜索工具。
     chat_web_search_enabled: bool = True
-    chat_web_search_max_steps: int = Field(default=3, ge=1, le=5)
+    # 历史配置兼容字段，不再作为联网工具的独立预算。
+    chat_web_search_max_steps: int = Field(default=3, ge=1)
     chat_image_recognition_enabled: bool = True
     chat_max_images_per_message: int = Field(default=4, ge=1, le=8)
     chat_image_generation_enabled: bool = False
@@ -803,7 +804,7 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_llm_stop": "LLM 停止序列",
     "chat_llm_enable_thinking": "是否启用模型深度思考",
     "chat_llm_forward_user_name": "是否额外发送当前 QQ 昵称元数据",
-    "chat_agent_max_steps": "普通聊天 Agent 最大工具推理轮次 (1-5，空值沿用原预算)",
+    "chat_agent_max_steps": "Agent 工具调用次数上限 (默认 5，留空不限次数)",
     "chat_mcp_services": "普通聊天可使用的通用 MCP 服务 code 列表",
     "chat_web_search_enabled": "是否为普通 QQ 对话启用受限搜索和网页读取",
     "chat_web_search_max_steps": "联网搜索 Agent 最大推理步数",

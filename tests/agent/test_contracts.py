@@ -23,7 +23,7 @@ def test_contract_limits_and_secret_exclusion():
 
 
 @pytest.mark.parametrize(
-    "patch", [{"max_steps": 0}, {"max_steps": 6}, {"tools": ("memory", "memory")}]
+    "patch", [{"max_steps": 0}, {"tools": ("memory", "memory")}]
 )
 def test_invalid_agent_limits(patch):
     with pytest.raises(ValidationError):

@@ -20,7 +20,7 @@ NATIVE_ONLY_STARTUP_SETTING_NAMES = frozenset({
     "agent_bot_napcat_mode", "agent_bot_napcat_webui_port",
 })
 # 仅移除管理设置入口；底层保留已有搜索绑定，编辑其他设置时不能将其清空。
-HIDDEN_SETTING_NAMES = frozenset({"chat_python_search_mcp_code"})
+HIDDEN_SETTING_NAMES = frozenset({"chat_python_search_mcp_code", "chat_web_search_max_steps"})
 
 
 class ApiModel(BaseModel):

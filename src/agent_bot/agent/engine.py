@@ -37,7 +37,8 @@ class PreparedRun:
     snapshot: AgentSnapshot
     authority: ExecutionAuthority
     call: AgentModelCall
-    max_steps: int
+    # 沿用内部字段名，含义为工具调用总次数；None 表示不限制次数。
+    max_steps: int | None
     media_scope: MediaScope | None = None
     images: tuple[ValidatedImage, ...] = ()
     model_router: AgentModelRouter | None = None
@@ -66,7 +67,8 @@ class AgentEngine:
                         graph.astream(
                             {},
                             stream_mode="custom",
-                            config={"recursion_limit": 4 * prepared.max_steps + 4},
+                            # 不让框架默认递归次数形成隐藏预算；超时与取消仍由服务管理。
+                            config={"recursion_limit": float("inf")},
                         )
                     ) as stream:
                         async for event in stream:

@@ -85,6 +85,7 @@ async def test_qq_precheck_uses_same_route_and_agent_model(
         plain,
         agent_service=agent,
         agent_code="helper",
+        agent_max_steps=1,
         timeout_seconds=30,
         default_options=LlmRequestOptions(),
         mcp_services=(),

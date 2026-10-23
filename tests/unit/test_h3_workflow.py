@@ -82,27 +82,32 @@ def test_current_flat_canvas_matches_portable_api():
     assert json.loads(definition.api_json) == expected
 
 
-def test_ultrasharp_template_uses_framewise_model_and_preserves_audio():
-    """1080p 模板在四倍模型后加入三帧时序处理，仍绑定原采样器与原音轨。"""
-    api_path = Path("src/resources/minimax_h3_r2v_ultrasharp1080p_api.json")
+def test_ultrasharp720p_template_fuses_before_upscale_and_preserves_audio():
+    """原始帧先可选降噪与 RAFT 融合，再超分至 720p 并轻微锐化，保留原音轨。"""
+    api_path = Path("src/resources/minimax_h3_r2v_ultrasharp720p_api.json")
     api = json.loads(api_path.read_text("utf-8"))
     definition = WorkflowCatalogImporter().parse_json("h3-ultrasharp.json", json.dumps(api))
     assert definition.workflow_type == "image_to_video" and definition.executable
     assert api["20"]["inputs"]["model_name"] == "4x-UltraSharp.safetensors"
     assert api["21"]["class_type"] == "H3FrameUpscaleToSize"
-    assert (api["21"]["inputs"]["width"], api["21"]["inputs"]["height"]) == (1080, 1920)
+    assert (api["21"]["inputs"]["width"], api["21"]["inputs"]["height"]) == (720, 1280)
+    assert api["21"]["inputs"]["image"] == ["23", 0]
+    assert api["21"]["inputs"]["sharpen_strength"] == 0.0
+    assert api["21"]["inputs"]["enhancement_strength"] == 0.35
     assert api["22"]["class_type"] == "H3RAFTSmallLoader"
     assert api["22"]["inputs"]["model_name"] == "raft_small_C_T_V2-01064c6d.pth"
     assert api["23"]["class_type"] == "H3TemporalConsistency"
-    assert api["23"]["inputs"]["images"] == ["21", 0]
+    assert api["23"]["inputs"]["images"] == ["24", 0]
     assert api["23"]["inputs"]["optical_flow"] == ["22", 0]
-    assert api["23"]["inputs"]["flow_scale"] == 0.5
-    assert api["23"]["inputs"]["luma_strength"] == 0.15
-    assert api["23"]["inputs"]["chroma_strength"] == 0.3
-    assert api["14"]["inputs"]["images"] == ["23", 0]
+    assert api["23"]["inputs"]["flow_scale"] == 1.0
+    assert api["23"]["inputs"]["luma_strength"] == 0.25
+    assert api["23"]["inputs"]["chroma_strength"] == 0.35
+    assert api["24"]["class_type"] == "H3FrameDenoise"
+    assert api["24"]["inputs"] == {"images": ["12", 0], "strength": 0.0}
+    assert api["14"]["inputs"]["images"] == ["21", 0]
     assert api["14"]["inputs"]["audio"] == ["13", 0]
     assert api["6"]["inputs"]["length"] == 192
-    ui_path = Path("workflows/minimax-h3/minimax_h3_r2v_ultrasharp1080p.json")
+    ui_path = Path("workflows/minimax-h3/minimax_h3_r2v_ultrasharp720p.json")
     ui = WorkflowCatalogImporter().parse_json("h3-ultrasharp.json", ui_path.read_text("utf-8"))
     assert json.loads(ui.api_json) == {
         key: {"class_type": value["class_type"], "inputs": value["inputs"]}

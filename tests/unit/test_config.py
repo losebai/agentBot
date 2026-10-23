@@ -82,7 +82,7 @@ def test_config_has_safe_operational_defaults() -> None:
     assert config.chat_llm_enable_thinking is None
     assert config.chat_llm_forward_user_name is False
     assert "chat_agent_enabled" not in config.model_dump()
-    assert config.chat_agent_max_steps is None
+    assert config.chat_agent_max_steps == 5
     assert config.chat_mcp_services == []
     assert config.chat_web_search_enabled is True
     assert config.chat_web_search_max_steps == 3
@@ -357,16 +357,16 @@ def test_llm_stop_sequences_reject_invalid_values(stop: list[str]) -> None:
 @pytest.mark.parametrize("field_name", [
     "chat_agent_max_steps", "chat_web_search_max_steps",
 ])
-@pytest.mark.parametrize("max_steps", [0, 6])
-def test_config_rejects_unbounded_agent_steps(field_name: str, max_steps: int) -> None:
-    """普通聊天和联网工具遵守相同的轮次上限。"""
+@pytest.mark.parametrize("max_steps", [0, -1])
+def test_config_rejects_nonpositive_agent_steps(field_name: str, max_steps: int) -> None:
+    """调用预算仍须为正整数，不再规定人为最大值。"""
     with pytest.raises(ValidationError):
         make_config(**{field_name: max_steps})
 
 
-@pytest.mark.parametrize("max_steps", [None, 1, 5])
+@pytest.mark.parametrize("max_steps", [None, 1, 5, 50, 10000])
 def test_chat_agent_accepts_optional_bounded_steps(max_steps: int | None) -> None:
-    """可清空覆盖值，也可选择范围内的推理轮次。"""
+    """调用次数可清空为无限制，也可设置超过旧硬上限的任意正整数。"""
     assert make_config(chat_agent_max_steps=max_steps).chat_agent_max_steps == (
         max_steps
     )

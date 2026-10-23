@@ -1,6 +1,12 @@
 # MiniMax H3 单图生成视频工作流
 
-## UltraSharp 1080p 清晰增强版
+## 720p 时序一致性优先版
+
+最新模板为 `minimax_h3_r2v_ultrasharp720p.json` 与 `minimax_h3_r2v_ultrasharp720p_api.json`。处理顺序为原始帧 → 可选轻度降噪 → RAFT 时序融合 → 保守超分 → 可选轻微锐化 → 输出，基础生成仍为 448×800、192 帧、24 FPS，最终输出 720×1280、8 秒并保留音轨。
+
+节点 24 降噪默认关闭；节点 23 在原始尺寸上计算光流，亮度/色彩融合强度 0.25/0.35；节点 21 将模型增强结果混入 35%，额外锐化默认关闭，可调少量强度。放大后的锐化在每帧收集之前完成，不额外保留整段副本。安装配套两个 Python 节点文件与本地模型后，刷新 ComfyUI 并重新打开工作流；部署与调参见下方说明。
+
+## 历史 UltraSharp 1080p 版本
 
 `minimax_h3_r2v_ultrasharp1080p.json` 与 `minimax_h3_r2v_ultrasharp1080p_api.json` 使用 4x-UltraSharp 逐帧恢复细节，再经 RAFT-small 光流对齐及轻度三帧时序降噪，最终输出 1080×1920、8 秒、24 FPS，并保留音轨。先四倍模型增强，再用 Lanczos 缩至目标尺寸，不在已经超分过的视频上继续叠加。
 
@@ -8,7 +14,7 @@
 
 ## 两倍版本
 
-`minimax_h3_r2v_upscale2x.json` 与 `minimax_h3_r2v_upscale2x_api.json` 是 test 实例当前工作流的可移植版本。采用已安装的 ref2va 主模型、首帧 Guide、448×800 基础生成、192 帧、24 FPS，并接入 RealESRGAN_x2plus 两倍超分，输出 896×1600、8 秒带声音的 MP4。节点字段以实际运行的 ComfyUI v0.37.0 为准。
+`minimax_h3_r2v_upscale2x.json` 与 `minimax_h3_r2v_upscale2x_api.json` 是此前 test 两倍超分方案的可移植版本。采用已安装的 ref2va 主模型、首帧 Guide、448×800 基础生成、192 帧、24 FPS，并接入 RealESRGAN_x2plus 两倍超分，输出 896×1600、8 秒带声音的 MP4。节点字段以实际运行的 ComfyUI v0.37.0 为准。
 
 机器人现已支持 `image_to_video` 类型和独立 `local_workflow_generate_video` 工具。将配套 API JSON 导入工作流管理，启用后给目标 Agent 显式授权“工作流列表”和“工作流生视频”。H3 不支持负向提示词，也不能作为默认生图工作流。部署预算、媒体存储和同步目录说明见 [`minimax_h3_video_guide.md`](../../src/resources/minimax_h3_video_guide.md)。
 

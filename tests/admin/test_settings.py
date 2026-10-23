@@ -73,6 +73,19 @@ def test_optional_secret_can_be_explicitly_cleared(admin_store, admin_runtime):
     assert admin_store.load().config.chat_naraka_default_role_id is None
 
 
+@pytest.mark.parametrize("maximum", [None, 5, 50, 10000])
+def test_tool_call_budget_can_be_saved_without_builtin_ceiling(
+    admin_store, admin_runtime, maximum,
+):
+    """设置持久化正整数或无限制，旧联网预算隐藏且不影响统一配置。"""
+    manager = service(admin_store, admin_runtime)
+    result = manager.update(update(1, chat_agent_max_steps=maximum))
+    fields = {item.name: item for item in result.fields}
+    assert fields["chat_agent_max_steps"].value == maximum
+    assert "chat_web_search_max_steps" not in fields
+    assert admin_store.load().config.chat_agent_max_steps == maximum
+
+
 def test_robot_system_prompt_can_be_explicitly_cleared(admin_store, admin_runtime):
     """管理页保存空提示词后，读取仍返回空值而不是初始默认文本。"""
     manager = service(admin_store, admin_runtime)

@@ -1,4 +1,4 @@
-"""通过真实执行图验证轮数、批次边界和取消资源释放。"""
+"""通过真实执行图验证调用次数预算、批次边界和取消资源释放。"""
 
 import asyncio
 from collections.abc import AsyncIterator
@@ -33,9 +33,22 @@ def prepared(rounds):
     )
 
 
-@pytest.mark.parametrize("rounds", [1, 3, 5])
-async def test_graph_runs_rounds_then_one_final_call(rounds):
-    """每轮八次工具调用，达到配置轮数后恰好进行一次收尾。"""
+def test_protocol_conversion_accepts_more_than_eight_calls():
+    """实际 LangChain 协议转换不能在执行预算检查之前拒绝较大的调用批次。"""
+    from langchain_core.messages import AIMessage
+
+    from agent_bot.ai.providers.langchain_messages import to_model_turn
+
+    message = AIMessage(content="", tool_calls=[
+        {"id": f"call-{i}", "name": "lookup", "args": {}} for i in range(12)
+    ])
+    turn = to_model_turn(message, model_call("openai-chat"))
+    assert len(turn.calls) == 12
+
+
+@pytest.mark.parametrize("rounds", [1, 3, 5, 50])
+async def test_graph_runs_configured_calls_then_one_final_call(rounds):
+    """按实际调用次数收尾，即使模型批量请求也不能超出配置预算。"""
     from agent_bot.agent.graph import build_agent_graph
     from agent_bot.agent.tools.langchain import LangChainTools
 
@@ -80,8 +93,8 @@ async def test_graph_runs_rounds_then_one_final_call(rounds):
             {}, stream_mode="custom", config={"recursion_limit": 4 * rounds + 4}
         )
     ]
-    assert len(invoked) == rounds * 8
-    assert len(model_calls) == rounds + 1 and model_calls[-1].final_only
+    assert len(invoked) == rounds
+    assert len(model_calls) == (rounds + 7) // 8 + 1 and model_calls[-1].final_only
     assert events[-1].kind == "done"
     assert [event.delta for event in events if event.kind == "text_delta"][-1] == "最终答案"
 

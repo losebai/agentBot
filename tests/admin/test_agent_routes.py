@@ -13,6 +13,8 @@ from .test_ai_routes import HEADERS, TOKEN
 @pytest.fixture
 async def agent_api(admin_store, admin_runtime, agent_database, agent_params, seeded_model):
     service = service_for(agent_database, agent_params)
+    # 替身模型只在 final_only 回答，预算来自运行配置而非旧预设。
+    service.maximum_tool_calls = 1
     await service.catalog.create_agent(
         AgentCreate(
             code="helper",

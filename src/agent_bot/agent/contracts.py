@@ -177,7 +177,7 @@ class AgentRequest(AiModel):
     mcp_services: tuple[str, ...] | None = Field(default=None, max_length=3)
     max_steps: int | None = Field(default=None, ge=1, le=5)
     options: LlmRequestOptions = Field(default_factory=LlmRequestOptions)
-    timeout_seconds: float = Field(default=300, gt=0, le=300, allow_inf_nan=False)
+    timeout_seconds: float = Field(default=300, gt=0, le=3600, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_request(self):
@@ -287,7 +287,7 @@ class AgentModelCall(AiModel):
     messages: tuple[TurnMessage, ...]
     tools: tuple[ToolDefinition, ...] = ()
     options: LlmRequestOptions = Field(default_factory=LlmRequestOptions)
-    timeout_seconds: float = Field(gt=0, le=300, allow_inf_nan=False)
+    timeout_seconds: float = Field(gt=0, le=3600, allow_inf_nan=False)
     final_only: bool = False
 
 

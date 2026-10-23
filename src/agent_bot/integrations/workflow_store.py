@@ -523,7 +523,7 @@ class WorkflowStore:
                     if workflow_revision(current) != expected_revision:
                         raise WorkflowRevisionConflictError("workflow revision conflict")
                     candidate = replace(current, **values.model_dump(exclude_unset=True))
-                    if values.enabled is True:
+                    if values.enabled is True or candidate.workflow_type == "image_to_video":
                         validate_workflow_bindings(candidate)
                     cursor.execute(
                         f"UPDATE `{self._table}` SET display_name = %s, description = %s, "
@@ -763,7 +763,12 @@ def _row_to_definition(row: dict[str, Any]) -> WorkflowDefinition:
     if enabled not in {0, 1}:
         raise WorkflowStoreError("workflow database row is invalid")
     workflow_type = row.get("workflow_type", "text_to_image")
-    if workflow_type not in {"text_to_image", "image_to_image", "fixed_reference"} or any(
+    if workflow_type not in {
+        "text_to_image",
+        "image_to_image",
+        "fixed_reference",
+        "image_to_video",
+    } or any(
         not isinstance(row.get(name, "text"), str)
         for name in ("positive_input_name", "negative_input_name")
     ):

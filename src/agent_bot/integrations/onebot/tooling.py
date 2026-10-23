@@ -126,7 +126,13 @@ class ChatToolSessionManager:
             config.chat_local_workflow_enabled
             and self._workflow_service_provider() is not None
         ):
-            tools.extend(("local_workflow_list", "local_workflow_generate_image"))
+            tools.extend(
+                (
+                    "local_workflow_list",
+                    "local_workflow_generate_image",
+                    "local_workflow_generate_video",
+                )
+            )
         if self._image_tasks_provider() is not None:
             tools.extend(("local_workflow_tasks", "local_workflow_cancel"))
         if config.chat_tts_enabled and self._tts_service_provider() is not None:
@@ -151,7 +157,10 @@ class ChatToolSessionManager:
             yield ChatToolSessionLease(tools=(), token=None)
             return
 
-        workflow_enabled = bool({"image_generate", "local_workflow_generate_image"} & set(tools))
+        workflow_enabled = bool(
+            {"image_generate", "local_workflow_generate_image", "local_workflow_generate_video"}
+            & set(tools)
+        )
         collector = WorkflowImageCollector() if workflow_enabled else None
         speech_collector = SpeechCollector() if "tts_generate" in tools else None
 
@@ -241,7 +250,8 @@ class ChatToolSessionManager:
         bot = self.queued_bot(job.bot_id)
         group_id = int(job.group_id) if job.group_id is not None else None
         workflow_enabled = bool(
-            {"image_generate", "local_workflow_generate_image"} & set(job.chat_tools)
+            {"image_generate", "local_workflow_generate_image", "local_workflow_generate_video"}
+            & set(job.chat_tools)
         )
         collector = WorkflowImageCollector() if workflow_enabled else None
         speech_collector = (
@@ -299,7 +309,12 @@ class ChatToolSessionManager:
                 # 升级前 mention_member 已经发送的任务不得在恢复时再次发送。
                 previous = await context.operation_store.completed(job.job_id, "mention_member")
                 context.reply_collector.already_delivered = isinstance(previous, MentionEffect)
-            for tool in ("image_generate", "local_workflow_generate_image", "tts_generate"):
+            for tool in (
+                "image_generate",
+                "local_workflow_generate_image",
+                "local_workflow_generate_video",
+                "tts_generate",
+            ):
                 if tool in job.chat_tools:
                     saved = await context.operation_store.completed(job.job_id, tool)
                     if saved is not None:

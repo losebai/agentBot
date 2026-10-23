@@ -23,6 +23,7 @@ from agent_bot.services.image_task_context import active_image_task
 from agent_bot.services.request_deadline import remaining_timeout
 from agent_bot.services.workflow_execution import (
     GeneratedWorkflowImage,
+    GeneratedWorkflowVideo,
     WorkflowExecutionError,
 )
 from agent_bot.services.workflow_inputs import WorkflowInputImage
@@ -95,7 +96,7 @@ class ComfyWorkflowError(WorkflowExecutionError):
 
 
 class ComfyClient:
-    """提交完整 API 工作流并下载单张输出图片。"""
+    """提交受控 API 工作流，按明确媒体类型下载唯一图片或视频。"""
 
     def __init__(
         self,
@@ -108,7 +109,7 @@ class ComfyClient:
     ) -> None:
         """创建关闭代理、重定向和自动重试的异步客户端。"""
 
-        if not 10 <= timeout_seconds <= 500:
+        if not 10 <= timeout_seconds <= 3600:
             raise ValueError("Comfy timeout is invalid")
         if not 1 <= max_image_bytes <= 10_485_760:
             raise ValueError("Comfy image limit is invalid")
@@ -271,7 +272,8 @@ class ComfyClient:
         workflow: ApiWorkflow,
         *,
         output_node_id: str,
-    ) -> GeneratedWorkflowImage:
+        _video: bool = False,
+    ) -> GeneratedWorkflowImage | GeneratedWorkflowVideo:
         """执行一次工作流；`/prompt` 不重试，history 只轮询同一任务。"""
 
         started_at = time.monotonic()
@@ -321,9 +323,14 @@ class ComfyClient:
                 prompt_id,
                 output_node_id=output_node_id,
                 deadline=deadline,
+                _video=_video,
             )
             if execution is not None:
                 await execution.check_cancelled()
+            if _video:
+                from agent_bot.integrations.comfy_video import download_video
+
+                return await download_video(self, descriptor, deadline=deadline)
             return await self._download_image(descriptor, deadline=deadline)
         except ComfyWorkflowError as error:
             cause = type(error.__cause__).__name__ if error.__cause__ is not None else "-"
@@ -340,12 +347,19 @@ class ComfyClient:
             )
             raise
 
+    async def generate_video(
+        self, workflow: ApiWorkflow, *, output_node_id: str
+    ) -> GeneratedWorkflowVideo:
+        """复用单次提交、定点取消和总预算，输出改用 MP4 校验与独立大小上限。"""
+        return await self.generate(workflow, output_node_id=output_node_id, _video=True)
+
     async def _wait_for_image(
         self,
         prompt_id: str,
         *,
         output_node_id: str,
         deadline: float,
+        _video: bool = False,
     ) -> _ImageDescriptor:
         """在总超时内轮询单个 prompt 的 history。"""
 
@@ -386,18 +400,46 @@ class ComfyClient:
                     stage="history_response",
                     status_code=response.status_code,
                 ) from exc
+            if self._history_failed(payload, prompt_id=prompt_id):
+                raise ComfyWorkflowError("EXECUTION_FAILED", "本地工作流执行失败",
+                                         stage="workflow_execution")
+            if _video:
+                if not isinstance(payload, Mapping):
+                    raise ComfyWorkflowError(
+                        "INVALID_RESPONSE", "视频记录无效", stage="history_response"
+                    )
+                record = payload.get(prompt_id)
+                if record is None:
+                    await asyncio.sleep(self._poll_interval_seconds)
+                    continue
+                if not isinstance(record, Mapping):
+                    raise ComfyWorkflowError(
+                        "INVALID_RESPONSE", "视频记录无效", stage="history_response"
+                    )
+                status = record.get("status")
+                if not isinstance(status, Mapping):
+                    raise ComfyWorkflowError(
+                        "INVALID_RESPONSE", "视频状态无效", stage="history_response"
+                    )
+                if status.get("completed") is not True:
+                    await asyncio.sleep(self._poll_interval_seconds)
+                    continue
             descriptor = self._history_image(
                 payload,
                 prompt_id=prompt_id,
                 output_node_id=output_node_id,
             )
             if descriptor is not None:
+                if _video and (
+                    descriptor.type != "output" or not descriptor.filename.lower().endswith(".mp4")
+                ):
+                    raise ComfyWorkflowError(
+                        "INVALID_RESPONSE", "视频输出引用无效", stage="history_response"
+                    )
                 return descriptor
-            if self._history_failed(payload, prompt_id=prompt_id):
+            if _video:
                 raise ComfyWorkflowError(
-                    "EXECUTION_FAILED",
-                    "本地工作流执行失败",
-                    stage="workflow_execution",
+                    "INVALID_RESPONSE", "视频输出缺失", stage="history_response"
                 )
             await asyncio.sleep(self._poll_interval_seconds)
         raise ComfyWorkflowError(
@@ -556,6 +598,7 @@ def _validate_image_descriptor(descriptor: _ImageDescriptor) -> None:
         descriptor.filename in {".", ".."}
         or "/" in descriptor.filename
         or "\\" in descriptor.filename
+        or ":" in descriptor.filename
         or any(ord(character) < 32 for character in descriptor.filename)
     ):
         raise ComfyWorkflowError(
@@ -565,7 +608,7 @@ def _validate_image_descriptor(descriptor: _ImageDescriptor) -> None:
         )
     if descriptor.subfolder:
         normalized = descriptor.subfolder.replace("\\", "/")
-        if normalized.startswith("/") or any(
+        if normalized.startswith("/") or ":" in normalized or any(
             part in {"", ".", ".."} for part in normalized.split("/")
         ):
             raise ComfyWorkflowError(

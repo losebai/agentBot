@@ -21,7 +21,7 @@ class AgentProbeRequest(ApiModel):
     session_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
     max_steps: int | None = Field(default=None, ge=1, le=5)
-    timeout_seconds: float | None = Field(default=None, gt=0, le=300, allow_inf_nan=False)
+    timeout_seconds: float | None = Field(default=None, gt=0, le=3600, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def history(self):
@@ -43,9 +43,9 @@ class AgentChatProbe:
         self.runtime = runtime
 
     def request(self, body, request_id):
-        """生成可信会话前缀，附件归属由本地 Agent 服务验证。"""
+        """会话与附件归属来自服务端；长视频预算只沿用管理员明确配置的超时。"""
         config = self.runtime.config
-        timeout = min(config.chat_timeout_seconds, 300)
+        timeout = min(config.chat_timeout_seconds, 3600)
         if body.timeout_seconds is not None:
             if body.timeout_seconds > timeout:
                 raise AgentError("AGENT_TIMEOUT_INVALID", status_code=422)

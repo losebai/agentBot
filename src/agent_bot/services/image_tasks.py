@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Literal, Protocol
 from weakref import WeakValueDictionary
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent_bot.services.image_task_context import ImageTaskCancelled
 
@@ -43,6 +43,9 @@ class ImageTaskOwner(BaseModel):
 class ImageTask(BaseModel):
     """任务公开摘要，不返回提示词、服务地址或上游标识。"""
 
+    media_kind: Literal["image", "video"] = Field(
+        default="image", exclude_if=lambda value: value == "image"
+    )
     task_id: str
     created_at: float
     status: ImageTaskStatus = "queued"
@@ -181,6 +184,7 @@ class ImageTaskManager:
         job = entry.job
         await self.store.adopt(ImageTaskRecord(
             task_id=job.job_id, created_at=job.created_at, stream_id=entry.stream_id,
+            media_kind=job.workflow_request.output_kind if job.workflow_request else "image",
             owner=ImageTaskOwner(bot_id=job.bot_id, session_id=job.session_id, user_id=job.user_id),
             status="delivering" if state.result_ready else "queued",
             started=state.result_ready, delivered_parts=state.delivery_index,

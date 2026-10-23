@@ -1,5 +1,19 @@
 # MiniMax H3 单图生成视频工作流
 
+## UltraSharp 1080p 清晰增强版
+
+`minimax_h3_r2v_ultrasharp1080p.json` 与 `minimax_h3_r2v_ultrasharp1080p_api.json` 使用 4x-UltraSharp 逐帧恢复细节，再经 RAFT-small 光流对齐及轻度三帧时序降噪，最终输出 1080×1920、8 秒、24 FPS，并保留音轨。先四倍模型增强，再用 Lanczos 缩至目标尺寸，不在已经超分过的视频上继续叠加。
+
+需要将配套 `src/resources/h3_frame_upscale.py` 和 `src/resources/h3_temporal_consistency.py` 安装到 ComfyUI `custom_nodes/` 并重启实例。模型使用 `upscale_models/4x-UltraSharp.safetensors` 与 `optical_flow/raft_small_C_T_V2-01064c6d.pth`，节点执行不联网。逐帧节点复用 ComfyUI 原生分块与显存管理，成片帧采用半精度缓存。时序默认半尺寸光流、亮度强度 0.15、色彩强度 0.3，不改变帧率或音轨；两项强度设为 0 可跳过。部署步骤及模型来源见下方部署说明。该处理主要减少细节闪烁，不能保证修复原片的人体结构变化。
+
+## 两倍版本
+
+`minimax_h3_r2v_upscale2x.json` 与 `minimax_h3_r2v_upscale2x_api.json` 是 test 实例当前工作流的可移植版本。采用已安装的 ref2va 主模型、首帧 Guide、448×800 基础生成、192 帧、24 FPS，并接入 RealESRGAN_x2plus 两倍超分，输出 896×1600、8 秒带声音的 MP4。节点字段以实际运行的 ComfyUI v0.37.0 为准。
+
+机器人现已支持 `image_to_video` 类型和独立 `local_workflow_generate_video` 工具。将配套 API JSON 导入工作流管理，启用后给目标 Agent 显式授权“工作流列表”和“工作流生视频”。H3 不支持负向提示词，也不能作为默认生图工作流。部署预算、媒体存储和同步目录说明见 [`minimax_h3_video_guide.md`](../../src/resources/minimax_h3_video_guide.md)。
+
+以下是早期 fl2va 单图模板的设计记录，文件名为 `minimax_h3_i2v*`；其模型文件名与参数与当前 ref2va 模板不同。
+
 这是机器人接入前的工作流设计产物：画布用于 ComfyUI 手工检查，API 模板用于后续服务端适配。已做离线节点与连线核对，尚未在实际 ComfyUI、模型和显卡上运行。
 
 ## 文件与节点链路

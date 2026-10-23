@@ -9,8 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 EffectToolName = Literal[
     "outgoing_message",
     "image_generate",
-    "send_reply", "mention_member", "local_workflow_generate_image", "tts_generate",
-    "image_start_reply", "image_completion_reply",
+    "send_reply",
+    "mention_member",
+    "local_workflow_generate_image",
+    "local_workflow_generate_video",
+    "tts_generate",
+    "image_start_reply",
+    "image_completion_reply",
 ]
 
 
@@ -51,6 +56,15 @@ class ImageEffect(BaseModel):
     data: str = Field(min_length=1, max_length=13_981_016, repr=False)
 
 
+class VideoEffect(BaseModel):
+    """视频回执仅保存媒体 ID，文件读取必须重新验证任务会话归属。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["video"] = "video"
+    workflow_key: str = Field(min_length=1, max_length=128)
+    asset_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
 class ImageTaskEffect(BaseModel):
     """已持久化提交的后台绘图任务，不表示图片已经生成。"""
 
@@ -69,7 +83,13 @@ class SpeechEffect(BaseModel):
 
 
 ToolEffect = Annotated[
-    ReplyEffect | MentionEffect | ImageEffect | ImageTaskEffect | SpeechEffect | DeliveryEffect,
+    ReplyEffect
+    | MentionEffect
+    | ImageEffect
+    | VideoEffect
+    | ImageTaskEffect
+    | SpeechEffect
+    | DeliveryEffect,
     Field(discriminator="kind"),
 ]
 

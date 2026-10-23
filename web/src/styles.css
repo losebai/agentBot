@@ -236,7 +236,7 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 
 /* 媒体内容仍受容器约束，保留预览和文件选择的可用宽度。 */
 .media-attachment { margin: 16px 0; padding: 14px; border: 1px solid var(--border); border-radius: 8px; max-width: 100%; overflow-wrap: anywhere; }
-.media-attachment img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; margin-bottom: 12px; }
+.media-attachment img, .media-attachment video { display: block; max-width: 100%; max-height: 480px; object-fit: contain; margin-bottom: 12px; }
 .media-attachment audio { display: block; width: 100%; max-width: 480px; margin-bottom: 12px; }
 .media-attachment figcaption { margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
 .media-upload { padding: 12px 0; overflow-wrap: anywhere; }

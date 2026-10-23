@@ -15,7 +15,7 @@ export function MediaAttachment({api,asset}:{api:MediaApi;asset:MediaAsset}){
   },[api,asset.id,asset.status]);
   const pcm=asset.mime_type==='audio/pcm';
   return <figure className="media-attachment">{error?<p role="status">{error}</p>:!url?<p>加载附件…</p>:<>
-    {asset.mime_type.startsWith('image/')?<img src={url} alt="生成图片"/>:pcm?<p>PCM 需要支持原始音频的播放器，请下载后播放。</p>:<audio src={url} controls preload="metadata"/>}
+    {asset.mime_type.startsWith('image/')?<img src={url} alt="生成图片"/>:asset.mime_type==='video/mp4'?<video src={url} controls preload="metadata"/>:pcm?<p>PCM 需要支持原始音频的播放器，请下载后播放。</p>:<audio src={url} controls preload="metadata"/>}
     <a href={url} download={`${asset.id}.${asset.mime_type==='image/jpeg'?'jpg':asset.mime_type==='audio/mpeg'?'mp3':asset.mime_type.split('/')[1]}`}>下载附件</a></>}
     <figcaption>{asset.mime_type} · {(asset.size_bytes/1024).toFixed(1)} KiB · 保存至 {asset.expires_at.replace('T',' ')} UTC</figcaption>
   </figure>;

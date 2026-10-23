@@ -115,7 +115,7 @@ class LangChainProvider:
                     base_url=state.base_url,
                     organization="",
                     openai_proxy="",
-                    max_retries=0,
+                    max_retries=0,  # 传输层统一最多重试三次，SDK不能叠加重试。
                     http_client=sync,
                     http_async_client=http,
                     timeout=timeout,

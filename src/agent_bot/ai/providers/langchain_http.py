@@ -1,8 +1,10 @@
 """为模型 SDK 提供有界传输，认证只来自当前数据库快照。"""
 
 import json
+from asyncio import sleep
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any, NoReturn
 
 import httpx
@@ -151,9 +153,28 @@ class ModelTransport(httpx.AsyncBaseTransport):
     def __init__(self, http: httpx.AsyncClient, state: WireState) -> None:
         """凭据和协议来自这一次调用的固定快照。"""
         self.http, self.state = http, state
+        self.deadline = monotonic() + state.timeout
+
+    async def _send(self, request: httpx.Request) -> httpx.Response:
+        """仅在尚未收到成功响应时重试三次，沿用同一模型、正文和总截止时间。"""
+        for attempt in range(4):
+            timeout = remaining_timeout(self.deadline - monotonic())
+            request.extensions["timeout"] = httpx.Timeout(timeout).as_dict()
+            try:
+                response = await self.http.send(request, stream=True)
+            except httpx.TransportError:
+                if attempt == 3:
+                    raise
+            else:
+                if ((response.status_code not in {408, 429} and response.status_code < 500)
+                        or attempt == 3):
+                    return response
+                await response.aclose()
+            await sleep(min(0.5 * 2**attempt, remaining_timeout(self.deadline - monotonic())))
+        raise AssertionError("model retry budget exhausted")
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        """覆盖 SDK 默认认证和地址拼接，拒绝自动重定向与失败重试。"""
+        """固定协议及认证；仅重试连接或临时HTTP故障，不重放已开始返回内容的响应。"""
         suffix = {
             "openai-chat": "/chat/completions",
             "openai-responses": "/responses",
@@ -168,7 +189,7 @@ class ModelTransport(httpx.AsyncBaseTransport):
         else:
             request.headers["authorization"] = "Bearer " + self.state.credential
         payload = strict_object(request.content)
-        response = await self.http.send(request, stream=True)
+        response = await self._send(request)
         self.state.response = response
         if not 200 <= response.status_code < 300:
             await response.aclose()

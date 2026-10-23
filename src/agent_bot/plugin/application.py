@@ -423,6 +423,7 @@ class _ConversationProcessor(ConversationQueueProcessor):
             operation_store_provider=_tool_operations,
             image_submitter=lambda job: image_queue.enqueue(job),
             workflow_service_provider=lambda: workflow_service,
+            media_store_provider=lambda: _media_resources.store,
             outgoing_recorder=_reply_gateway.recorder,
             receive_queued=lambda *args, **kwargs: chat_service.receive_queued(*args, **kwargs),
             finish_received=lambda session_id, request_id: chat_service.finish_received(

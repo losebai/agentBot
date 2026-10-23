@@ -23,7 +23,6 @@ from agent_bot.materials.contracts import (
     MaterialSearchResult,
     MaterialView,
 )
-from agent_bot.media.config import STORAGE_QUOTA_BYTES
 from agent_bot.media.contracts import MediaOwner
 from agent_bot.media.errors import MediaError
 from agent_bot.media.inputs import ImagePreparer
@@ -76,7 +75,7 @@ class MaterialStore(AiDatabase):
         self, *, owner: MediaOwner, name: str, mime_type: str, data: bytes,
         description: str = "", source_key: str | None = None,
     ) -> MaterialView:
-        """在当前会话内复用相同内容；失败撤销数据库和本次新建文件。"""
+        """持久素材不设总配额；按会话去重，失败撤销数据库和本次新建文件。"""
         self.require_ready()
         if (not name.strip() or len(name) > 255 or "\0" in name
                 or len(description) > 1000 or "\0" in description
@@ -103,9 +102,6 @@ class MaterialStore(AiDatabase):
                             (owner.entry, owner.session_id, asset.sha256), one=True)
                 result = MaterialView.model_validate(old) if old else asset
                 if old is None:
-                    used = sum(size for _, size, _ in self.files.entries())
-                    if used + len(data) > STORAGE_QUOTA_BYTES:
-                        raise MediaError("MEDIA_STORAGE_FULL", status_code=507)
                     values = asset.model_dump()
                     values.update(entry=owner.entry, session_id=owner.session_id,
                                   storage_key=asset.id)

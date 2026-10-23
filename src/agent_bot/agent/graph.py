@@ -16,6 +16,7 @@ from agent_bot.agent.contracts import (
     AgentCompletionMetadata,
     AgentEvent,
     ModelTurn,
+    ToolCall,
     ToolResult,
     TurnMessage,
 )
@@ -42,6 +43,7 @@ class AgentState(TypedDict, total=False):
     completed: ModelTurn
     usage: TokenUsage
     rejections: dict[str, ToolResult]
+    image_queued: bool
 
 
 def build_agent_graph(
@@ -68,6 +70,34 @@ def build_agent_graph(
         if acknowledged is not None:
             # 先让服务保存并发布 tool_start，再执行副作用，保留原生成器背压。
             await acknowledged.wait()
+
+    async def finish(turn: int, model: str, usage: TokenUsage) -> None:
+        """模型回答或后台图片入队均以真实模型和累计用量完成父请求。"""
+        await emit("done", turn, metadata=AgentCompletionMetadata(
+            execution_id=prepared.execution_id, request_id=prepared.request.request_id,
+            model=model, usage=usage, duration_ms=0, record_saved=False,
+        ))
+
+    def image_queued(call: ToolCall, result: ToolResult) -> bool:
+        """只信任QQ本地绘图工具的成功入队回执，远端同名工具不能结束执行。"""
+        if (
+            prepared.authority.entry != "qq"
+            or result.is_error
+            or call.name
+            not in {
+                "image_generate",
+                "local_workflow_generate_image",
+                "local_workflow_generate_video",
+            }
+            or not any(t.name == call.name and t.source == "chat" for t in definitions)
+        ):
+            return False
+        try:
+            receipt = json.loads(result.content)
+        except ValueError:
+            return False
+        return (isinstance(receipt, dict) and receipt.get("status") == "queued"
+                and isinstance(receipt.get("task_id"), str) and bool(receipt["task_id"].strip()))
 
     async def model_node(state: AgentState, *, final_only: bool = False) -> AgentState:
         """失败时只转交本轮公共对话，已完成工具及轮次保持不变。"""
@@ -158,18 +188,7 @@ def build_agent_graph(
         if not completed.calls:
             if not completed.content.strip():
                 raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
-            await emit(
-                "done",
-                turn,
-                metadata=AgentCompletionMetadata(
-                    execution_id=prepared.execution_id,
-                    request_id=prepared.request.request_id,
-                    model=completed.model,
-                    usage=usage,
-                    duration_ms=0,
-                    record_saved=False,
-                ),
-            )
+            await finish(turn, completed.model, usage)
         return {"messages": base, "turn": turn, "completed": completed, "usage": usage}
 
     async def finalize(state: AgentState) -> AgentState:
@@ -190,7 +209,7 @@ def build_agent_graph(
         return {"seen": seen, "rejections": rejections}
 
     async def tools_node(state: AgentState) -> AgentState:
-        """预检反馈也记录真实调用 ID；修正使用原有轮数和预算，不重放已执行工具。"""
+        """记录工具结果后，图片已入队则结束父请求，后台独立生成和投递。"""
         completed, turn = state["completed"], state["turn"]
         messages = [
             *state["messages"],
@@ -244,6 +263,12 @@ def build_agent_graph(
             if prepared.authority.entry == "admin":
                 for attachment in result.attachments:
                     await emit("artifact", turn, attachment=attachment)
+            if image_queued(call, result):
+                # 开画文案已经由网关发送；终止同批剩余调用及后续模型，不能等待或重复提交。
+                if not completed.content.strip():
+                    await emit("text_delta", turn, delta="图片任务已提交，完成后会自动发送。")
+                await finish(turn, completed.model, state["usage"])
+                return {"messages": messages, "total": total, "image_queued": True}
         return {"messages": messages, "total": total}
 
     def after_model(state: AgentState) -> str:
@@ -251,7 +276,9 @@ def build_agent_graph(
         return "validate_batch" if state["completed"].calls else END
 
     def after_tools(state: AgentState) -> str:
-        """业务轮数决定收尾，图递归上限仅用于防止错误连边。"""
+        """后台图片入队后结束，否则按轮数收尾；图递归上限仅防止错误连边。"""
+        if state.get("image_queued"):
+            return END
         return "finalize" if state["turn"] >= prepared.max_steps else "model"
 
     graph = StateGraph(AgentState)

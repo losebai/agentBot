@@ -22,10 +22,12 @@ from agent_bot.ai.chat_errors import (
     ChatAiUnavailableError,
 )
 from agent_bot.config import RuntimeConfig
+from agent_bot.database_pool import finish_database_write
 from agent_bot.integrations.onebot.memory_source import has_user_memory_source, queued_memory_source
 from agent_bot.integrations.onebot.outgoing import OutgoingRecorder
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway
 from agent_bot.integrations.workflow_store import WorkflowNotFoundError
+from agent_bot.media.contracts import MediaOwner, MediaScope
 from agent_bot.model_guard import (
     ModelGuardUnavailableError,
     model_configuration_error_code,
@@ -51,7 +53,12 @@ from agent_bot.services.replies import (
     WorkflowStatusFacts,
 )
 from agent_bot.services.tool_images import capture_tool_images, current_tool_images
-from agent_bot.services.tool_operations import ImageEffect, ReplyEffect, ToolOperationStore
+from agent_bot.services.tool_operations import (
+    ImageEffect,
+    ReplyEffect,
+    ToolOperationStore,
+    VideoEffect,
+)
 from agent_bot.services.workflow_execution import WorkflowExecutionService, WorkflowImageRequest
 from agent_bot.state import AccessPolicy, split_reply
 
@@ -64,8 +71,6 @@ logger = logging.getLogger(__name__)
 
 _SILENT_FAILURES = (
     ChatRateLimitedError, ConversationQueueFullError, ConversationJobExpiredError,
-    ChatAiUnavailableError, ChatAiRejectedError, ChatAiProtocolError,
-    ModelGuardUnavailableError,
 )
 
 
@@ -98,6 +103,7 @@ class ConversationQueueProcessor:
         operation_store_provider: Callable[[], ToolOperationStore],
         image_submitter: Callable[[ConversationJob], Awaitable[str]],
         workflow_service_provider: Callable[[], WorkflowExecutionService | None],
+        media_store_provider: Callable[[], Any] = lambda: None,
         outgoing_recorder: OutgoingRecorder | None = None,
         receive_queued: Callable[..., Awaitable[None]] | None = None,
         finish_received: Callable[[str, str], Awaitable[None]] | None = None,
@@ -114,6 +120,7 @@ class ConversationQueueProcessor:
         self._operation_store_provider = operation_store_provider
         self._image_submitter = image_submitter
         self._workflow_service_provider = workflow_service_provider
+        self._media_store_provider = media_store_provider
         self._outgoing_recorder = outgoing_recorder
         self._receive_queued = receive_queued
         self._finish_received_callback = finish_received
@@ -250,7 +257,9 @@ class ConversationQueueProcessor:
                             type(exc).__name__,
                         )
                         answer = None
-                    elif "local_workflow_generate_image" in job.chat_tools:
+                    elif {"local_workflow_generate_image", "local_workflow_generate_video"} & set(
+                        job.chat_tools
+                    ):
                         # 只记录本地稳定错误码，不输出可能含凭据的异常正文。
                         logger.warning(
                             "本地工作流处理失败：stage=agent_generate job_id=%s "
@@ -431,6 +440,8 @@ class ConversationQueueProcessor:
         """在独立工作队列生成图片，结果不明时禁止重新提交相同工作流。"""
 
         request = job.workflow_request
+        if request is not None and request.output_kind == "video":
+            return await self._generate_video_workflow(job)
         if request is None:
             raise ValueError("workflow request is missing")
         service = self._workflow_service_provider()
@@ -466,6 +477,39 @@ class ConversationQueueProcessor:
         return ConversationResult(kind="WORKFLOW_IMAGES", workflowImages=(WorkflowImageArtifact(
             mimeType=saved.media_type, data=saved.data,
         ),))
+
+    async def _generate_video_workflow(self, job: ConversationJob) -> ConversationResult:
+        """先落盘后保存成功回执；重试只能读取同一个附件，不能再次提交生成。"""
+        request = job.workflow_request
+        service, media = self._workflow_service_provider(), self._media_store_provider()
+        if (
+            request is None
+            or service is None
+            or media is None
+            or not self._config_provider().chat_local_workflow_enabled
+        ):
+            raise RuntimeError("video workflow storage or service is unavailable")
+        operations = self._operation_store_provider()
+        signature = hashlib.sha256(request.model_dump_json(exclude_none=True).encode()).hexdigest()
+        saved = await operations.begin(job.job_id, "local_workflow_generate_video", signature)
+        if saved is None:
+            video = await service.generate_video(
+                workflow_key=request.workflow_key, positive_prompt=request.positive_prompt,
+                negative_prompt=request.negative_prompt, input_image=request.input_image,
+                workflow_sha256=request.workflow_sha256,
+            )
+            if (execution := active_image_task.get()) is not None:
+                await execution.check_cancelled()
+            owner = MediaOwner(entry="qq", session_id=job.session_id)
+            scope = MediaScope(owner=owner, execution_kind="media",
+                               execution_id=hashlib.sha256(job.job_id.encode()).hexdigest()[:32])
+            asset = await media.put(owner=owner, scope=scope, purpose="output",
+                                    mime_type=video.media_type, data=video.data)
+            saved = VideoEffect(workflow_key=request.workflow_key, asset_id=asset.id)
+            await operations.complete(job.job_id, "local_workflow_generate_video", signature, saved)
+        if not isinstance(saved, VideoEffect):
+            raise ChatAiProtocolError("background video result is invalid")
+        return ConversationResult(kind="WORKFLOW_VIDEO", workflowVideoId=saved.asset_id)
 
     async def _send_image_start(self, job: ConversationJob, *, text: str | None = None) -> None:
         """先占位再投递开画答复；工具直接采用父模型正文，重试复用发送记录。"""
@@ -633,7 +677,7 @@ class ConversationQueueProcessor:
 
         if not job.background_image and job.scene != "group":
             return False
-        return result.kind == "WORKFLOW_IMAGES" or (
+        return result.kind in {"WORKFLOW_IMAGES", "WORKFLOW_VIDEO"} or (
             result.kind == "MEDIA" and result.media is not None
             and result.media.items[0].type == "IMAGE"
         )
@@ -777,6 +821,24 @@ class ConversationQueueProcessor:
                 prefix=prefix,
             )
             return
+        elif result.kind == "WORKFLOW_VIDEO":
+            media = self._media_store_provider()
+            if media is None:
+                raise RuntimeError("video media storage is unavailable")
+            owner = MediaOwner(entry="qq", session_id=job.session_id)
+            asset = await media.describe(result.workflow_video_id, owner=owner)
+            if asset.mime_type != "video/mp4":
+                raise ChatAiProtocolError("video attachment type is invalid")
+            async with media.open_content(asset.id, owner=owner) as handle:
+                data = await finish_database_write(handle.read)
+                media_segment = MessageSegment.video(
+                    "base64://" + base64.b64encode(data).decode("ascii")
+                )
+            await self._reply_gateway.send_video_asset_bot(
+                self._bot_provider(job.bot_id), scene=job.scene,
+                target_id=job.group_id or job.user_id, segment=media_segment, asset=asset,
+            )
+            return
         elif result.kind in {"MIXED", "WORKFLOW_IMAGES"}:
             artifact = result.workflow_images[index]
             media_segment = MessageSegment.image(f"base64://{artifact.data}")
@@ -803,9 +865,9 @@ class ConversationQueueProcessor:
                 prefix=prefix,
             )
         except Exception as error:
-            if (
-                job.workflow_request is not None
-                or "local_workflow_generate_image" in job.chat_tools
+            if job.workflow_request is not None or bool(
+                {"local_workflow_generate_image", "local_workflow_generate_video"}
+                & set(job.chat_tools)
             ):
                 # 只记录协议关闭码，避免对端的关闭原因正文夹带配置或凭据。
                 received = error.rcvd if isinstance(error, ConnectionClosedError) else None
@@ -845,14 +907,16 @@ class ConversationQueueProcessor:
             await self._finish_received_callback(job.session_id, job.request_id)
 
     async def _deliver_failure(self, job: ConversationJob, error: Exception) -> None:
-        """配置和忙碌状态直接通知，其余模型失败静默，业务失败才调用解释模型。"""
+        """工具及执行失败由无工具LLM说明；解释失败或空白时不发送固定文案。"""
 
         if (
             job.ai_job_id is not None
             or job.auto_speak_max_reply_chars is not None
         ):
             return
-        if is_chat_busy_error(error):
+        if is_chat_busy_error(error) and not (
+            isinstance(error, ChatAiError) and error.error_code == "AI_RATE_LIMITED"
+        ):
             await self._reply_gateway.send_busy_error(
                 self._bot_provider(job.bot_id), scene=job.scene,
                 target_id=job.group_id or job.user_id,
@@ -864,8 +928,6 @@ class ConversationQueueProcessor:
                 target_id=job.group_id or job.user_id,
             )
             return
-        if "mention_member" in job.chat_tools:
-            return
         if isinstance(error, _SILENT_FAILURES):
             return
         unavailable_workflow = isinstance(error, WorkflowNotFoundError)
@@ -875,6 +937,7 @@ class ConversationQueueProcessor:
             facts=FeatureUnavailableFacts(feature="所选本地绘图工作流")
             if unavailable_workflow else TaskFailedFacts(
                 operation=self._operation_name(job), error_type=type(error).__name__,
+                error_code=error.error_code if isinstance(error, ChatAiError) else None,
             ),
             originalPrompt=job.prompt, user=job.user, userName=job.user_name,
             chatContext=job.chat_context,
@@ -892,8 +955,12 @@ class ConversationQueueProcessor:
         """将任务类型转换为不包含用户内容的稳定失败操作名。"""
 
         if (
-            job.background_image or job.media_output == "IMAGE"
-            or "local_workflow_generate_image" in job.chat_tools
+            job.background_image
+            or job.media_output == "IMAGE"
+            or bool(
+                {"local_workflow_generate_image", "local_workflow_generate_video"}
+                & set(job.chat_tools)
+            )
         ):
             return "image_generation"
         if job.media_output == "AUDIO":
@@ -932,6 +999,8 @@ class ConversationQueueProcessor:
             delivered_answer = result.reply.text
         elif result.kind == "TOOL_IMAGES":
             delivered_answer = ""
+        elif result.kind == "WORKFLOW_VIDEO":
+            delivered_answer = "[已生成视频]"
         elif result.kind == "WORKFLOW_IMAGES":
             delivered_answer = "[已生成图片]"
         else:

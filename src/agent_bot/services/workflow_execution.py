@@ -8,7 +8,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import (
     BaseModel,
@@ -56,6 +56,14 @@ class GeneratedWorkflowImage:
 
 
 @dataclass(frozen=True, slots=True)
+class GeneratedWorkflowVideo:
+    """已下载并验证容器的 MP4，字节仅在生成和落盘阶段持有。"""
+
+    media_type: str
+    data: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class WorkflowSummary:
     """允许暴露给 Agent 的工作流最小元数据。"""
 
@@ -76,10 +84,14 @@ class WorkflowImageRequest(BaseModel):
     input_image: WorkflowInputImage | None = None
     workflow_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     fixed_reference: bool = Field(default=False, strict=True)
+    output_kind: Literal["image", "video"] = "image"
 
     @model_validator(mode="after")
     def validate_image_snapshot(self) -> WorkflowImageRequest:
         """用户原图和摘要配对；固定底图只保存摘要，文生图不需要。"""
+        if self.output_kind == "video" and (self.input_image is None
+                or self.workflow_sha256 is None or self.fixed_reference or self.negative_prompt):
+            raise ValueError("video request requires a single input and snapshot without negatives")
         if self.fixed_reference:
             if self.input_image is not None or self.workflow_sha256 is None:
                 raise ValueError("fixed reference requires only a workflow snapshot")
@@ -93,6 +105,8 @@ class WorkflowImageRequest(BaseModel):
     ) -> dict[str, object]:
         """旧任务不新增默认字段，保留持久化操作签名和滚动发布兼容性。"""
         data = handler(self)
+        if self.output_kind == "image":
+            data.pop("output_kind", None)
         if not self.fixed_reference:
             data.pop("fixed_reference", None)
         return data
@@ -128,6 +142,12 @@ class ComfyClientPort(Protocol):
         *,
         output_node_id: str,
     ) -> GeneratedWorkflowImage: ...
+
+    async def generate_video(
+        self, workflow: ApiWorkflow, *, output_node_id: str
+    ) -> GeneratedWorkflowVideo:
+        """只返回已验证的单个视频。"""
+        ...
 
 
 class WorkflowImageCollector:
@@ -215,7 +235,7 @@ class WorkflowExecutionService:
                 name=definition.display_name,
                 description=definition.description,
                 workflow_type=definition.workflow_type,
-                requires_image=definition.workflow_type == "image_to_image",
+                requires_image=definition.workflow_type in {"image_to_image", "image_to_video"},
             )
             for definition in definitions
         )
@@ -227,7 +247,7 @@ class WorkflowExecutionService:
         return WorkflowSummary(
             key=definition.workflow_key, name=definition.display_name,
             description=definition.description, workflow_type=definition.workflow_type,
-            requires_image=definition.workflow_type == "image_to_image",
+            requires_image=definition.workflow_type in {"image_to_image", "image_to_video"},
         )
 
     async def prepare_request(
@@ -244,6 +264,8 @@ class WorkflowExecutionService:
             workflow_key=workflow_key, positive_prompt=positive_prompt,
             negative_prompt=negative_prompt,
         )
+        if definition.workflow_type == "image_to_video" and negative_prompt.strip():
+            raise WorkflowExecutionError("INVALID_ARGUMENT", "H3 不支持负向提示词")
         if definition.workflow_type == "text_to_image":
             return request
         if definition.workflow_type == "fixed_reference":
@@ -271,6 +293,7 @@ class WorkflowExecutionService:
             workflow_key=workflow_key, positive_prompt=positive_prompt,
             negative_prompt=negative_prompt, input_image=uploaded,
             workflow_sha256=definition.execution_sha256,
+            output_kind="video" if definition.workflow_type == "image_to_video" else "image",
         )
 
     async def generate(
@@ -281,7 +304,8 @@ class WorkflowExecutionService:
         negative_prompt: str,
         input_image: WorkflowInputImage | None = None,
         workflow_sha256: str | None = None,
-    ) -> GeneratedWorkflowImage:
+        _video: bool = False,
+    ) -> GeneratedWorkflowImage | GeneratedWorkflowVideo:
         """执行一次数据库工作流；取消时等待查询线程结束再释放运行时。"""
 
         started_at = time.monotonic()
@@ -293,7 +317,9 @@ class WorkflowExecutionService:
             definition = await finish_database_write(
                 lambda: self._store.get_executable(workflow_key)
             )
-            if definition.workflow_type == "image_to_image":
+            if (definition.workflow_type == "image_to_video") != _video:
+                raise WorkflowExecutionError("INVALID_WORKFLOW", "请使用与工作流类型一致的生成工具")
+            if definition.workflow_type in {"image_to_image", "image_to_video"}:
                 if input_image is None:
                     raise WorkflowExecutionError("INVALID_IMAGE", "图生图需要一张原图")
                 if workflow_sha256 != definition.execution_sha256:
@@ -318,6 +344,8 @@ class WorkflowExecutionService:
             if output_node_id is None:
                 raise WorkflowExecutionError("INVALID_WORKFLOW", "工作流输出节点未配置")
             stage = "comfy_generate"
+            if _video:
+                return await self._client.generate_video(prompt, output_node_id=output_node_id)
             return await self._client.generate(prompt, output_node_id=output_node_id)
         except Exception as error:
             error_code = (
@@ -339,3 +367,7 @@ class WorkflowExecutionService:
                 round((time.monotonic() - started_at) * 1000),
             )
             raise
+
+    async def generate_video(self, **kwargs) -> GeneratedWorkflowVideo:
+        """独立入口禁止生图工具选择视频工作流，也禁止视频工具使用图片工作流。"""
+        return await self.generate(**kwargs, _video=True)

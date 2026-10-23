@@ -33,7 +33,9 @@ _FIXED_REFERENCE_PATH = re.compile(
 
 WorkflowNode: TypeAlias = dict[str, Any]
 ApiWorkflow: TypeAlias = dict[str, WorkflowNode]
-WorkflowType: TypeAlias = Literal["text_to_image", "image_to_image", "fixed_reference"]
+WorkflowType: TypeAlias = Literal[
+    "text_to_image", "image_to_image", "fixed_reference", "image_to_video"
+]
 
 
 class WorkflowError(RuntimeError):
@@ -126,6 +128,9 @@ class WorkflowDefinition:
     def executable(self) -> bool:
         """记录是否具备执行所需的 API JSON 和节点绑定。"""
 
+        if self.workflow_type == "image_to_video":
+            return self.api_json is not None and all((self.positive_node_id,
+                self.input_image_node_id, self.output_node_id, self.seed_node_id))
         return (
             self.workflow_type in {"text_to_image", "image_to_image", "fixed_reference"}
             and (self.workflow_type == "text_to_image" or bool(self.input_image_node_id))
@@ -549,6 +554,36 @@ class WorkflowCatalogImporter:
         canonical = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         workflow_key = _workflow_key(path.stem, digest)
+        from agent_bot.services.video_workflows import (
+            H3_TYPES,
+            infer_video_bindings,
+            ui_to_video_api,
+        )
+
+        is_h3 = (
+            any(node.get("type") in H3_TYPES for node in payload["nodes"])
+            if _is_ui_workflow(payload)
+            else any(isinstance(node, dict) and node.get("class_type") in H3_TYPES
+                     for node in payload.values())
+        )
+        if is_h3:
+            api = (
+                _validate_api_workflow(ui_to_video_api(payload))
+                if _is_ui_workflow(payload)
+                else _validate_api_workflow(payload)
+            )
+            positive, image, noise, output = infer_video_bindings(api)
+            definition = WorkflowDefinition(
+                workflow_key=workflow_key, display_name=path.stem, source_file=path.name,
+                source_format="ui" if _is_ui_workflow(payload) else "api",
+                ui_json=canonical if _is_ui_workflow(payload) else None,
+                api_json=json.dumps(api, ensure_ascii=False), content_sha256=digest,
+                positive_node_id=positive, input_image_node_id=image, seed_node_id=noise,
+                output_node_id=output, positive_input_name="prompt", negative_node_id=None,
+                workflow_type="image_to_video", enabled=False,
+            )
+            validate_workflow_bindings(definition)
+            return definition
         if _is_ui_workflow(payload):
             api_json = None
             bindings = (None, None, None, None)
@@ -620,7 +655,9 @@ def prepare_workflow_prompt(
     if not definition.executable or definition.api_json is None:
         raise WorkflowValidationError("workflow is not executable")
     validate_workflow_bindings(definition)
-    if (definition.workflow_type == "image_to_image") != (input_image is not None):
+    if (definition.workflow_type in {"image_to_image", "image_to_video"}) != (
+        input_image is not None
+    ):
         raise WorkflowValidationError("workflow input image is required only for image editing")
     positive = _join_workflow_prompt(
         _validate_prompt_text(positive_prompt, required=True),
@@ -638,6 +675,13 @@ def prepare_workflow_prompt(
         raise WorkflowValidationError("stored API workflow is invalid") from exc
     workflow = copy.deepcopy(_validate_api_workflow(decoded))
     assert definition.positive_node_id is not None
+    if definition.workflow_type == "image_to_video":
+        if negative_prompt.strip():
+            raise WorkflowValidationError("H3 does not support a negative prompt")
+        workflow[definition.positive_node_id]["inputs"]["prompt"] = positive
+        workflow[definition.seed_node_id]["inputs"]["noise_seed"] = seed
+        workflow[definition.input_image_node_id]["inputs"]["image"] = input_image.comfy_path
+        return workflow
     assert definition.negative_node_id is not None
     assert definition.seed_node_id is not None
     try:
@@ -658,6 +702,11 @@ def validate_workflow_bindings(definition: WorkflowDefinition) -> None:
     """校验单采样编辑链，允许用户画布追加一张受控身份底图。"""
     if not definition.executable:
         raise WorkflowValidationError("workflow bindings are incomplete")
+    if definition.workflow_type == "image_to_video":
+        from agent_bot.services.video_workflows import validate_video_bindings
+
+        validate_video_bindings(definition)
+        return
     if definition.workflow_type == "text_to_image":
         if (definition.positive_input_name, definition.negative_input_name) != ("text", "text"):
             raise WorkflowValidationError("text workflow fields are invalid")

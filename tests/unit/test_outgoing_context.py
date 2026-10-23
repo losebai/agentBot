@@ -270,3 +270,23 @@ async def test_confirmed_delivery_retry_after_generation_change_finishes_origina
     assert journal.sent[0].content == '旧代际实际已经发送'
     assert journal.sent[0].message_id == '21'
     bot.send_private_msg.assert_awaited_once()
+
+
+async def test_stored_video_uses_existing_asset_without_material_copy():
+    """视频已归档到媒体库；不能被素材 20 MiB 上限阻止，也不能重复发送。"""
+    from datetime import datetime, timedelta
+
+    from agent_bot.media.contracts import MediaAssetView
+
+    _, gateway, bot, journal, materials, _ = setup_recorder()
+    now = datetime.now()
+    asset = MediaAssetView(id="b" * 32, purpose="output", mime_type="video/mp4",
+        size_bytes=21 * 1024 * 1024, sha256="c" * 64, status="ready", created_at=now,
+        expires_at=now + timedelta(days=1))
+    for _ in range(2):
+        await gateway.send_video_asset_bot(bot, scene="private", target_id="12345",
+            segment=MessageSegment.video("base64://encoded-only-at-send"), asset=asset)
+    bot.send_private_msg.assert_awaited_once()
+    materials.put.assert_not_awaited()
+    assert asset.id in journal.sent[0].content
+    assert "base64" not in journal.sent[0].content

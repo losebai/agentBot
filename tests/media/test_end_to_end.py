@@ -2,14 +2,16 @@
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
 from agent_bot.agent.catalog import AgentCatalog
-from agent_bot.agent.contracts import ModelEvent, ModelTurn
+from agent_bot.agent.contracts import AgentModelCall, ModelEvent, ModelTurn
 from agent_bot.agent.records import AgentRunStore
 from agent_bot.agent.service import AgentService
 from agent_bot.agent.tools.chat import ChatToolBridge
@@ -29,6 +31,7 @@ from agent_bot.services.workflow_execution import (
     WorkflowImageCollector,
 )
 from agent_bot.services.workflows import WorkflowDefinition
+from agent_bot.settings import DatabaseParams
 from media.test_admin_tools import workflow_call
 from media.test_agent_artifacts import NoRemote
 from unit.test_image_tasks import image_job, image_queue, owner  # noqa: F401
@@ -82,18 +85,18 @@ class JavaMustNotBeCalled:
 
 
 class QueueProvider:
-    """模型边界只要求一次绘图，然后等待用户停止。"""
+    """首轮要求绘图，仅提交失败后的模型轮次才等待用户停止。"""
 
-    def __init__(self):
-        """用事件让测试精确停在工具已入队后的模型轮次。"""
+    def __init__(self) -> None:
+        """用事件观测错误后的收尾；成功入队不应出现第二轮模型请求。"""
         self.calls = 0
         self.after_tool = asyncio.Event()
 
     def validate_options(self, options):
         """离线模型接受默认选项。"""
 
-    async def stream_turn(self, call):
-        """真实 Agent 循环必须完成授权、工具执行和第二轮调用。"""
+    async def stream_turn(self, call: AgentModelCall) -> AsyncIterator[ModelEvent]:
+        """执行真实授权与工具；测试区分成功入队结束和失败后被取消。"""
         self.calls += 1
         if self.calls == 1:
             yield ModelEvent(
@@ -105,14 +108,14 @@ class QueueProvider:
 
 
 @pytest.mark.parametrize("delivery_fails", [True, False])
-async def test_qq_delivery_and_stopping_agent_preserve_queue_semantics(
-    media_model,
-    media_database,
-    agent_params,
-    image_queue,  # noqa: F811
-    delivery_fails,
-):
-    """开画发送失败绝不入队；成功入队后停止父 Agent 不撤销后台图片。"""
+async def test_qq_delivery_and_queued_completion_preserve_queue_semantics(
+    media_model: Any,
+    media_database: Any,
+    agent_params: DatabaseParams,
+    image_queue: Any,  # noqa: F811
+    delivery_fails: bool,
+) -> None:
+    """开画发送失败绝不入队；成功入队立即结束父Agent，后台图片保持排队。"""
     env = image_queue
     bot = AsyncMock()
 
@@ -207,7 +210,11 @@ async def test_qq_delivery_and_stopping_agent_preserve_queue_semantics(
             )
         )
         try:
-            await asyncio.wait_for(provider.after_tool.wait(), 3)
+            if delivery_fails:
+                await asyncio.wait_for(provider.after_tool.wait(), 3)
+            else:
+                assert (await asyncio.wait_for(task, 3)).strip()
+                assert provider.calls == 1 and not provider.after_tool.is_set()
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -221,4 +228,4 @@ async def test_qq_delivery_and_stopping_agent_preserve_queue_semantics(
         assert not tasks[0].cancellation_requested
         assert collector.queued_task_id == tasks[0].task_id
     runs = await service.records.list_runs()
-    assert runs.items[0].status == "cancelled"
+    assert runs.items[0].status == ("cancelled" if delivery_fails else "completed")

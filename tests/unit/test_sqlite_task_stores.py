@@ -36,6 +36,21 @@ def tool_store(path: str, prefix: str = "test"):
     return SqliteToolOperationStore(path, key_prefix=prefix, ttl_seconds=60)
 
 
+async def test_video_receipt_reopens_without_video_bytes(database):
+    """SQLite 默认队列跨实例恢复视频引用，不能把视频内容序列化进库。"""
+    from agent_bot.services.tool_operations import VideoEffect
+
+    original = tool_store(database)
+    effect = VideoEffect(workflow_key="h3", asset_id="a" * 32)
+    assert await original.begin("video-job", "local_workflow_generate_video", "b" * 64) is None
+    await original.complete("video-job", "local_workflow_generate_video", "b" * 64, effect)
+    restored = await tool_store(database).begin(
+        "video-job", "local_workflow_generate_video", "b" * 64
+    )
+    assert restored == effect
+    assert "data" not in restored.model_dump()
+
+
 def task(task_id: str = "image-1", created_at: float = 1000) -> ImageTaskRecord:
     """构造具有可信归属的活动任务。"""
     return ImageTaskRecord(

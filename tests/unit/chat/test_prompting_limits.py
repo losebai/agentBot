@@ -2,8 +2,10 @@
 
 import pytest
 
+from agent_bot.agent.contracts import AgentRequest
+from agent_bot.ai.context import GUARDRAIL, format_qq_context
 from agent_bot.ai.contracts import TextRequest
-from agent_bot.models import ChatMessage
+from agent_bot.models import ChatContext, ChatMessage
 from agent_bot.services.chat.errors import PromptTooLongError
 from agent_bot.services.chat.prompting import ChatPromptBuilder
 from agent_bot.state import ConversationContext
@@ -117,3 +119,48 @@ def test_fixed_message_count_cannot_exceed_upstream_limit():
 
     with pytest.raises(PromptTooLongError):
         builder.messages("当前问题", system_messages=systems)
+
+
+def test_qq_source_is_reserved_before_trimming_history_message_count():
+    """来源说明新增系统消息也占预算，不能先填满100条再额外追加。"""
+    builder = ChatPromptBuilder(system_prompt="", max_input_chars=32000)
+    context = ConversationContext(memory="", messages=tuple(
+        ChatMessage(role="assistant", content=f"通知-{index}", history_request_id=f"old-{index}")
+        for index in range(110)
+    ))
+    qq = ChatContext(scene="group", groupId="20001", senderId="10001", senderName="bai")
+    messages = builder.messages("当前问题", conversation_context=context, chat_context=qq)
+    final = format_qq_context(messages, qq)
+    assert len(final) == 100
+    assert final[0].content == GUARDRAIL
+    assert final[1].content == "通知-12"
+    assert final[-1].content.endswith("当前问题")
+    assert len(context.messages) == 110
+    AgentRequest(prompt="当前问题", session_id="s", request_id="r", messages=final)
+    TextRequest(model="text", session_id="s", request_id="r", prompt="当前问题", messages=final)
+
+
+def test_qq_source_characters_are_reserved_before_trimming_history():
+    """QQ来源及安全说明占用的字符也要计入总预算，只移除最旧历史。"""
+    builder = ChatPromptBuilder(system_prompt="s" * 2000, max_input_chars=32000)
+    context = ConversationContext(memory="", messages=tuple(
+        ChatMessage(role="assistant", content=letter * size)
+        for letter, size in (("a", 32000), ("b", 28000), ("c", 28000), ("d", 28000))
+    ))
+    qq = ChatContext(scene="private", senderId="10001", senderName="bai")
+    messages = builder.messages("u" * 2000, conversation_context=context, chat_context=qq)
+    final = format_qq_context(messages, qq)
+    assert sum(len(m.content) for m in final) <= 120000
+    assert messages[0].content == "s" * 2000 and messages[-1].content == "u" * 2000
+    assert messages[1].content == "b" * 28000
+    AgentRequest(prompt="u" * 2000, session_id="s", request_id="r", messages=final)
+
+
+@pytest.mark.parametrize("oversized", ["system", "current"])
+def test_qq_source_cannot_push_fixed_message_over_individual_limit(oversized):
+    """来源包装后固定内容超限应清晰拒绝，不裁切当前提问或信任边界。"""
+    builder = ChatPromptBuilder(system_prompt="s" * 32000 if oversized == "system" else "系统",
+                                max_input_chars=32000)
+    qq = ChatContext(scene="private", senderId="10001", senderName="bai")
+    with pytest.raises(PromptTooLongError):
+        builder.messages("u" * 32000 if oversized == "current" else "当前问题", chat_context=qq)

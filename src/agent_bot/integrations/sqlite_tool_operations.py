@@ -17,6 +17,7 @@ from agent_bot.services.tool_operations import (
     ToolEffect,
     ToolOperation,
     ToolOperationConflict,
+    VideoEffect,
 )
 
 _RESULT_TYPES = {
@@ -27,6 +28,7 @@ _RESULT_TYPES = {
     "image_completion_reply": (ReplyEffect,),
     "mention_member": (MentionEffect,),
     "local_workflow_generate_image": (ImageEffect, ImageTaskEffect),
+    "local_workflow_generate_video": (VideoEffect, ImageTaskEffect),
     "tts_generate": (SpeechEffect,),
 }
 

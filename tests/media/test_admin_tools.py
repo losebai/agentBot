@@ -62,6 +62,7 @@ async def test_admin_generates_one_image_and_one_speech(
         assert {tool.name for tool in session.definitions} == {
             "local_workflow_list",
             "local_workflow_generate_image",
+            "local_workflow_generate_video",
             "tts_generate",
         }
         image = await session.call(workflow_call())

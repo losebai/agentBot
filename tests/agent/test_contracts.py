@@ -30,7 +30,7 @@ def test_invalid_agent_limits(patch):
         AgentCreate(code="helper", name="助手", model_id=1, **patch)
 
 
-@pytest.mark.parametrize("timeout", [301, float("nan"), 0])
+@pytest.mark.parametrize("timeout", [3601, float("nan"), 0])
 def test_request_cannot_expand_limits(timeout):
     with pytest.raises(ValidationError):
         AgentRequest(prompt="hi", session_id="s", request_id="r", timeout_seconds=timeout)

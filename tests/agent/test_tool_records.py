@@ -2,13 +2,70 @@
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 
 from agent.test_engine import Provider, Tools
 from agent.test_service import request, service_for
-from agent_bot.agent.contracts import ExecutionAuthority, ToolCall, ToolResult
+from agent_bot.agent.contracts import (
+    AgentModelCall,
+    ExecutionAuthority,
+    ModelEvent,
+    ModelTurn,
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+)
 from agent_bot.ai.call_records import CallRecordStore
+from agent_bot.settings import DatabaseParams
+
+
+@pytest.mark.parametrize("name", ["image_generate", "local_workflow_generate_image"])
+async def test_queued_image_archives_success_without_another_model_call(
+    agent_database: Any, agent_params: DatabaseParams, seeded_model: Any, name: str,
+) -> None:
+    """图片入队经真实服务和仓储记为成功，工具步骤仍保留提交回执。"""
+    class QueuedProvider(Provider):
+        """仅首轮提交工具，任何后续模型请求都代表不应发生的等待。"""
+
+        async def stream_turn(self, call: AgentModelCall) -> AsyncIterator[ModelEvent]:
+            """模型没有文本草稿时，也应能成功完成父请求。"""
+            self.calls.append(call)
+            assert len(self.calls) == 1, "queued image must not start another model turn"
+            arguments = {"start_reply": "开始画猫。"}
+            arguments.update({"prompt": "猫"} if name == "image_generate" else {
+                "workflow_key": "cat", "positive_prompt": "cat",
+            })
+            yield ModelEvent(kind="turn_end", turn=ModelTurn(model="actual", calls=(
+                ToolCall(call_id="image", name=name, arguments=arguments),
+            )))
+
+    class QueuedTools(Tools):
+        """只替换后台提交端口，资源租约和记录使用真实服务逻辑。"""
+
+        definitions = (ToolDefinition(name=name, source="chat", input_schema={"type": "object"}),)
+
+        async def call(self, call: ToolCall) -> ToolResult:
+            """入队回执与实际本地绘图工具协议相同。"""
+            return ToolResult(call_id=call.call_id, name=call.name,
+                              content='{"status":"queued","task_id":"image-task"}')
+
+    tools = QueuedTools()
+    service = service_for(agent_database, agent_params, tools=tools)
+    service.providers["openai-chat"] = QueuedProvider()
+    result = await service.complete(
+        request(), ExecutionAuthority(entry="qq", allowed_tools=(name,)),
+    )
+    saved = await service.records.get_run(result.execution_id)
+    steps = (await service.records.list_steps(result.execution_id)).items
+    assert saved.status == "completed" and saved.error_code is None
+    assert saved.content == result.content and result.content.strip()
+    assert len([step for step in steps if step.kind == "model_start"]) == 1
+    end = next(step for step in steps if step.kind == "tool_result")
+    assert end.status == "completed" and json.loads(end.result["content"])["status"] == "queued"
+    assert tools.active == service.active_requests == 0
 
 
 class ArgumentProvider(Provider):

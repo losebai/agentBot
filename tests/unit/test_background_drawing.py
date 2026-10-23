@@ -715,6 +715,8 @@ async def test_disabled_workflow_fails_before_comfy_and_reports_unavailable(
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_local_workflow_enabled", True)
     composer = SimpleNamespace(compose=AsyncMock(return_value=None))
     monkeypatch.setattr(chat_plugin, "_reply_composer", composer)
+    # 业务解释为空时网关会发固定失败提示，测试必须使用离线机器人替身。
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: onebot_mock())
     processor = chat_plugin._ConversationProcessor()
     job = background_job()
     with pytest.raises(WorkflowNotFoundError) as unavailable:

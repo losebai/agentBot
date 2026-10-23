@@ -5,6 +5,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Sequence
 
+from agent_bot.ai.context import format_qq_context
 from agent_bot.models import ChatContext, ChatMessage
 from agent_bot.services.chat.errors import EmptyPromptError, PromptTooLongError
 from agent_bot.state import ConversationContext
@@ -120,8 +121,9 @@ class ChatPromptBuilder:
         system_messages: Sequence[ChatMessage] | None = None,
         persist_history: bool = True,
         recent_group_context: str | None = None,
+        chat_context: ChatContext | None = None,
     ) -> list[ChatMessage]:
-        """保留固定输入，按模型条数、单条和总字符上限裁切最旧历史。"""
+        """将QQ来源开销计入固定输入，再按模型条数、单条和总字符上限裁切旧历史。"""
 
         messages = list(self._system_messages if system_messages is None else system_messages)
         history_messages: Sequence[ChatMessage] = ()
@@ -162,16 +164,18 @@ class ChatPromptBuilder:
 
         current_message = ChatMessage(role="user", content=current_prompt)
         fixed_messages = (*messages, *recent_group_messages, current_message)
-        # 系统、压缩记忆、群背景和当前请求均完整保留；固定内容无效不能靠删历史掩盖。
-        if len(fixed_messages) > _MAX_REQUEST_MESSAGES:
+        # 来源在路由层注入；此处共用同一格式器预留真实开销，避免填满后再追加成101条。
+        budget_messages = format_qq_context(fixed_messages, chat_context)
+        # 系统、来源、压缩记忆、群背景和当前请求完整保留，不能靠删历史掩盖固定内容超限。
+        if len(budget_messages) > _MAX_REQUEST_MESSAGES:
             raise PromptTooLongError("fixed prompt cannot exceed 100 messages")
-        if any(len(message.content) > _MAX_MESSAGE_CHARS for message in fixed_messages):
+        if any(len(message.content) > _MAX_MESSAGE_CHARS for message in budget_messages):
             raise PromptTooLongError("fixed prompt message cannot exceed 32000 characters")
-        fixed_chars = sum(len(message.content) for message in fixed_messages)
+        fixed_chars = sum(len(message.content) for message in budget_messages)
         if fixed_chars > _MAX_REQUEST_CHARS:
             raise PromptTooLongError("fixed prompt cannot exceed 120000 characters")
 
-        history_budget = _MAX_REQUEST_MESSAGES - len(fixed_messages)
+        history_budget = _MAX_REQUEST_MESSAGES - len(budget_messages)
         history = (
             [_bounded_history_message(message) for message in history_messages[-history_budget:]]
             if history_budget else []

@@ -13,6 +13,7 @@ from agent_bot.services.chat_tools import (
     WorkflowCancelArguments,
     WorkflowGenerateArguments,
     WorkflowTasksArguments,
+    WorkflowVideoArguments,
     _StrictArguments,
 )
 from agent_bot.services.tagged_memory import MemoryArguments
@@ -25,6 +26,7 @@ ARGUMENT_MODELS = {
     "job": JobArguments,
     "local_workflow_list": _StrictArguments,
     "local_workflow_generate_image": WorkflowGenerateArguments,
+    "local_workflow_generate_video": WorkflowVideoArguments,
     "local_workflow_tasks": WorkflowTasksArguments,
     "local_workflow_cancel": WorkflowCancelArguments,
     "tts_generate": TtsGenerateArguments,

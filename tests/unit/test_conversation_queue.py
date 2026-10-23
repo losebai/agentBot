@@ -952,6 +952,29 @@ async def test_exhausted_transient_failure_notifies_once_after_final_attempt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("code", [
+    "AI_TIMEOUT", "AI_RATE_LIMITED", "AI_UPSTREAM_UNAVAILABLE", "AGENT_TIMEOUT",
+])
+async def test_model_retry_exhaustion_does_not_restart_conversation(queue_store, code: str) -> None:
+    """模型请求已完成默认重试后，队列不能重新执行整轮对话和已完成工具。"""
+    await queue_store.enqueue(text_job(job_id="model-exhausted"))
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    error = ChatAiUnavailableError(
+        "private", error_code=code, status_code=504 if code.endswith("TIMEOUT") else 503,
+    )
+    processor = processor_mock()
+    processor.generate.side_effect = error
+    queue = ConversationQueue(store=queue_store, processor=processor, policy=QueuePolicy(
+        workers=1, max_attempts=3, retry_initial_seconds=0.01, retry_max_seconds=0.01,
+        job_ttl_seconds=600,
+    ), clock=lambda: 1_800_000_000)
+    await queue.process_entry(entry)
+    assert processor.generate.await_count == 1
+    processor.deliver_failure.assert_awaited_once_with(entry.job, error)
+    assert await queue_store.dead_letter_length() == 1
+
+
+@pytest.mark.asyncio
 async def test_expired_job_does_not_start_generation_or_failure_delivery(queue_store) -> None:
     """过期任务仅清理存储，不能开始新的模型或平台调用。"""
     await queue_store.enqueue(text_job(job_id="job-expired"))

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_bot.database_pool import create_database_pool
+from agent_bot.materials.store import MaterialStore
 from agent_bot.media.contracts import MediaOwner
 from agent_bot.media.files import MediaFiles
 from agent_bot.settings import DatabaseParams
@@ -57,6 +58,22 @@ async def test_file_roundtrip_reuses_id_and_keeps_private_metadata(materials):
     assert "session-a" not in result.model_dump_json()
     async with materials.open_content(first.id, owner=owner) as file:
         assert file.read() == b"plan"
+
+
+@pytest.mark.asyncio
+async def test_materials_above_one_gib_can_store_and_read_new_file(
+    materials: MaterialStore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """持久素材没有管理员设置的总配额，超过旧上限仍可保存且不能清理旧原件。"""
+    owner = MediaOwner(entry="qq", session_id="large-library")
+    old = await materials.put(owner=owner, name="old.txt", mime_type="text/plain", data=b"old")
+    # 仅替换文件大小统计，避免测试分配超过1GiB磁盘；读写、事务和归属校验保持真实。
+    monkeypatch.setattr(materials.files, "entries", lambda: [(old.id, 2 * 1024**3, 0)])
+    new = await materials.put(owner=owner, name="new.txt", mime_type="text/plain", data=b"new")
+    async with materials.open_content(new.id, owner=owner) as file:
+        assert file.read() == b"new"
+    async with materials.open_content(old.id, owner=owner) as file:
+        assert file.read() == b"old"
 
 
 @pytest.mark.asyncio

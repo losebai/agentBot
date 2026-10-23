@@ -77,6 +77,7 @@ class TaskFailedFacts(BaseModel):
         max_length=128,
         pattern=r"^[A-Za-z0-9_.-]+$",
     )
+    error_code: str | None = Field(default=None, max_length=100, pattern=r"^[A-Z][A-Z0-9_]*$")
 
 
 class CommandResultFacts(BaseModel):
@@ -195,8 +196,9 @@ class ReplyIntentPromptBuilder:
                 return f"用户无权执行={action}"
             case FeatureUnavailableFacts(feature=feature):
                 return f"当前不可用功能={feature}"
-            case TaskFailedFacts(operation=operation, error_type=error_type):
-                return f"失败操作={operation}；错误类型={error_type}"
+            case TaskFailedFacts(operation=operation, error_type=error_type, error_code=error_code):
+                return (f"失败操作={operation}；错误类型={error_type}"
+                        + (f"；错误代码={error_code}" if error_code else ""))
             case CommandResultFacts():
                 return (
                     "命令结果位于独立 user 消息的 [UNTRUSTED_REPLY_FACTS_JSON] "

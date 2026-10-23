@@ -17,7 +17,7 @@ from nonebot.adapters.onebot.v11 import Message
 from agent_bot.ai.chat_errors import ChatAiUnavailableError
 from agent_bot.ai.errors import AiError
 from agent_bot.materials.contracts import MAX_FILE_BYTES
-from agent_bot.media.contracts import MediaOwner
+from agent_bot.media.contracts import MediaAssetView, MediaOwner
 from agent_bot.media.errors import MediaError
 from agent_bot.services.tool_operations import DeliveryEffect
 
@@ -101,6 +101,17 @@ class OutgoingRecorder:
         return await self._deliver(
             scope, key, "".join(parts), tuple(ids), sender,
         )
+
+    async def send_video_asset(
+        self, asset: MediaAssetView, sender: Callable[[], Awaitable[Any]], *, key: str,
+        request_id: str | None = None,
+    ) -> Any:
+        """媒体已由调用方按会话授权并校验，记录附件引用而不复制到素材库。"""
+        if asset.mime_type != "video/mp4" or asset.status != "ready" or asset.purpose != "output":
+            raise MediaError("MATERIAL_INVALID_FILE", status_code=422)
+        scope = _scope.get() or await self.scope_provider(request_id)
+        text = f"[视频 附件ID={asset.id} 大小={asset.size_bytes}]"
+        return await self._deliver(scope, key, text, (), sender)
 
     async def send_file(
         self, *, name: str, data: bytes, text: str, request_id: str,

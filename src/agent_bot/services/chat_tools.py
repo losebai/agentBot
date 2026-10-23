@@ -454,6 +454,14 @@ class WorkflowGenerateArguments(_StrictArguments):
     )
 
 
+class WorkflowVideoArguments(_StrictArguments):
+    """H3 仅接受运动描述、工作流键和开始文案，不开放地址或负向字段。"""
+
+    start_reply: str = Field(min_length=1, max_length=1000)
+    workflow_key: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,127}$")
+    positive_prompt: str = Field(min_length=1, max_length=2000)
+
+
 class WorkflowTasksArguments(_StrictArguments):
     """当前用户任务列表的服务端有界分页参数。"""
 
@@ -673,18 +681,27 @@ async def _image_generate(arguments: dict[str, object], context: ChatToolContext
     return {"status": "queued", "task_id": task_id}
 
 
-async def _local_workflow_generate_image(
-    arguments: dict[str, object],
-    context: ChatToolContext,
+async def _generate_local_workflow(
+    arguments: dict[str, object], context: ChatToolContext, *, video: bool = False,
 ) -> object:
-    """提交受限后台绘图；独立工具调用没有提交器时同步收集图片。"""
+    """图片与视频共享准备和提交额度；视频只通过持久队列投递。"""
 
+    if video:
+        arguments = {
+            **WorkflowVideoArguments.model_validate(arguments).model_dump(),
+            "negative_prompt": "",
+        }
     parsed = WorkflowGenerateArguments.model_validate(arguments)
+    tool = "local_workflow_generate_video" if video else "local_workflow_generate_image"
     if context.workflow_service is None or context.workflow_collector is None:
         raise ChatToolError("TEMPORARILY_UNAVAILABLE", "本地工作流未配置")
     workflow_key = parsed.workflow_key
     context.ensure_active()
     summary = await context.workflow_service.describe_workflow(workflow_key)
+    if (summary.workflow_type == "image_to_video") != video:
+        raise ChatToolError("INVALID_ARGUMENT", "请使用与工作流类型一致的生成工具")
+    if video and context.workflow_collector.submit is None:
+        raise ChatToolError("TEMPORARILY_UNAVAILABLE", "视频后台队列未配置")
     signature_data = parsed.model_dump_json().encode("utf-8")
     if summary.requires_image:
         source_digest = hashlib.sha256(
@@ -694,12 +711,12 @@ async def _local_workflow_generate_image(
         ).hexdigest()
         signature_data += f"\n{context.workflow_request_scope}\n{source_digest}".encode()
     signature = hashlib.sha256(signature_data).hexdigest()
-    cached = await context.begin_effect("local_workflow_generate_image", signature)
+    cached = await context.begin_effect(tool, signature)
     if cached is not None:
         if isinstance(cached, ImageTaskEffect):
             await context.restore_effect(cached)
             return {"status": "queued", "task_id": cached.task_id}
-        if not isinstance(cached, ImageEffect):
+        if video or not isinstance(cached, ImageEffect):
             raise ChatToolError("INVALID_RESULT", "持久化图片结果无效")
         await context.restore_effect(cached)
         return {
@@ -732,6 +749,8 @@ async def _local_workflow_generate_image(
         )
         if (request.input_image is not None) != summary.requires_image:
             raise WorkflowExecutionError("WORKFLOW_CHANGED", "工作流类型已变更，请重新发起请求")
+        if (request.output_kind == "video") != video:
+            raise WorkflowExecutionError("WORKFLOW_CHANGED", "工作流类型已变更，请重新发起请求")
         if request.fixed_reference != (summary.workflow_type == "fixed_reference"):
             raise WorkflowExecutionError("WORKFLOW_CHANGED", "工作流类型已变更，请重新发起请求")
         context.ensure_active()
@@ -742,7 +761,7 @@ async def _local_workflow_generate_image(
             )
             context.workflow_collector.queued_task_id = task_id
             await context.complete_effect(
-                "local_workflow_generate_image", signature, ImageTaskEffect(task_id=task_id),
+                tool, signature, ImageTaskEffect(task_id=task_id),
             )
             return {"status": "queued", "task_id": task_id}
         if request.workflow_sha256 is None:
@@ -758,7 +777,7 @@ async def _local_workflow_generate_image(
             )
         image_index = await context.workflow_collector.add(image)
         await context.complete_effect(
-            "local_workflow_generate_image", signature,
+            tool, signature,
             ImageEffect(
                 workflow_key=workflow_key, media_type=image.media_type,
                 data=base64.b64encode(image.data).decode("ascii"),
@@ -783,6 +802,20 @@ async def _local_workflow_generate_image(
         "media_type": image.media_type,
         "bytes": len(image.data),
     }
+
+
+async def _local_workflow_generate_image(
+    arguments: dict[str, object], context: ChatToolContext
+) -> object:
+    """保留图片工具的旧参数和同步兼容入口。"""
+    return await _generate_local_workflow(arguments, context)
+
+
+async def _local_workflow_generate_video(
+    arguments: dict[str, object], context: ChatToolContext
+) -> object:
+    """视频使用独立授权，与图片工具共用一次提交额度。"""
+    return await _generate_local_workflow(arguments, context, video=True)
 
 
 async def _tts_generate(arguments: dict[str, object], context: ChatToolContext) -> object:
@@ -906,6 +939,7 @@ def build_chat_tool_registry() -> ChatToolRegistry:
                     "直接使用管理员配置的图片生成模型生成一张图片，无需 Comfy 工作流。"
                     "prompt 写完整画面要求，start_reply 写面向用户的开画答复。"
                     "QQ 先发送开画答复再提交后台队列；queued 只表示已排队，不能声称已完成。"
+                    "收到 queued 后本轮即结束，不调用等待或任务查询工具轮询进度。"
                     "单次请求最多生成一张图片，与工作流生图共享额度。"
                     "此工具仅支持文生图，不能将当前图片作为编辑输入。"
                 ),
@@ -915,7 +949,7 @@ def build_chat_tool_registry() -> ChatToolRegistry:
             ChatToolDefinition(
                 name="local_workflow_list",
                 description=(
-                    "列出可用于本地图片生成的数据库工作流及用途描述；"
+                    "列出本地图片与视频工作流及用途描述；"
                     "生成前必须先调用本工具并依据描述选择可用的 workflow_key。"
                 ),
                 input_schema=_StrictArguments.model_json_schema(),
@@ -932,12 +966,24 @@ def build_chat_tool_registry() -> ChatToolRegistry:
                     "若决定拒绝则直接返回拒绝正文，不调用绘图工具。"
                     "网关先发送 start_reply 再提交后台任务，不另行请求模型；"
                     "queued 仅表示提交成功，"
+                    "收到 queued 后本轮即结束，不调用等待或任务查询工具轮询进度；"
                     "后台完成后先发送图片，再由 LLM 生成完成文案并 @ 原请求者；"
                     "当前不能声称图片已经生成；"
                     "不要再调用语音工具播报进度或重复发送完成说明。"
                 ),
                 input_schema=WorkflowGenerateArguments.model_json_schema(),
                 handler=_local_workflow_generate_image,
+            ),
+            ChatToolDefinition(
+                name="local_workflow_generate_video",
+                description=(
+                    "从唯一输入图片生成带声音的视频。先调用 local_workflow_list 选择 "
+                    "image_to_video 工作流，将人物动作、镜头运动和环境声写入 positive_prompt。"
+                    "start_reply 为开始制作的文案；每请求与图片生成共用一次额度。"
+                    "后台完成后发送视频，不要重复调用或声称尚未完成的任务已完成。"
+                ),
+                input_schema=WorkflowVideoArguments.model_json_schema(),
+                handler=_local_workflow_generate_video,
             ),
             ChatToolDefinition(
                 name="tts_generate",

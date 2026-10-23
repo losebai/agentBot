@@ -11,7 +11,7 @@ from agent_bot.ai.chat_errors import ChatAiRejectedError
 from agent_bot.ai.routing import RoutedModelGuard, RoutingAiClient
 from agent_bot.model_guard import ModelNotAvailableError
 from agent_bot.model_router import ContentModelRouter
-from agent_bot.models import ChatMessage, LlmRequestOptions
+from agent_bot.models import ChatContext, ChatMessage, LlmRequestOptions
 from agent_bot.services.chat import ChatService
 from agent_bot.services.replies import LlmReplyComposer, ReplyIntent, WorkflowStatusFacts
 from agent_bot.state import ConversationStore
@@ -154,3 +154,45 @@ async def test_model_guard_uses_local_catalog(catalog, ai_params, ai_database):
             await guard.ensure_enabled("missing")
     finally:
         await service.aclose()
+
+
+@pytest.mark.parametrize("bot_id", [None, "90001"])
+async def test_qq_long_history_reserves_source_budget_before_agent_request(bot_id):
+    """关闭任务工具缺少botId时也能保留QQ来源，长历史不能生成101条请求。"""
+    requests = []
+
+    class Agent:
+        """只接收已验证的真实Agent请求，不连接QQ、MCP或模型。"""
+
+        async def complete(self, request, authority):
+            """校验发生在路由边界，本替身只记录成功到达的请求。"""
+            requests.append(request)
+            return SimpleNamespace(content="离线回答")
+
+    router = RoutingAiClient(None, agent_service=Agent(), agent_code="taotao", timeout_seconds=500,
+                             default_options=LlmRequestOptions(), mcp_services=())
+    store = ConversationStore(history_turns=500, max_sessions=2, ttl_seconds=60)
+    for index in range(55):
+        store.commit_exchange("s", f"旧提问-{index}", f"旧回答-{index}", request_id=f"old-{index}")
+    before = store.messages("s")
+    chat = ChatService(
+        client=router, store=store, system_prompt="", max_input_chars=10000,
+        cooldown_seconds=0, max_concurrent_requests=1,
+        model_router=ContentModelRouter("text", "vision", "image", "audio"),
+        session_secret="offline-session-secret-32-characters-long",
+    )
+    try:
+        answer = await chat.generate_queued(
+            "s", "当前问题", request_id="qq-current", chat_context=ChatContext(
+                botId=bot_id, scene="group", groupId="20001", senderId="10001", senderName="bai",
+            ),
+        )
+        assert answer == "离线回答"
+        assert len(requests) == 1 and len(requests[0].messages) == 100
+        assert requests[0].messages[0].role == "system"
+        assert "QQ 消息来源字段" in requests[0].messages[0].content
+        assert requests[0].messages[-2].content == "旧回答-54"
+        assert requests[0].messages[-1].content.endswith("bai：当前问题")
+        assert store.messages("s") == before
+    finally:
+        await chat.aclose()

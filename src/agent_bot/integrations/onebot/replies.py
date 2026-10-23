@@ -1,4 +1,4 @@
-"""统一校验并投递由 LLM 生成的 OneBot 用户回复。"""
+"""统一校验并投递模型正文与受限系统状态通知。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from nonebot.matcher import Matcher
 
 from agent_bot.config import RuntimeConfig
 from agent_bot.integrations.onebot.outgoing import OutgoingRecorder
+from agent_bot.media.contracts import MediaAssetView
 from agent_bot.model_guard import MODEL_CONFIGURATION_ERROR_MESSAGE
 from agent_bot.services.replies import GeneratedReply, LlmReplyComposer, ReplyIntent
 from agent_bot.state import split_reply
@@ -259,6 +260,18 @@ class OneBotReplyGateway:
             message=self._media_message(segment, prefix),
         )
 
+    async def send_video_asset_bot(
+        self, bot: Bot, *, scene: Literal["private", "group"], target_id: str,
+        segment: MessageSegment, asset: MediaAssetView,
+    ) -> dict[str, Any]:
+        """只发送服务器已授权读取的视频，使用现有文件引用完成出站登记。"""
+        if segment.type != "video" or asset.mime_type != "video/mp4":
+            raise ValueError("stored video attachment is invalid")
+        return await self._send_bot_message(
+            bot, scene=scene, target_id=target_id,
+            message=self._media_message(segment, None), video_asset=asset,
+        )
+
     async def _send_bot_message(
         self,
         bot: Bot,
@@ -268,6 +281,7 @@ class OneBotReplyGateway:
         message: Message,
         request_id: str | None = None,
         key: str = "message",
+        video_asset: MediaAssetView | None = None,
     ) -> dict[str, Any]:
         """投递前登记发送意图，成功后保存可见内容和素材引用。"""
 
@@ -281,6 +295,10 @@ class OneBotReplyGateway:
                 return await bot.send_private_msg(user_id=int(target_id), message=message)
         else:
             raise ValueError("unsupported OneBot scene")
+        if video_asset is not None and self.recorder is not None:
+            return await self.recorder.send_video_asset(
+                video_asset, sender, key=key, request_id=request_id,
+            )
         return await self._recorded_message(message, sender, key=key, request_id=request_id)
 
     async def _recorded_message(

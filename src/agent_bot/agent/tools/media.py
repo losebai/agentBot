@@ -88,7 +88,13 @@ class AdminMediaTools:
         if self.image_service is not None and self.config.chat_image_generation_enabled:
             names.add("image_generate")
         if self.config.chat_local_workflow_enabled and self.workflow is not None:
-            names.update({"local_workflow_list", "local_workflow_generate_image"})
+            names.update(
+                {
+                    "local_workflow_list",
+                    "local_workflow_generate_image",
+                    "local_workflow_generate_video",
+                }
+            )
         if self.config.chat_tts_enabled and self.tts is not None:
             names.add("tts_generate")
         return frozenset(names)
@@ -116,6 +122,7 @@ class AdminMediaToolSession:
             "local_workflow_generate_image": (
                 "使用所选工作流生成一张图片并保存为本次会话附件。每次请求最多一次。"
             ),
+            "local_workflow_generate_video": "使用图生视频工作流将当前唯一原图生成视频并保存附件。",
             "tts_generate": (
                 "使用固定 GPT-SoVITS 音色合成回复正文并保存语音附件，每次请求最多一次。"
             ),
@@ -152,7 +159,9 @@ class AdminMediaToolSession:
                 ),
             )
         quota = (
-            "image" if call.name in {"image_generate", "local_workflow_generate_image"}
+            "image"
+            if call.name
+            in {"image_generate", "local_workflow_generate_image", "local_workflow_generate_video"}
             else call.name
         )
         if quota in self.used:
@@ -160,8 +169,8 @@ class AdminMediaToolSession:
         self.used.add(quota)
         if call.name == "image_generate":
             asset = await self._direct_image(parsed)
-        elif call.name == "local_workflow_generate_image":
-            asset = await self._image(parsed)
+        elif call.name in {"local_workflow_generate_image", "local_workflow_generate_video"}:
+            asset = await self._image(parsed, video=call.name == "local_workflow_generate_video")
         else:
             speech = await self.owner.tts.generate(parsed.text)
 
@@ -211,16 +220,18 @@ class AdminMediaToolSession:
         )
         return result.attachments[0]
 
-    async def _image(self, parsed):
+    async def _image(self, parsed, *, video=False):
         """图生图只取本执行绑定的唯一原图，并跟踪自己的上游提交。"""
         summary = await self.owner.workflow.describe_workflow(parsed.workflow_key)
+        if (getattr(summary, "workflow_type", "text_to_image") == "image_to_video") != video:
+            raise AgentError("AGENT_TOOL_ARGUMENTS_INVALID", status_code=422)
         if summary.requires_image and len(self.images) != 1:
             raise AgentError("MEDIA_IMAGE_REQUIRED", status_code=422)
         image = self.images[0] if summary.requires_image else None
         request = await self.owner.workflow.prepare_request(
             workflow_key=parsed.workflow_key,
             positive_prompt=parsed.positive_prompt,
-            negative_prompt=parsed.negative_prompt,
+            negative_prompt=getattr(parsed, "negative_prompt", ""),
             request_scope=self.scope.execution_id,
             input_image=DownloadedImage(image.media_type, image.data) if image else None,
         )
@@ -228,7 +239,8 @@ class AdminMediaToolSession:
         token = active_image_task.set(execution)
         completed = False
         try:
-            generated = await self.owner.workflow.generate(
+            generate = self.owner.workflow.generate_video if video else self.owner.workflow.generate
+            generated = await generate(
                 workflow_key=request.workflow_key,
                 positive_prompt=request.positive_prompt,
                 negative_prompt=request.negative_prompt,
@@ -236,6 +248,11 @@ class AdminMediaToolSession:
                 workflow_sha256=request.workflow_sha256,
             )
             completed = True
+            if video:
+                return await self.owner.store.put(
+                    owner=self.scope.owner, scope=self.scope, purpose="output",
+                    data=generated.data, mime_type="video/mp4",
+                )
             image = await ImagePreparer().prepare_async(generated.data, generated.media_type)
             return await self.owner.store.put(
                 owner=self.scope.owner,

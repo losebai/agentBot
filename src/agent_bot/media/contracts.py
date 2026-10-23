@@ -8,6 +8,7 @@ from pydantic import Field, field_validator, model_validator
 
 from agent_bot.ai.contracts import AiModel
 from agent_bot.media.config import MAX_IMAGE_BYTES, MAX_MODEL_IMAGE_BYTES
+from agent_bot.media.video import MAX_VIDEO_BYTES
 from agent_bot.models import ChatMediaResponse
 
 ImageType = Literal["image/png", "image/jpeg", "image/webp"]
@@ -22,6 +23,7 @@ MediaType = Literal[
     "audio/flac",
     "audio/wav",
     "audio/pcm",
+    "video/mp4",
 ]
 RunStatus = Literal["running", "completed", "failed", "cancelled"]
 AssetStatus = Literal["writing", "ready", "expired", "failed"]
@@ -68,7 +70,7 @@ class MediaAssetView(AiModel):
     id: str = Field(pattern=r"^[0-9a-f]{32}$")
     purpose: Literal["input", "output"]
     mime_type: MediaType
-    size_bytes: int = Field(gt=0, le=MAX_IMAGE_BYTES)
+    size_bytes: int = Field(gt=0, le=MAX_VIDEO_BYTES)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     status: AssetStatus
     created_at: datetime
@@ -83,6 +85,8 @@ class MediaAssetView(AiModel):
     @model_validator(mode="after")
     def valid_lifetime(self):
         """文件有效期必须晚于创建时间，不能永久占用配额。"""
+        if self.mime_type != "video/mp4" and self.size_bytes > MAX_IMAGE_BYTES:
+            raise ValueError("image or audio exceeds its size limit")
         if self.expires_at <= self.created_at:
             raise ValueError("invalid media lifetime")
         return self

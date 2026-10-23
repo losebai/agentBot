@@ -236,6 +236,7 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
           <div className="workflow-tags">
             {catalog?.default_key === item.workflow_key && <Tag color="green">默认工作流</Tag>}
             <Tag>{item.source_format === 'ui' ? 'ComfyUI 界面格式' : '执行格式'}</Tag>
+            {item.workflow_type === 'image_to_video' && <Tag color="blue">图生视频</Tag>}
             <Tag color={item.executable ? 'default' : 'gold'}>{item.executable ? '可运行' : '待适配'}</Tag>
           </div>
           {item.description && <p>{item.description}</p>}
@@ -247,7 +248,7 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
               return enabled ? '工作流已启用。' : '工作流已停用。';
             })} />
           <span>{item.enabled ? '已启用' : '已停用'}</span>
-          <Button size="small" disabled={blocked || !item.enabled || !item.executable || catalog?.default_key === item.workflow_key}
+          <Button size="small" disabled={blocked || item.workflow_type === 'image_to_video' || !item.enabled || !item.executable || catalog?.default_key === item.workflow_key}
             aria-label={`将${item.display_name}设为默认`} onClick={() => void setDefault(item)}>设为默认</Button>
           <Button size="small" disabled={blocked} aria-label={`编辑${item.display_name}`} onClick={() => edit(item)}>编辑</Button>
           <Button size="small" disabled={blocked} aria-label={`查看${item.display_name} JSON`} onClick={() => void showJson(item)}>查看 JSON</Button>
@@ -268,7 +269,7 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
         <label htmlFor="workflow-positive">附加正向提示词</label>
         <Input.TextArea id="workflow-positive" disabled={busy} maxLength={2000} value={draft.additional_positive_prompt} onChange={event => setDraft({ ...draft, additional_positive_prompt: event.target.value })} />
         <label htmlFor="workflow-negative">附加负向提示词</label>
-        <Input.TextArea id="workflow-negative" disabled={busy} maxLength={2000} value={draft.additional_negative_prompt} onChange={event => setDraft({ ...draft, additional_negative_prompt: event.target.value })} />
+        <Input.TextArea id="workflow-negative" disabled={busy || editing?.workflow_type === 'image_to_video'} maxLength={2000} value={draft.additional_negative_prompt} onChange={event => setDraft({ ...draft, additional_negative_prompt: event.target.value })} />
         <div className="heading-actions"><Button aria-label="取消" disabled={busy} onClick={() => { setEditing(undefined); setDraft(undefined); setError(''); }}>取消</Button>
           <Button type="primary" htmlType="submit" disabled={blocked} loading={busy}>保存工作流</Button></div>
       </form>

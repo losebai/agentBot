@@ -12,7 +12,7 @@ const builtinTools = [
   ['memory', '标签记忆（QQ）'], ['naraka_query', '永劫无间查询（QQ）'],
   ['naraka_search', '永劫无间搜索（QQ）'], ['mention_member', '群成员 @（QQ）'],
   ['image_generate', '模型直接生图'],
-  ['local_workflow_list', '工作流列表'], ['local_workflow_generate_image', '工作流生图'],
+  ['local_workflow_list', '工作流列表'], ['local_workflow_generate_image', '工作流生图'], ['local_workflow_generate_video', '工作流生视频'],
   ['local_workflow_tasks', '绘图任务列表（QQ）'], ['local_workflow_cancel', '取消绘图任务（QQ）'],
   ['tts_generate', '语音生成'], ['job', '后台任务（QQ）'],
 ];

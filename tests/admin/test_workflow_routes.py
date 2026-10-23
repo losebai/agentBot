@@ -1,5 +1,6 @@
 """通过真实 SQLite 验证工作流管理权限、同步保留规则和并发编辑边界。"""
 
+import asyncio
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
@@ -57,6 +58,23 @@ async def import_one(api, content, filename="portrait.json"):
     )
     assert result.status_code == 200, result.text
     return (await api.get("/api/v1/workflows", headers=HEADERS)).json()["items"][0]
+
+
+async def test_h3_import_requires_enable_and_cannot_replace_default_image(workflow_api):
+    """视频可同步和启用，但不能被默认生图入口选择。"""
+    content = await asyncio.to_thread(
+        Path('src/resources/minimax_h3_r2v_upscale2x_api.json').read_text, 'utf-8',
+    )
+    item = await import_one(workflow_api, content, filename='h3.json')
+    assert item['workflow_type'] == 'image_to_video'
+    assert item['executable'] and not item['enabled']
+    result = await workflow_api.patch('/api/v1/workflows/h3', headers=HEADERS,
+        json={'expected_revision': item['revision'], 'values': {'enabled': True}})
+    assert result.status_code == 200, result.text
+    catalog = (await workflow_api.get('/api/v1/workflows', headers=HEADERS)).json()
+    response = await workflow_api.post('/api/v1/workflows/h3/default', headers=HEADERS,
+        json={'expected_revision': catalog['settings_revision']})
+    assert response.status_code == 422
 
 
 async def test_workflow_import_and_detail_respect_authentication(workflow_api, workflow_json):

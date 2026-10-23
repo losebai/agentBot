@@ -123,6 +123,15 @@ class MediaStore(AiDatabase):
         """先记录 writing，再原子发布文件，校验完成后才能返回 ready 元数据。"""
         if scope is not None and scope.owner != owner:
             raise MediaError("MEDIA_NOT_FOUND", status_code=404)
+        if mime_type == "video/mp4":
+            from agent_bot.media.video import validate_mp4
+
+            if purpose != "output":
+                raise MediaError("MEDIA_INVALID_RESPONSE")
+            try:
+                await finish_database_write(lambda: validate_mp4(data))
+            except ValueError as error:
+                raise MediaError("MEDIA_INVALID_RESPONSE") from error
         id = uuid4().hex
         now = self.clock()
         record = MediaAssetRecord(

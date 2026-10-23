@@ -4,6 +4,7 @@ import base64
 import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -724,12 +725,12 @@ async def test_processor_delivers_collected_workflow_image_when_agent_finishing_
 
 
 @pytest.mark.asyncio
-async def test_workflow_agent_rejection_is_silent_without_second_model(
+async def test_workflow_agent_rejection_uses_llm_explanation(
     monkeypatch: pytest.MonkeyPatch,
-    chat_plugin,
+    chat_plugin: Any,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """工作流主 Agent 拒绝后只记录脱敏诊断，不调用第二个模型或发送正文。"""
+    """工作流工具失败交给解释模型，只投递其生成的正文。"""
 
     caplog.set_level(
         logging.WARNING,
@@ -764,8 +765,9 @@ async def test_workflow_agent_rejection_is_silent_without_second_model(
     with pytest.raises(ChatAiRejectedError) as caught:
         await processor.generate(job)
     await processor.deliver_failure(job, caught.value)
-    assert composer.intents == []
-    bot.call_api.assert_not_awaited()
+    assert len(composer.intents) == 1
+    bot.call_api.assert_awaited_once()
+    assert str(bot.call_api.await_args.kwargs["message"]) == "不应生成的二次解释"
     diagnostic = next(
         record.getMessage()
         for record in caplog.records
@@ -957,34 +959,52 @@ async def test_processor_composes_sanitized_failure_once(monkeypatch, chat_plugi
     ChatAiRejectedError("sensitive", status_code=403),
     ChatAiProtocolError("sensitive"),
     ModelGuardUnavailableError("sensitive"),
+    ChatAiRejectedError("sensitive", error_code="AGENT_CONTEXT_TOO_LARGE", status_code=422),
+    ChatAiRejectedError("sensitive", error_code="AGENT_TOOL_ARGUMENTS_INVALID", status_code=422),
+    ChatAiUnavailableError("sensitive", error_code="AI_RATE_LIMITED", status_code=429),
 ])
-async def test_processor_model_failure_does_not_compose_or_send(
-    monkeypatch, chat_plugin, error,
+@pytest.mark.parametrize("tools", [(), ("mention_member",)])
+async def test_processor_failure_sends_only_llm_explanation(
+    monkeypatch: pytest.MonkeyPatch, chat_plugin: Any, error: Exception, tools: tuple[str, ...],
 ) -> None:
-    """模型调用拒绝、协议或目录故障不能触发第二个模型或 OneBot 消息。"""
+    """模型或工具失败通过无工具LLM说明，启用@能力不阻止已生成回复。"""
 
     composer = RecordingComposer()
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_reply_composer", composer)
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
 
-    await chat_plugin._ConversationProcessor().deliver_failure(queued_job(), error)
+    await chat_plugin._ConversationProcessor().deliver_failure(queued_job(chatTools=tools), error)
 
-    assert composer.intents == []
-    bot.call_api.assert_not_awaited()
+    assert len(composer.intents) == 1
+    bot.call_api.assert_awaited_once()
+    call = bot.call_api.await_args
+    assert call.args == ("send_group_msg",) and call.kwargs["group_id"] == 20001
+    text = str(call.kwargs["message"])
+    assert text == "不应生成的二次解释" and "sensitive" not in str(composer.intents)
+    assert composer.intents[0].facts.error_code == getattr(error, "error_code", None)
 
 
 
 
 @pytest.mark.asyncio
-async def test_processor_composer_failure_is_silent(monkeypatch, chat_plugin) -> None:
-    """解释生成器失败不得发送固定文字或再次尝试。"""
+@pytest.mark.parametrize("output", [None, " ", RuntimeError("secret")])
+@pytest.mark.parametrize("tools", [(), ("mention_member",)])
+async def test_processor_composer_failure_stays_silent(
+    monkeypatch: pytest.MonkeyPatch, chat_plugin: Any, output: str | Exception | None,
+    tools: tuple[str, ...],
+) -> None:
+    """解释模型仍失败或返回空白时不发送固定文案，也不重放原工具。"""
 
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
-    generate = AsyncMock(side_effect=RuntimeError("secret"))
+    generate = AsyncMock(side_effect=output) if isinstance(output, Exception) else AsyncMock(
+        return_value=output,
+    )
     monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", generate)
-    await chat_plugin._ConversationProcessor().deliver_failure(queued_job(), ValueError("bad"))
+    await chat_plugin._ConversationProcessor().deliver_failure(
+        queued_job(chatTools=tools), ValueError("bad"),
+    )
     generate.assert_awaited_once()
     bot.call_api.assert_not_awaited()
 
@@ -1060,9 +1080,9 @@ async def test_processor_long_reply_preserves_full_text_in_file(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("answer", ["", " \n "])
 async def test_processor_rejects_blank_model_reply_without_second_model(
-    monkeypatch, chat_plugin, answer,
+    monkeypatch: pytest.MonkeyPatch, chat_plugin: Any, answer: str,
 ) -> None:
-    """来源适配器拒绝空白模型结果后仍须静默，不能把它当普通业务错误解释。"""
+    """模型空白回复也由LLM解释，不能追加固定失败文案。"""
 
     composer = RecordingComposer()
     bot = onebot_mock()
@@ -1077,8 +1097,8 @@ async def test_processor_rejects_blank_model_reply_without_second_model(
         await processor.generate(job)
     await processor.deliver_failure(job, caught.value)
 
-    assert composer.intents == []
-    bot.call_api.assert_not_awaited()
+    assert len(composer.intents) == 1
+    bot.call_api.assert_awaited_once()
     assert isinstance(caught.value, ChatAiProtocolError)
 
 

@@ -2,14 +2,17 @@
 
 import json
 import sqlite3
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from agent_bot.ai.chat_errors import ChatAiRejectedError
 from agent_bot.integrations.onebot.outgoing import DeliveryScope, OutgoingRecorder
 from agent_bot.integrations.onebot.queue_processor import ConversationQueueProcessor
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway
@@ -38,6 +41,72 @@ def context_store(tmp_path):
                                     memory_enabled=False, max_memory_chars=1000),
     )
     return path, store
+
+
+@pytest.mark.parametrize("platform_fails", [False, True])
+@pytest.mark.parametrize("llm_fails", [False, True])
+async def test_failed_agent_notice_is_confirmed_in_context_once(
+    context_store: tuple[Path, SessionContextStore], platform_fails: bool, llm_fails: bool,
+) -> None:
+    """失败说明只用LLM正文；生成失败不发送，平台确认后才保存且不能重复投递。"""
+    _, store = context_store
+    facade = SessionDeliveryStore(lambda: store)
+    service = ChatService(
+        client=None, store=store, session_delivery=facade, system_prompt="角色",
+        max_input_chars=1000, cooldown_seconds=0, max_concurrent_requests=2,
+        model_router=ContentModelRouter("chat", "vision", "image", "audio"),
+    )
+    generation = await service.history_generation("s")
+    await service.receive_queued("s", "查一下资料", request_id="r", generation_id=generation)
+
+    async def scope(request_id: str | None) -> DeliveryScope:
+        """原请求的身份及代际由可信队列提供，不依赖异常正文。"""
+        return DeliveryScope("s", generation, request_id)
+
+    @asynccontextmanager
+    async def lease(*args: Any) -> AsyncIterator[None]:
+        """只替换运行时持有边界，保留真实上下文与出站事务。"""
+        yield
+
+    recorder = OutgoingRecorder(service_provider=lambda: service, store_provider=lambda: facade,
+                                materials_provider=lambda: None, scope_provider=scope)
+    gateway = OneBotReplyGateway(
+        lambda: SimpleNamespace(chat_max_reply_chars=1000, chat_chunk_chars=1000),
+        recorder=recorder,
+    )
+    bot = SimpleNamespace(send_private_msg=AsyncMock(
+        side_effect=ConnectionError("platform offline") if platform_fails else None,
+        return_value={"message_id": 11},
+    ))
+    processor = ConversationQueueProcessor(
+        config_provider=lambda: None, chat_service_provider=lambda: service,
+        runtime_lease=lease, tool_session_provider=lease, bot_provider=lambda _: bot,
+        reply_composer=SimpleNamespace(compose=AsyncMock(return_value=None if llm_fails else
+            GeneratedReply(text="检索内容太多，这次没整理出结果。", requestId="r"))),
+        reply_gateway=gateway, operation_store_provider=lambda: None,
+        image_submitter=AsyncMock(), workflow_service_provider=lambda: None,
+        outgoing_recorder=recorder, finish_received=service.finish_received,
+    )
+    job = ConversationJob(jobId="job", requestId="r", createdAt=10, sessionId="s",
+                          botId="90001", scene="private", userId="10001", prompt="查一下资料",
+                          chatTools=("mention_member",), historyGenerationId=generation)
+    error = ChatAiRejectedError("private model detail", error_code="AGENT_CONTEXT_TOO_LARGE")
+    try:
+        if platform_fails and not llm_fails:
+            with pytest.raises(ConnectionError, match="platform offline"):
+                await processor.deliver_failure(job, error)
+        else:
+            await processor.deliver_failure(job, error)
+            await processor.deliver_failure(job, error)
+        context = await service.conversation_context("s")
+        assert [row.content for row in context.messages if row.role == "user"] == ["查一下资料"]
+        notices = [row.content for row in context.messages if row.role == "assistant"]
+        assert len(notices) == (0 if platform_fails or llm_fails else 1)
+        if notices:
+            assert notices == ["检索内容太多，这次没整理出结果。"]
+        assert bot.send_private_msg.await_count == (0 if llm_fails else 1)
+    finally:
+        await service.aclose()
 
 
 async def test_unified_flow_uses_only_session_table_and_never_adds_combined_duplicate(

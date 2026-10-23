@@ -145,7 +145,7 @@ class PluginConfig(BaseModel):
     chat_local_workflow_timeout_seconds: float = Field(
         default=500,
         ge=10,
-        le=500,
+        le=3600,
         allow_inf_nan=False,
     )
     chat_keyword_at_replies: dict[str, str] = Field(

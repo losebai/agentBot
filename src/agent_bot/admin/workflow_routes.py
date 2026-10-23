@@ -84,7 +84,10 @@ def install_workflow_routes(router: APIRouter, runtime, settings: SettingsServic
         def persist() -> WorkflowImportResult:
             """转换和事务都在线程执行，客户端取消时仍等待已启动写入完成。"""
             definition = WorkflowCatalogImporter().parse_json(body.filename, body.content)
-            definition = replace(definition, enabled=definition.executable)
+            definition = replace(
+                definition,
+                enabled=definition.executable and definition.workflow_type != "image_to_video",
+            )
             return WorkflowImportResult(imported=store().upsert((definition,)))
 
         async with runtime.lease():
@@ -129,6 +132,8 @@ def install_workflow_routes(router: APIRouter, runtime, settings: SettingsServic
         def persist() -> WorkflowCatalog:
             """复用完整配置校验与乐观锁；不绕过现有设置的静态写入边界。"""
             definition = store().get(workflow_key)
+            if definition.workflow_type == "image_to_video":
+                raise WorkflowValidationError("video workflow cannot be the default image workflow")
             if not definition.enabled:
                 raise WorkflowValidationError("default workflow is disabled")
             validate_workflow_bindings(definition)

@@ -208,7 +208,10 @@ class ConversationJob(BaseModel):
                     raise ValueError("background image reference scope does not match job")
         elif self.workflow_request is not None:
             raise ValueError("workflow request requires a background image job")
-        workflow_enabled = "local_workflow_generate_image" in self.chat_tools
+        workflow_enabled = bool(
+            {"local_workflow_generate_image", "local_workflow_generate_video"}
+            & set(self.chat_tools)
+        )
         if self.image_start_reply is not None and not workflow_enabled:
             raise ValueError("image start message requires the workflow image tool")
         if self.image_start_parts is not None:
@@ -232,7 +235,7 @@ class ConversationResult(BaseModel):
     version: Literal[2] = 2
     kind: Literal[
         "TEXT", "MEDIA", "MIXED", "WORKFLOW_IMAGES", "TOOL_REPLY", "SILENT", "IMAGE_QUEUED",
-        "TOOL_IMAGES",
+        "TOOL_IMAGES", "WORKFLOW_VIDEO",
     ]
     mention_target_id: str | None = Field(
         default=None, alias="mentionTargetId", pattern=_QQ_ID_PATTERN,
@@ -253,6 +256,10 @@ class ConversationResult(BaseModel):
     tool_images: tuple[WorkflowImageArtifact, ...] = Field(
         default_factory=tuple, alias="toolImages", max_length=4,
     )
+    workflow_video_id: str | None = Field(
+        default=None, alias="workflowVideoId", pattern=r"^[a-f0-9]{32}$",
+        exclude_if=lambda value: value is None,
+    )
     workflow_delivery_version: Literal[2] = Field(
         default=2,
         alias="workflowDeliveryVersion",
@@ -262,6 +269,11 @@ class ConversationResult(BaseModel):
     def validate_kind(self) -> ConversationResult:
         """只允许来源可验证且与持久化分段完全一致的文字结果。"""
 
+        if (self.kind == "WORKFLOW_VIDEO") != (self.workflow_video_id is not None):
+            raise ValueError("video result requires its media asset reference")
+        if self.kind == "WORKFLOW_VIDEO" and (self.reply is not None or self.media is not None
+                or self.delivery_parts or self.workflow_images or self.tool_images):
+            raise ValueError("video result cannot contain image or text outputs")
         if self.reply_as_file and (
             self.kind not in {"TEXT", "TOOL_REPLY"} or self.reply is None
             or self.delivery_parts != (self.reply.text,)
@@ -1120,9 +1132,13 @@ class ConversationQueue:
             logger.error("对话队列任务异常结束：error=%s", type(error).__name__)
 
     def _is_retryable(self, exc: Exception) -> bool:
-        """判断业务、平台或存储异常是否允许按队列策略重试。"""
+        """模型临时故障已在请求层重试，队列只重试其他业务、平台及存储异常。"""
 
         if is_chat_busy_error(exc):
+            return False
+        if isinstance(exc, ChatAiError) and exc.error_code in {
+            "AI_TIMEOUT", "AI_RATE_LIMITED", "AI_UPSTREAM_UNAVAILABLE", "AGENT_TIMEOUT",
+        }:
             return False
         if isinstance(exc, ChatMemoryStoreError):
             failure = DatabaseFailure.from_error(exc)

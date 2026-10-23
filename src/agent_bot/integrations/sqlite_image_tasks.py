@@ -30,10 +30,18 @@ class SqliteImageTaskStore:
         self, connection: sqlite3.Connection, job: ConversationJob, stream_id: str,
     ) -> None:
         """借用队列的未提交事务写入元数据，入队失败时一同回滚。"""
-        self._write(connection, ImageTaskRecord(
-            task_id=job.job_id, created_at=job.created_at, stream_id=stream_id,
-            owner=ImageTaskOwner(bot_id=job.bot_id, session_id=job.session_id, user_id=job.user_id),
-        ))
+        self._write(
+            connection,
+            ImageTaskRecord(
+                task_id=job.job_id,
+                created_at=job.created_at,
+                media_kind=job.workflow_request.output_kind if job.workflow_request else "image",
+                stream_id=stream_id,
+                owner=ImageTaskOwner(
+                    bot_id=job.bot_id, session_id=job.session_id, user_id=job.user_id
+                ),
+            ),
+        )
 
     def _purge(self, connection: sqlite3.Connection) -> None:
         """清理本命名空间已结束且超出保留期的记录，活动记录始终保留。"""

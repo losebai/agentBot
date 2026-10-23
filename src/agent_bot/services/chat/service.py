@@ -643,7 +643,7 @@ class ChatService:
         laya_decision: bool = False,
         record_user_input: bool = True,
     ) -> str:
-        """自然聊天默认进入 Agent；专用指令及内部正文生成显式关闭工具能力。"""
+        """自然聊天默认进入Agent，构建历史时计入QQ来源；专用正文生成显式关闭工具。"""
 
         normalized = self._prompt_builder.normalize(prompt)
         current_prompt = (
@@ -706,6 +706,7 @@ class ChatService:
                 system_messages=request_system_messages,
                 persist_history=persist_history,
                 recent_group_context=recent_group_context,
+                chat_context=chat_context,
             )
             if untrusted_facts is not None:
                 messages.insert(

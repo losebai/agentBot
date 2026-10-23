@@ -43,7 +43,7 @@ class ChatRouteSelector:
                 "soloncode",
                 "mention_member",
                 "local_workflow_list",
-                "local_workflow_generate_image",
+                "local_workflow_generate_image", "local_workflow_generate_video",
                 "local_workflow_tasks",
                 "local_workflow_cancel",
                 "tts_generate",

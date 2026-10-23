@@ -27,7 +27,7 @@ class WorkflowSummary(ApiModel):
     description: str
     additional_positive_prompt: str
     additional_negative_prompt: str
-    workflow_type: Literal["text_to_image", "image_to_image", "fixed_reference"]
+    workflow_type: Literal["text_to_image", "image_to_image", "fixed_reference", "image_to_video"]
     positive_node_id: str | None
     negative_node_id: str | None
     output_node_id: str | None

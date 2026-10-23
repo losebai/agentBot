@@ -40,6 +40,7 @@ class RedisImageTaskStore:
         """在 Stream 的同一个事务中加入任务元数据和有界索引。"""
         owner = ImageTaskOwner(bot_id=job.bot_id, session_id=job.session_id, user_id=job.user_id)
         record = ImageTaskRecord(task_id=job.job_id, created_at=job.created_at,
+            media_kind=job.workflow_request.output_kind if job.workflow_request else "image",
                                  owner=owner, stream_id=stream_id)
         pipeline.set(self._key(job.job_id), record.model_dump_json())
         index = self._index(owner)

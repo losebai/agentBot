@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from agent_bot.agent.tools.chat import ChatToolBridge
 from agent_bot.ai.auto_speak import AutoSpeakDecisionService
 from agent_bot.ai.auto_speak_records import AutoSpeakRecords
+from agent_bot.ai.llm_auto_speak import LlmAutoSpeakDecisionService
 from agent_bot.ai.routing import RoutedModelGuard, RoutingAiClient
 from agent_bot.config import RuntimeConfig
 from agent_bot.core.runtime import CoreRuntimeState, build_core_state
@@ -26,7 +27,7 @@ from agent_bot.model_router import ContentModelRouter
 from agent_bot.models import ChatToolName
 from agent_bot.runtime_fields import RESTART_REQUIRED_FIELDS
 from agent_bot.sent_messages import SentMessageStore
-from agent_bot.services.auto_speak_decision import AutoSpeakContextBuilder
+from agent_bot.services.auto_speak_decision import AutoSpeakContextBuilder, AutoSpeakDecisionClient
 from agent_bot.services.chat import ChatService
 from agent_bot.services.conversation_queue import ConversationJob
 from agent_bot.services.naraka import NarakaQueryService
@@ -170,22 +171,32 @@ def build_runtime_state(
     auto_speak_service: AutoSpeakService | None = None
     if config.chat_auto_speak_enabled:
         assert config.chat_auto_speak_bot_id is not None
-        assert config.chat_auto_speak_mcp_code is not None
+        decision_client: AutoSpeakDecisionClient
+        if config.chat_auto_speak_decision_backend == "llm":
+            # 直接普通调用，不能经聊天路由注入 Agent 人设、工具或会话上下文。
+            decision_client = LlmAutoSpeakDecisionService(
+                ai_client.python_service, model=config.chat_auto_speak_decision_model,
+                prompt=config.chat_auto_speak_llm_prompt,
+            )
+        else:
+            assert config.chat_auto_speak_mcp_code is not None
+            decision_client = AutoSpeakDecisionService(
+                agent_catalog, mcp_connector,
+                AutoSpeakRecords(database, connect=database_pool.connect),
+                mcp_code=config.chat_auto_speak_mcp_code,
+            )
         auto_speak_service = AutoSpeakService(
             job_submitter=auto_speak_job_submitter,
             available_tools_provider=auto_speak_tools_provider,
             conversation_context_provider=chat_service.conversation_context,
-            decision_client=AutoSpeakDecisionService(
-                agent_catalog, mcp_connector,
-                AutoSpeakRecords(database, connect=database_pool.connect),
-                mcp_code=config.chat_auto_speak_mcp_code,
-            ),
+            decision_client=decision_client,
             context_builder=AutoSpeakContextBuilder(),
             recent_context_store=group_recent_context_store,
             bot_provider=bot_provider,
             bot_id=config.chat_auto_speak_bot_id.get_secret_value(),
             group_ids=config.chat_auto_speak_groups,
             trigger_mode=config.chat_auto_speak_trigger_mode,
+            decision_backend=config.chat_auto_speak_decision_backend,
             prompt=config.chat_auto_speak_prompt,
             system_prompt=config.chat_system_prompt,
             system_prompt_provider=ai_client.current_system_prompt,

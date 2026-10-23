@@ -83,7 +83,7 @@ Python 源码平铺在 `src/`，通过构建配置和开发安装钩子映射为
 - QQ 接入需要 NapCat，支持 OneBot V11 正向或反向 WebSocket。
 - Windows 桌面版可托管固定版本 NapCat 并提供原生登录入口；已有部署保持外部接入。
   载荷准备、目录与使用方式见 [NapCat 桌面托管](WINDOWS_README.md#napcat-桌面托管)。
-- 自动发言需要一个提供 `laya_predict` 的 MCP 服务，通过管理端目录登记。
+- 自动发言可选择 Laya 或 LLM 决策：Laya 需要登记提供 `laya_predict` 的 MCP 服务；LLM 使用独立配置的目录模型和决策提示词。
 - 使用本地绘图或语音工具时，分别需要 ComfyUI 或 GPT-SoVITS。
 
 ## 源码安装与首次运行
@@ -273,7 +273,7 @@ QQ 文字回复在分段和投递前统一清理空白行：连续换行以及�
 
 管理 Agent 可使用网页、授权的 MCP 和已启用的 `local_workflow_list`、`local_workflow_generate_image`、`tts_generate`；管理入口不接受客户端提供的 QQ 令牌、用户或群身份。
 
-Job 默认关闭，启用后作为 QQ 专属工具执行。管理 Agent 不接受 QQ Job 工具；SolonCode 和通用 Laya 指令尚未迁移。自动发言的固定 Laya 决策已由独立 Python 服务接入。
+Job 默认关闭，启用后作为 QQ 专属工具执行。管理 Agent 不接受 QQ Job 工具；SolonCode 和通用 Laya 指令尚未迁移。自动发言由独立 Python 服务接入，支持 Laya / LLM 二选一决策。
 
 停止请求、切换模式、离开对话页或退出登录会取消当前管理请求。已经完成的工具操作不会撤销；结果无法确认时记录为 `unknown`。残留的 `running` 记录不一定表示任务仍在执行。
 
@@ -329,7 +329,12 @@ uv run agent-bot workflows list
 
 Job 到期使用创建时的稳定模型引用和系统提示快照，执行一次普通文本模型调用。结果先持久保存，再由 QQ 队列投递；读取不等于消费，完整发送后才确认。中断执行标记失败，不自动重放模型调用；取消执行中的任务阻止结果发布，但已产生的调用费用无法撤回。
 
-自动发言在“MCP 服务”登记已启用的 `general` 服务，工具白名单至少包含 `laya_predict`；访问令牌直接在管理页面填写并保存到数据库。在“机器人配置 → 自动回复设置”填写 `chat_auto_speak_mcp_code`、机器人 QQ 号和最多 20 个目标群，开启群近期上下文，保留至少 2 个 AI 并发名额，再启用 `chat_auto_speak_enabled`。`interval` 为定时判断（最短 60 秒），`message` 为合格群消息触发。决策只接受固定 `speak/silent` 的结构化结果，异常或取消时保持静默；决策记录不保存群聊输入正文。
+自动发言在“机器人配置 → 自动回复设置”填写机器人 QQ 号和最多 20 个目标群，开启群近期上下文，保留至少 2 个 AI 并发名额，再启用 `chat_auto_speak_enabled`。`interval` 为定时判断（最短 60 秒），`message` 为合格群消息触发。通过 `chat_auto_speak_decision_backend` 选择决策方式，默认 `laya`；配置保存到所选数据库并热刷新，不增加表结构或要求额外 SQL 升级。
+
+- **Laya**：在“MCP 服务”登记已启用的 `general` 服务，工具白名单包含 `laya_predict`，填写 `chat_auto_speak_mcp_code` 及现有 Laya 决策指令。沿用现有固定选择协议和上下文构造。
+- **LLM**：填写独立的 `chat_auto_speak_decision_model` 和 `chat_auto_speak_llm_prompt`，模型从管理端目录选择，无需 Laya MCP。每次通过普通文本接口发送独立提示词和固定 JSON 输出约束，不传触发消息、近期群聊、人设、记忆或会话历史，不调用 Agent、工具或联网；不使用聊天模型或正文生成提示词替代。只接受 `{"choice":"speak"}` 或 `{"choice":"silent"}`。普通调用的提示词、输出、实际模型及用量归档到“系统调用 → 自动发言决策”，不会写入聊天历史。
+
+两种方式仅决定是否开口；获准后的正文生成、工具能力及发送队列仍按原配置执行。异常或取消时保持群内静默，不自动切换决策方式或模型，也不叠加决策重试；LLM 普通调用复用既有传输层的同模型暂时故障重试和总超时预算。
 
 Job 执行检查及结果轮询间隔由 `chat_job_poll_seconds` 控制。首次导入后以上配置通过管理界面保存并热刷新。实现和验证范围见 [迁移记录](docs/python-jobs-auto-speak-migration.md)。
 

@@ -205,6 +205,13 @@ class PluginConfig(BaseModel):
     chat_job_poll_seconds: float = Field(default=5, ge=1, le=60, allow_inf_nan=False)
     # 决策端点和凭据只从管理端 MCP 目录读取，配置中只保存 code。
     chat_auto_speak_enabled: bool = False
+    chat_auto_speak_decision_backend: Literal["laya", "llm"] = "laya"
+    chat_auto_speak_decision_model: str = Field(default="", max_length=200)
+    chat_auto_speak_llm_prompt: str = Field(
+        default=("判断现在是否适合主动发言。仅当发言自然、有明确价值且不会打扰群聊时"
+                 "选择 speak，否则选择 silent。"),
+        min_length=1, max_length=1000, repr=False,
+    )
     chat_auto_speak_mcp_code: str | None = Field(
         default=None, pattern=r"^[a-z][a-z0-9_-]{0,63}$"
     )
@@ -366,9 +373,14 @@ class PluginConfig(BaseModel):
                 and self.chat_auto_speak_interval_seconds < 60):
             raise ValueError("auto-speak interval must be at least 60 seconds")
         if self.chat_auto_speak_enabled:
-            if not (self.chat_auto_speak_bot_id and self.chat_auto_speak_groups
-                    and self.chat_auto_speak_mcp_code):
-                raise ValueError("auto-speak requires bot, groups and registered MCP code")
+            if not (self.chat_auto_speak_bot_id and self.chat_auto_speak_groups):
+                raise ValueError("auto-speak requires bot and groups")
+            # 决策方式显式二选一，不允许通过普通聊天模型或另一后端补齐依赖。
+            if self.chat_auto_speak_decision_backend == "laya":
+                if not self.chat_auto_speak_mcp_code:
+                    raise ValueError("Laya auto-speak requires registered MCP code")
+            elif not self.chat_auto_speak_decision_model.strip():
+                raise ValueError("LLM auto-speak requires an independent decision model")
             if not self.chat_group_recent_context_enabled:
                 raise ValueError("auto-speak requires recent group context")
             if self.chat_max_concurrent_requests < 2:
@@ -445,6 +457,7 @@ class PluginConfig(BaseModel):
         "chat_vision_model",
         "chat_image_model",
         "chat_memory_embedding_model",
+        "chat_auto_speak_decision_model",
     )
     @classmethod
     def validate_model_id(cls, value: str) -> str:
@@ -904,6 +917,9 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_job_enabled": "启用 Python 定时任务、结果轮询和投递确认",
     "chat_job_poll_seconds": "任务执行检查和结果轮询间隔秒数，范围 1-60",
     "chat_auto_speak_enabled": "是否启用自动发言",
+    "chat_auto_speak_decision_backend": "自动发言决策方式",
+    "chat_auto_speak_decision_model": "自动发言决策模型",
+    "chat_auto_speak_llm_prompt": "自动发言 LLM 决策提示词",
     "chat_auto_speak_mcp_code": "已登记的自动发言决策 MCP 服务 code (仅调用 laya_predict)",
     "chat_auto_speak_bot_id": "自动发言机器人 QQ 号",
     "chat_auto_speak_groups": "自动发言目标群列表",

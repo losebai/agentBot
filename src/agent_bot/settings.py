@@ -52,6 +52,7 @@ SENSITIVE_SETTING_NAMES = SECRET_SETTING_NAMES | frozenset(
         "chat_system_prompt",
         "chat_auto_speak_prompt",
         "chat_auto_speak_laya_prompt",
+        "chat_auto_speak_llm_prompt",
         "chat_auto_speak_groups",
         "chat_allowed_groups",
         "chat_allowed_users",

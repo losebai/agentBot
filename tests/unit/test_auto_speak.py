@@ -122,6 +122,7 @@ def make_service(
     conversation_context_provider: FakeConversationContextProvider | None = None,
     system_prompt_provider: Callable[[], Awaitable[str | None]] | None = None,
     group_shared_session: bool = False,
+    decision_backend: str = "laya",
 ) -> AutoSpeakService:
     """用离线依赖构造群聊自动发言，允许覆盖机器人人设。"""
 
@@ -149,7 +150,33 @@ def make_service(
         sleep=sleep,
         on_error=on_error,
         group_shared_session=group_shared_session,
+        decision_backend=decision_backend,
     )
+
+
+async def test_llm_decision_does_not_read_history_or_agent_persona():
+    """LLM 决策不传入任何群聊资料，读取会话或 Agent 人设即失败。"""
+    from unittest.mock import AsyncMock
+
+    history = AsyncMock(side_effect=AssertionError("must not read session memory/history"))
+    persona = AsyncMock(side_effect=AssertionError("must not inherit Agent persona"))
+    jobs = FakeJobSubmitter()
+    client = FakeDecisionClient([decision(True), decision(False)])
+    bot = FakeBot()
+    value = make_service(
+        job_submitter=jobs, decision_client=client,
+        context_store=FakeContextStore({"88888": "当次群聊资料"}), bot_provider=lambda _: bot,
+        conversation_context_provider=history, system_prompt_provider=persona,
+        system_prompt="不得传入的机器人人设", prompt="不得传入的正文生成指令",
+        decision_backend="llm",
+    )
+    assert (await value.run_once()).sent == 1
+    assert (await value.run_once()).sent == 0
+    history.assert_not_awaited()
+    persona.assert_not_awaited()
+    assert len(jobs.jobs) == 1
+    for call in client.calls:
+        assert call["state"] == ""
 
 
 def decision_payload(state: str) -> dict[str, object]:

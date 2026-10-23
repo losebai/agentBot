@@ -10,7 +10,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from agent_bot.agent.contracts import StepView
-from agent_bot.ai.call_origin import command_call
+from agent_bot.ai.call_origin import auto_speak_call, command_call
 from agent_bot.ai.contracts import AiModel, Page, TokenUsage
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
@@ -125,7 +125,12 @@ def python_record(row, type, context=None):
         for key in ("usage", "revisions", "configured_model", "backend", "entry", "error_code")
         if key in row
     }
-    if command_call.get():
+    is_decision = auto_speak_call.get()
+    if is_decision:
+        # 决策输入只有独立提示词，沿用普通归档，但不混入普通对话分页。
+        type = "auto_speak"
+        data.update(system_kind="auto_speak", decision_backend="llm")
+    elif command_call.get():
         data["system_kind"] = "command"
     return bounded_record(
         {
@@ -147,7 +152,7 @@ def python_record(row, type, context=None):
             "execution_id": row["execution_id"],
             "status": row["status"],
             **({"created_at_utc": source_record_time(row["created_at"])}
-               if type == "ordinary" else {}),
+               if type in {"ordinary", "auto_speak"} else {}),
         }
     )
 

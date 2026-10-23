@@ -7,6 +7,7 @@ import { ambiguousModelReference, ModelSelect, selectedModel } from './ModelSele
 export const modelSettingNames = new Set([
   'chat_model', 'chat_vision_model', 'chat_image_model', 'chat_tts_model',
   'chat_memory_embedding_model',
+  'chat_auto_speak_decision_model',
 ]);
 
 /** 模型配置字段共享目录，只在模型设置可见时读取；分类切换和凭据变化取消旧请求。 */

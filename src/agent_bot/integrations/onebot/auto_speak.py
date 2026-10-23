@@ -1,4 +1,4 @@
-"""由 Laya 决策门控的群聊自动发言。"""
+"""由显式选择的 Laya 或独立 LLM 决策门控的群聊自动发言。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from agent_bot.group_context import RecentGroupContextStoreProtocol
 from agent_bot.models import ChatToolName
@@ -48,7 +48,7 @@ class AutoSpeakCycleResult:
 
 
 class AutoSpeakService:
-    """顺序检查配置群，并仅在 Laya 选择 speak 后生成消息。"""
+    """顺序检查配置群，并仅在所选决策服务允许后生成消息。"""
 
     def __init__(
         self,
@@ -74,8 +74,9 @@ class AutoSpeakService:
         on_error: ErrorReporter | None = None,
         system_prompt_provider: Callable[[], Awaitable[str | None]] | None = None,
         group_shared_session: bool = False,
+        decision_backend: Literal["laya", "llm"] = "laya",
     ) -> None:
-        """保存群目标、共享会话边界与决策依赖；判定时读取当前人设。"""
+        """保存群目标和会话边界；Laya 读取当前人设，LLM 决策隔离上下文。"""
 
         if (
             not bot_id
@@ -105,6 +106,7 @@ class AutoSpeakService:
         self._laya_prompt = laya_prompt.strip()
         self._session_secret = session_secret
         self._group_shared_session = group_shared_session
+        self._decision_backend = decision_backend
         self._initial_delay_seconds = initial_delay_seconds
         self._interval_seconds = interval_seconds
         self._max_reply_chars = max_reply_chars
@@ -188,7 +190,7 @@ class AutoSpeakService:
         group_id: str,
         recent_group_context: str | None,
     ) -> bool:
-        """按配置绑定群会话，串行调用 Laya 并沿用普通队列生成和投递。"""
+        """按配置绑定发送会话；LLM 决策独立于该会话的记忆、历史和 Agent。"""
 
         # 共享群复用普通事件的规范身份；未共享时不能借主动发言扩大用户素材权限。
         scope = (
@@ -199,18 +201,22 @@ class AutoSpeakService:
             else f"bot:{self._bot_id}:auto:group:{group_id}"
         )
         session_id = external_session_id(scope, self._session_secret)
-        conversation_context = await self._conversation_context_provider(session_id)
-        current_prompt = (
-            await self._system_prompt_provider() if self._system_prompt_provider else None
-        )
-        state = self._context_builder.build(
-            trigger_mode=self._trigger_mode,
-            system_prompt=self._system_prompt if current_prompt is None else current_prompt,
-            auto_speak_prompt=self._prompt,
-            laya_prompt=self._laya_prompt,
-            conversation_context=conversation_context,
-            recent_group_context=recent_group_context,
-        )
+        if self._decision_backend == "llm":
+            # 独立 LLM 只发送自身提示词，共用接口的状态槽明确留空。
+            state = ""
+        else:
+            conversation_context = await self._conversation_context_provider(session_id)
+            current_prompt = (
+                await self._system_prompt_provider() if self._system_prompt_provider else None
+            )
+            state = self._context_builder.build(
+                trigger_mode=self._trigger_mode,
+                system_prompt=self._system_prompt if current_prompt is None else current_prompt,
+                auto_speak_prompt=self._prompt,
+                laya_prompt=self._laya_prompt,
+                conversation_context=conversation_context,
+                recent_group_context=recent_group_context,
+            )
         async with _DECISION_LOCK:
             result = await self._decision_client.decide_auto_speak(
                 state=state,

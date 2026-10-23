@@ -510,7 +510,9 @@ async def test_runtime_state_rebuilds_recent_group_context_only_when_its_limits_
 
 
 @pytest.mark.asyncio
-async def test_runtime_state_builds_group_only_laya_auto_speak(chat_plugin) -> None:
+@pytest.mark.parametrize("backend", ["laya", "llm"])
+async def test_runtime_state_builds_group_only_auto_speak(chat_plugin, backend) -> None:
+    """替换运行时按方式绑定独立依赖，切换 LLM 后不再要求 MCP code。"""
     current = chat_plugin._runtime_state
     values = runtime_config_to_plain_values(current.config)
     values.update(
@@ -520,7 +522,10 @@ async def test_runtime_state_builds_group_only_laya_auto_speak(chat_plugin) -> N
             "chat_auto_speak_groups": ["940000000000002"],
             "chat_auto_speak_trigger_mode": "message",
             "chat_mcp_enabled": True,
-            "chat_auto_speak_mcp_code": "decision",
+            "chat_auto_speak_mcp_code": "decision" if backend == "laya" else None,
+            "chat_auto_speak_decision_backend": backend,
+            "chat_auto_speak_decision_model": "model:7",
+            "chat_auto_speak_llm_prompt": "仅发送的独立决策指令",
             "chat_group_recent_context_enabled": True,
         }
     )
@@ -533,7 +538,13 @@ async def test_runtime_state_builds_group_only_laya_auto_speak(chat_plugin) -> N
         assert service.runs_on_interval is False
         assert service.accepts_message("940000000000001", "940000000000002") is True
         assert service.accepts_message("940000000000001", "940000000000003") is False
-        assert service._decision_client.catalog is replacement.ai_client.agent_service.catalog
+        if backend == "laya":
+            assert service._decision_client.catalog is replacement.ai_client.agent_service.catalog
+        else:
+            assert service._decision_client.service is replacement.ai_client.python_service
+            assert service._decision_client.model == "model:7"
+            assert service._decision_client.prompt == "仅发送的独立决策指令"
+        assert service._decision_backend == backend
         assert service._recent_context_store is replacement.group_recent_context_store
         assert not hasattr(service, "_targets")
     finally:

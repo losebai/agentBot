@@ -1,14 +1,23 @@
-"""Laya 自由发言决策的类型契约与有界上下文构造。"""
+"""自动发言决策契约，隔离 Laya 会话资料和 LLM 单次输入。"""
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from agent_bot.models import AutoSpeakDecisionResponse
 from agent_bot.state import ConversationContext
 
 AutoSpeakTriggerMode = Literal["interval", "message"]
+
+
+@dataclass(frozen=True, slots=True)
+class AutoSpeakDecision:
+    """独立 LLM 的布尔门控结果，不伪造 Laya 模型身份或置信度。"""
+
+    should_speak: bool
+
 
 _MAX_STATE_CHARS = 8000
 _MAX_PROMPT_CHARS = 1000
@@ -29,8 +38,8 @@ class AutoSpeakDecisionClient(Protocol):
         state: str,
         session_id: str,
         request_id: str,
-    ) -> AutoSpeakDecisionResponse:
-        """根据有界状态返回固定 choice 决策。"""
+    ) -> AutoSpeakDecisionResponse | AutoSpeakDecision:
+        """Laya 使用有界状态；LLM 忽略状态，仅按独立提示词返回发言许可。"""
 
         ...
 

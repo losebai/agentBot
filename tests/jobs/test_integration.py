@@ -53,6 +53,25 @@ def test_auto_speak_requires_registered_code_and_valid_targets():
     assert config(**values, chat_auto_speak_trigger_mode="message")
 
 
+def test_llm_auto_speak_requires_own_model_without_laya_mcp():
+    """LLM 模式仅依赖独立模型，不能误用普通聊天模型或强制绑定 Laya。"""
+    values = dict(
+        chat_auto_speak_enabled=True, chat_auto_speak_bot_id="10001",
+        chat_auto_speak_groups={"10003"}, chat_group_recent_context_enabled=True,
+        chat_auto_speak_decision_backend="llm", chat_auto_speak_decision_model="model:7",
+        chat_auto_speak_llm_prompt="只判断本次是否适合发言",
+    )
+    selected = config(**values)
+    assert selected.chat_auto_speak_decision_model == "model:7"
+    assert selected.chat_auto_speak_mcp_code is None
+    for model in ("", "\n", "bad\x00model"):
+        with pytest.raises(ValidationError):
+            config(**(values | {"chat_auto_speak_decision_model": model}))
+    with pytest.raises(ValidationError):
+        config(**(values | {"chat_auto_speak_decision_backend": "other"}))
+    assert config().chat_auto_speak_decision_backend == "laya"
+
+
 class EmptyConnector:
     """没有远端服务时只提供空工具集。"""
 

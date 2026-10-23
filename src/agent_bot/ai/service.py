@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import aclosing, asynccontextmanager
 from datetime import datetime, timezone
 
@@ -15,6 +15,7 @@ from agent_bot.ai.contracts import (
     CatalogReadiness,
     ProviderCall,
     ProviderProtocol,
+    ProviderResult,
     SessionWrite,
     TextRequest,
     TokenUsage,
@@ -147,10 +148,14 @@ class AiService:
             logger.warning("AI record unavailable: %s", type(error).__name__)
             return False
 
-    async def complete(self, request: TextRequest) -> AiCompletion:
+    async def complete(
+        self, request: TextRequest, *, validate_content: Callable[[str], object] | None = None,
+    ) -> AiCompletion:
+        """执行普通文本调用；有固定输出契约时在成功归档前验证，不重试模型。"""
         started, execution_id = time.monotonic(), uuid.uuid4().hex
         async with self._slot():
             with request_deadline(request.timeout_seconds):
+                result: ProviderResult | None = None
                 try:
 
                     async def invoke():
@@ -161,6 +166,8 @@ class AiService:
 
                     timeout = remaining_timeout(request.timeout_seconds)
                     result = await asyncio.wait_for(invoke(), timeout)
+                    if validate_content is not None:
+                        validate_content(result.content)
                 except asyncio.CancelledError:
                     await self._record(
                         request,
@@ -188,9 +195,10 @@ class AiService:
                         execution_id,
                         started,
                         status="failed",
-                        content="",
-                        model=request.model,
-                        stats=TokenUsage(),
+                        # 协议校验失败时模型已经产生用量，不能丢失实际响应元数据。
+                        content=result.content if result is not None else "",
+                        model=result.model if result is not None else request.model,
+                        stats=result.usage if result is not None else TokenUsage(),
                         error_code=error.code,
                     )
                     raise error from original

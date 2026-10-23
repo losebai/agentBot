@@ -35,6 +35,13 @@ const replySettingNames = new Set([
 // 兼容旧服务端快照：菜单开关和内部搜索绑定均不能作为设置字段编辑或提交。
 const hiddenSettingNames = new Set(['app_enabled_plugins', 'chat_python_search_mcp_code']);
 
+/** 仅展示当前决策方式的依赖，切换方式时不删除另一方式的草稿或已存值。 */
+function visibleDecisionField(name: string, backend: string): boolean {
+  if (['chat_auto_speak_mcp_code', 'chat_auto_speak_laya_prompt'].includes(name)) return backend === 'laya';
+  if (['chat_auto_speak_decision_model', 'chat_auto_speak_llm_prompt'].includes(name)) return backend === 'llm';
+  return true;
+}
+
 /** 按用途分类；供应商模型归 LLM，避免生图模型因图片字段前缀混入 Comfy。 */
 function fieldCategory(field: SettingField): Category {
   const name = field.name;
@@ -108,7 +115,10 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
   const [comfyTab, setComfyTab] = useState('connection');
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [settingsRefreshing, setSettingsRefreshing] = useState(false);
-  const showModels = category === 'llm' && !!snapshot?.fields.some(field => modelSettingNames.has(field.name));
+  const decisionBackend = String(draft.chat_auto_speak_decision_backend
+    ?? snapshot?.fields.find(field => field.name === 'chat_auto_speak_decision_backend')?.value ?? 'laya');
+  const showModels = !!snapshot?.fields.some(field => modelSettingNames.has(field.name)
+    && fieldCategory(field) === category && visibleDecisionField(field.name, decisionBackend));
   const models = useSettingsModels(token, showModels);
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -152,6 +162,7 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
   }
 
   const fields = snapshot?.fields.filter(field => !hiddenSettingNames.has(field.name) && fieldCategory(field) === category
+    && visibleDecisionField(field.name, decisionBackend)
     && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase()))
     // 名称是群聊触发入口，在 QQ 分类中优先展示。
     .sort((left, right) => Number(right.name === 'nickname') - Number(left.name === 'nickname')) || [];
@@ -222,7 +233,11 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
         return <div className="setting-row" key={field.name}>
           <div className="setting-description"><label htmlFor={id}>{field.description}</label>{field.restart_required && <Tag>重启生效</Tag>}<code>{field.name}</code></div>
           <div className="setting-control">
-            {modelSettingNames.has(field.name) ? <SettingsModelSelect id={id} value={String(value)}
+            {field.name === 'chat_auto_speak_decision_backend' ? <ChoiceSelect id={id} disabled={readOnly}
+              value={String(value)} onChange={change}>
+              <option value="laya">Laya</option><option value="llm">LLM</option>
+            </ChoiceSelect>
+              : modelSettingNames.has(field.name) ? <SettingsModelSelect id={id} value={String(value)}
               readOnly={readOnly} nullable={modelCanClear}
               directory={models} onChange={change} />
               : field.name === 'nickname' ? <Input.TextArea id={id} disabled={readOnly}
@@ -234,9 +249,10 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
             </ChoiceSelect>
               : kind === 'boolean' ? <Switch id={id} disabled={readOnly} checked={value === true} onChange={change} />
               : kind === 'secret' ? <Input.Password id={id} disabled={readOnly} value={String(value)} placeholder={field.secret_is_set ? readOnly ? '已设置' : '已设置 · 留空保持原值' : '未设置'} autoComplete="new-password" onChange={event => change(event.target.value)} />
-              : kind === 'json' || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
+              : kind === 'json' || field.name === 'chat_auto_speak_llm_prompt' || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
               : <Input id={id} disabled={readOnly} type={kind === 'number' ? 'number' : 'text'} step="any" value={String(value)} onChange={event => change(event.target.value)} />}
             {field.name === 'nickname' && <small>每行一个名称或别名，保存后热更新；留空关闭名字触发。</small>}
+            {field.name === 'chat_auto_speak_llm_prompt' && <small>每次只发送此提示词，使用独立决策模型普通调用；不传群聊文本、人设、记忆或历史。仅返回 {`{"choice":"speak"}`} 或 {`{"choice":"silent"}`}。</small>}
             {field.name === 'onebot_v11_access_token' && <small>{readOnly
               ? '当前字段由启动环境覆盖或缺少启动文件，请检查启动配置；与 NapCat Token 保持一致。'
               : '静态启动配置，可在这里保存；手动“服务→重启后端”后生效，请与 NapCat Token 保持一致。留空不修改。'}</small>}

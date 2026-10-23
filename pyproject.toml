@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-bot"
-version = "0.5.5"
+version = "0.5.6"
 description = "Independent Agent bot service with browser administration"
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -73,6 +73,8 @@ artifacts = ["src/static/**"]
 ".env.example" = ".env.example"
 # 日期命名的迁移脚本被 Git 忽略规则排除，源码包必须显式保留完整 SQL 基线。
 "sql" = "sql"
+# 内置工作流目录允许被 Git 忽略，但源码包重建 wheel 时仍必须提供。
+"src/resources" = "src/resources"
 
 [tool.hatch.build.targets.wheel]
 # 当前源码位于 src/agent_bot，资源目录通过下方规则放到同一发布包。

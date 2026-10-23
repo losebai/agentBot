@@ -151,7 +151,18 @@ Inno Setup 6，以及已准备并验证的 `runtime/napcat` Shell 载荷；SSH �
 编译器优先使用显式 `-IsccPath` 或 `ISCC_PATH`，其次使用本机已有的
 `build/ci-tools/inno/ISCC.exe`，否则沿用标准安装位置或 PATH。
 
-发布前同步 `pyproject.toml`、`src/agent_bot/__init__.py`、`web/package.json`、
+指定版本发布，例如：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -Version 0.5.6
+```
+
+先准备 `sql/UPGRADE-0.5.6.md`；脚本会同步项目版本及两个发布测试中的固定版本断言，
+不会修改第三方依赖和历史升级说明。不指定 `-Version` 时沿用现有版本并检查一致性。
+文件同步完成后即使后续构建或发布失败，工作区仍保留指定版本，便于修复后重跑。
+只想同步后在本地构建时使用 `-Version 0.5.6 -BuildOnly`。
+
+手动维护版本时同步 `pyproject.toml`、`src/agent_bot/__init__.py`、`web/package.json`、
 `web/package-lock.json` 和 `uv.lock` 中的项目版本；不要替换第三方依赖的同号版本。
 同时提供 `sql/UPGRADE-<版本>.md`，说明升级起点、顺序及数据影响。
 被 Git 忽略的 SQL 仍是构建输入，缺少时须先恢复相应完整与增量脚本。

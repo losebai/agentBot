@@ -131,8 +131,45 @@ def test_public_download_verification_checks_actual_bytes(tmp_path, release, cor
         worker.join()
 
 
+@pytest.mark.parametrize('valid', [True, False])
+def test_set_version_preserves_dependencies_and_history(tmp_path, release, valid):
+    """定向改项目与固定断言；非法版本不写文件，依赖和历史说明保持原样。"""
+    fixtures = {
+        'pyproject.toml': '[project]\nname = "agent-bot"\nversion = "0.5.5"\n',
+        'uv.lock': '[[package]]\nname = "agent-bot"\nversion = "0.5.5"\n'
+                   '[[package]]\nname = "other"\nversion = "0.5.5"\n',
+        'src/agent_bot/__init__.py': '__version__ = "0.5.5"\n',
+        'web/package.json': '{"version":"0.5.5"}',
+        'web/package-lock.json': '{"version":"0.5.5","packages":'
+                                 '{"":{"version":"0.5.5"},'
+                                 '"node_modules/other":{"version":"0.5.5"}}}',
+        'tests/agent/test_release.py': 'assert actual == "0.5.5"\n',
+        'tests/media/test_release.py': 'assert actual == "0.5.5"\n',
+        'sql/UPGRADE-0.5.6.md': 'upgrade guide',
+        'sql/UPGRADE-0.5.5.md': 'historical version 0.5.5',
+    }
+    for name, content in fixtures.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding='utf-8')
+    if not valid:
+        with pytest.raises(ValueError):
+            release.set_version(tmp_path, '0.5.6;bad')
+        assert all((tmp_path / name).read_text('utf-8') == value
+                   for name, value in fixtures.items())
+        return
+    release.set_version(tmp_path, '0.5.6')
+    assert release.project_version(tmp_path) == '0.5.6'
+    lock = release.read_json(tmp_path / 'web/package-lock.json')
+    assert lock['packages']['']['version'] == '0.5.6'
+    assert lock['packages']['node_modules/other']['version'] == '0.5.5'
+    assert 'name = "other"\nversion = "0.5.5"' in (tmp_path / 'uv.lock').read_text()
+    assert (tmp_path / 'tests/agent/test_release.py').read_text() == 'assert actual == "0.5.6"\n'
+    assert (tmp_path / 'sql/UPGRADE-0.5.5.md').read_text() == fixtures['sql/UPGRADE-0.5.5.md']
+
+
 @pytest.mark.skipif(sys.platform != 'win32', reason='需要 Windows PowerShell')
-@pytest.mark.parametrize('mode', ['publish', 'build_only', 'package_failure'])
+@pytest.mark.parametrize('mode', ['publish', 'build_only', 'package_failure', 'explicit_version'])
 def test_powershell_orchestration_stops_before_publish_on_failure(tmp_path, mode):
     """真实执行入口但替代构建及网络命令，核对仅构建边界和失败阻断。"""
     tools = tmp_path / 'tools'
@@ -156,6 +193,8 @@ function ssh { throw 'Unexpected direct SSH invocation' }
 function scp { throw 'Unexpected direct SCP invocation' }
 if ($env:RELEASE_MODE -eq 'build_only') {
     & "$PSScriptRoot/tools/release_windows.ps1" -BuildOnly
+} elseif ($env:RELEASE_MODE -eq 'explicit_version') {
+    & "$PSScriptRoot/tools/release_windows.ps1" -Version 0.5.6
 } else {
     & "$PSScriptRoot/tools/release_windows.ps1"
 }
@@ -172,5 +211,13 @@ if ($env:RELEASE_MODE -eq 'build_only') {
     else:
         assert result.returncode == 0, result.stderr.decode(errors='replace')
         assert '|prepare|' in calls
-        assert ('|publish|' in calls) == (mode == 'publish')
-        assert ('|check-version|' in calls) == (mode == 'publish')
+        assert ('|publish|' in calls) == (mode != 'build_only')
+        assert ('|check-version|' in calls) == (mode != 'build_only')
+        assert ('|set-version|' in calls) == (mode == 'explicit_version')
+
+
+def test_missing_upgrade_guide_rejects_before_writing(tmp_path, release):
+    """未知升级影响不能由脚本编造，缺少说明时保持工作区不变。"""
+    with pytest.raises(ValueError, match=r'UPGRADE-0\.5\.6\.md'):
+        release.set_version(tmp_path, '0.5.6')
+    assert not list(tmp_path.iterdir())

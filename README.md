@@ -25,7 +25,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1
 ```
 
 脚本读取项目版本，完成测试、安装器与 SQL 包构建、上传校验及公网验证。
-发布前同步版本号并提供该版本升级说明；参数与环境要求见 [发布说明](deploy/README.md#一键构建并发布)。
+也可加 `-Version 0.5.6` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.5.6.md`。
+参数与环境要求见 [发布说明](deploy/README.md#一键构建并发布)。
 
 当前 Windows 发布版本：**0.5.5**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。

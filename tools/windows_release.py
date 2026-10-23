@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import urlopen
@@ -151,6 +152,66 @@ def verify(stage: Path, base_url: str) -> None:
         print(f'Public SHA256 verified: {name}', flush=True)
 
 
+def set_version(root: Path, version: str) -> None:
+    """仅同步项目身份与固定发布断言；先完成输入校验，写入失败恢复已修改文件。"""
+    import tomllib
+
+    version_tuple(version)
+    if not (root / 'sql' / f'UPGRADE-{version}.md').is_file():
+        raise ValueError(f'请先提供 sql/UPGRADE-{version}.md，再指定发布版本')
+    old = tomllib.loads((root / 'pyproject.toml').read_text('utf-8'))['project']['version']
+    originals: dict[Path, bytes] = {}
+    changes: dict[Path, bytes] = {}
+
+    def update(name: str, transform: Callable[[str], str]) -> None:
+        """保存原始字节以便回滚，并保留 BOM 和换行风格。"""
+        path = root / name
+        raw = path.read_bytes()
+        text = raw.decode('utf-8-sig')
+        updated = transform(text)
+        codec = 'utf-8-sig' if raw.startswith(b'\xef\xbb\xbf') else 'utf-8'
+        originals[path] = raw
+        changes[path] = updated.encode(codec)
+
+    def replace_field(pattern: str, text: str) -> str:
+        """要求唯一项目字段，避免改到第三方依赖或未识别的文件布局。"""
+        result, count = re.subn(pattern, lambda m: m[1] + version + m[2], text)
+        if count != 1:
+            raise ValueError('Expected exactly one project version field')
+        return result
+
+    update('pyproject.toml', lambda s: replace_field(
+        r'(?ms)(^\[project\]\r?\n(?:(?!^\[).)*?^version\s*=\s*")[^"]+(")', s))
+    update('src/agent_bot/__init__.py', lambda s: replace_field(
+        r'(?m)(^__version__ = ")[^"]+(")', s))
+    update('uv.lock', lambda s: replace_field(
+        r'(?m)(^name = "agent-bot"\r?\nversion = ")[^"]+(")', s))
+
+    def update_json(text: str, *, lock: bool = False) -> str:
+        """只改根包版本，锁文件内第三方包的版本与下载地址保持原值。"""
+        data = json.loads(text)
+        data['version'] = version
+        if lock:
+            data['packages']['']['version'] = version
+        newline = '\r\n' if '\r\n' in text else '\n'
+        return (json.dumps(data, ensure_ascii=False, indent=2) + '\n').replace('\n', newline)
+
+    update('web/package.json', update_json)
+    update('web/package-lock.json', lambda s: update_json(s, lock=True))
+    for name in ['tests/agent/test_release.py', 'tests/media/test_release.py']:
+        update(name, lambda s: re.sub(
+            r'([\'\"])' + re.escape(old) + r'\1', lambda m: m[1] + version + m[1], s))
+    written = []
+    try:
+        for path, content in changes.items():
+            written.append(path)
+            path.write_bytes(content)
+    except OSError:
+        for path in written:
+            path.write_bytes(originals[path])
+        raise
+
+
 def project_version(root: Path) -> str:
     """本机用 Python 3.12 核对版本，服务器切换无需导入 tomllib。"""
     import tomllib
@@ -174,11 +235,14 @@ def project_version(root: Path) -> str:
 def main() -> None:
     """同一标准库入口可在本机构建环境及 Linux 下载服务器运行。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['version', 'prepare', 'activate', 'publish',
-                                          'check-version'])
+    parser.add_argument('command', choices=['version', 'set-version', 'prepare', 'activate',
+                                          'publish', 'check-version'])
     parser.add_argument('arguments', nargs='+')
     args = parser.parse_args()
-    if args.command == 'version':
+    if args.command == 'set-version':
+        set_version(Path(args.arguments[0]), args.arguments[1])
+        print(project_version(Path(args.arguments[0])))
+    elif args.command == 'version':
         print(project_version(Path(args.arguments[0])))
     elif args.command == 'prepare':
         prepare(Path(args.arguments[0]), Path(args.arguments[1]), args.arguments[2])

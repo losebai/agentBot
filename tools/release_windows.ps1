@@ -1,5 +1,6 @@
-﻿# 一键构建 Windows 发布版并部署下载站；不升级数据库，不修改项目版本或启动配置。
+﻿# 一键构建 Windows 发布版并部署下载站；不升级数据库，仅在指定 -Version 时同步项目版本，不修改启动配置。
 param(
+    [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$Version,
     [string]$Server = 'root@192.168.1.5',
     [string]$RemoteDirectory = '/www/public/agentbot',
     [string]$BaseUrl = 'https://public.loserbai.cn/agentbot',
@@ -30,7 +31,12 @@ try {
             Get-Command $command -ErrorAction Stop | Out-Null
         }
     }
-    # 仅读取项目版本；明确核对相关版本，避免替换同号第三方依赖。
+    # 显式版本只同步项目字段，保留依赖版本及历史说明；未指定则沿用现有版本。
+    if ($Version) {
+        Invoke-ReleaseStep 'Set project version' {
+            uv run --no-project --python 3.12 python tools/windows_release.py set-version $repoRoot $Version
+        }
+    }
     $version = & uv run --no-project --python 3.12 python tools/windows_release.py version $repoRoot
     if ($LASTEXITCODE -ne 0) { throw 'Release version validation failed.' }
     $version = $version.Trim()

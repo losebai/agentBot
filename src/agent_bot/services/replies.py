@@ -162,8 +162,8 @@ class GeneratedReply(BaseModel):
     @field_validator("text")
     @classmethod
     def normalize_line_breaks(cls, value: str, info: ValidationInfo) -> str:
-        """文件中的空白行可能影响代码语义，只在普通消息中规范化换行。"""
-        if info.context and info.context.get("file_reply"):
+        """文件与模型明确分条的代码可能依赖空行，只有普通消息规范化换行。"""
+        if info.context and (info.context.get("file_reply") or info.context.get("preserve_format")):
             return value
         normalized = value.replace("\r\n", "\n").replace("\r", "\n")
         return re.sub(r"\n(?:[^\S\n]*\n)+", "\n", normalized)

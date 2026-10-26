@@ -15,6 +15,7 @@ from agent_bot.services.auto_speak_decision import (
     AutoSpeakContextBuilder,
     AutoSpeakDecisionClient,
     AutoSpeakTriggerMode,
+    build_llm_decision_state,
 )
 from agent_bot.services.chat.routing import ChatRouteSelector
 from agent_bot.services.conversation_queue import ConversationJob
@@ -76,7 +77,7 @@ class AutoSpeakService:
         group_shared_session: bool = False,
         decision_backend: Literal["laya", "llm"] = "laya",
     ) -> None:
-        """保存群目标和会话边界；Laya 读取当前人设，LLM 决策隔离上下文。"""
+        """保存群目标和会话边界；LLM 只接收群聊快照，隔离会话记忆和人设。"""
 
         if (
             not bot_id
@@ -202,8 +203,8 @@ class AutoSpeakService:
         )
         session_id = external_session_id(scope, self._session_secret)
         if self._decision_backend == "llm":
-            # 独立 LLM 只发送自身提示词，共用接口的状态槽明确留空。
-            state = ""
+            # 消息触发快照已包含当前消息，无需再次拼接，也不读取会话记忆或人设。
+            state = build_llm_decision_state(recent_group_context)
         else:
             conversation_context = await self._conversation_context_provider(session_id)
             current_prompt = (

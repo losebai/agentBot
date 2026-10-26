@@ -1,0 +1,73 @@
+"""验证 QQ 多条回复的严格协议及受信任提示词。"""
+
+import pytest
+from pydantic import ValidationError
+
+from agent_bot.ai.chat_errors import ChatAiProtocolError
+from agent_bot.config import RuntimeConfig
+
+
+def make_config(**values):
+    """提供独立测试密钥，不读取本地启动文件。"""
+    return RuntimeConfig(
+        onebot_v11_access_token="test-onebot-access-token-with-enough-entropy",
+        chat_session_secret="test-session-secret-with-enough-entropy", **values,
+    )
+
+
+def test_multi_reply_decodes_only_nonempty_string_messages():
+    """模型给定的消息边界与代码块原样保留。"""
+    from agent_bot.services.multi_reply import parse_multi_reply
+
+    assert parse_multi_reply('["第一条", "```py\\nx = 1\\n```"]', 3) == (
+        "第一条", "```py\nx = 1\n```",
+    )
+
+
+@pytest.mark.parametrize("text", [
+    '普通正文', '```json\n["正文"]\n```', '{}', '[]', '[null]', '[1]',
+    '[true]', '["有效", "   "]', '["一", "二", "三", "四"]', '["未完成"',
+])
+def test_invalid_multi_reply_is_rejected_without_fallback(text):
+    """格式错误必须拒绝，不能把包装内容投递或擅自改写。"""
+    from agent_bot.services.multi_reply import parse_multi_reply
+
+    with pytest.raises(ChatAiProtocolError, match="多条回复"):
+        parse_multi_reply(text, 3)
+
+
+def test_multi_reply_settings_are_dynamic_and_defaults_preserve_existing_delivery():
+    """新配置默认关闭且进入数据库字段集合，不接受启动环境覆盖。"""
+    from agent_bot.static_config import DYNAMIC_SETTING_NAMES
+
+    config = make_config()
+    assert config.chat_multi_reply_enabled is False
+    assert config.chat_multi_reply_max_messages == 3
+    assert config.chat_multi_reply_interval_seconds == 1
+    assert {
+        "chat_multi_reply_enabled", "chat_multi_reply_max_messages",
+        "chat_multi_reply_interval_seconds", "chat_multi_reply_prompt",
+    } <= DYNAMIC_SETTING_NAMES
+
+
+@pytest.mark.parametrize("values", [
+    {"chat_multi_reply_max_messages": 0}, {"chat_multi_reply_max_messages": 11},
+    {"chat_multi_reply_interval_seconds": -1}, {"chat_multi_reply_interval_seconds": 11},
+    {"chat_multi_reply_interval_seconds": float("nan")},
+])
+def test_multi_reply_settings_enforce_bounds(values):
+    """运行配置在保存前拒绝不可执行的条数和间隔。"""
+    with pytest.raises(ValidationError):
+        make_config(**values)
+
+
+def test_multi_reply_prompt_keeps_protocol_after_custom_instructions():
+    """管理员可改写表达风格，程序仍在其后固定最终正文协议。"""
+    from agent_bot.services.multi_reply import build_multi_reply_prompt
+
+    config = make_config(chat_multi_reply_prompt="按语义分条", chat_multi_reply_max_messages=2)
+    prompt = build_multi_reply_prompt(config)
+    assert prompt.startswith("按语义分条")
+    assert "JSON" in prompt and "2" in prompt
+    assert "工具" in prompt and "代码块" in prompt
+    assert '["' in prompt

@@ -162,6 +162,130 @@ def queued_job(**overrides: object) -> ConversationJob:
     return ConversationJob.model_validate(values)
 
 
+@pytest.fixture
+def multi_reply_session(monkeypatch, chat_plugin):
+    """只替代 QQ 令牌租约，不连接实际 MCP 或 QQ 服务。"""
+    @asynccontextmanager
+    async def open_session(job):
+        """提供当前任务的已授权工具集合。"""
+        yield job.chat_tools, "test-tool-session"
+
+    monkeypatch.setattr(chat_plugin, "_open_queued_tool_session", open_session)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tools", [(), ("mention_member",)])
+async def test_multi_reply_preserves_model_boundaries_and_mentions_first_only(
+    monkeypatch, chat_plugin, tools, multi_reply_session,
+):
+    """工具和普通回复共用分条协议，字符分段配置不能破坏模型声明的边界。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_chunk_chars", 1)
+    agent = AsyncMock(return_value='["第一条", "```py\\nx = 1\\n\\ny = 2\\n```"]')
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", agent)
+    bot = onebot_mock()
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
+    processor = chat_plugin._ConversationProcessor()
+    job = queued_job(chatTools=tools, mentionTargetId="10001", systemPromptAppend="保持友好")
+
+    result = await processor.generate(job)
+
+    assert result.delivery_parts == ("第一条", "```py\nx = 1\n\ny = 2\n```")
+    assert result.reply.text == "第一条\n```py\nx = 1\n\ny = 2\n```"
+    assert result.delivery_interval_seconds == 1
+    assert "保持友好" in agent.await_args.kwargs["system_prompt_append"]
+    assert "JSON" in agent.await_args.kwargs["system_prompt_append"]
+    assert await processor.delivery_count(job, result) == 2
+    for index in range(2):
+        await processor.deliver_part(job, result, index)
+    messages = [call.kwargs["message"] for call in bot.call_api.await_args_list]
+    assert messages[0][0].type == "at"
+    assert messages[1].extract_plain_text() == "```py\nx = 1\n\ny = 2\n```"
+    assert all(segment.type != "at" for segment in messages[1])
+    assert ConversationResult.model_validate_json(result.model_dump_json(by_alias=True)) == result
+
+
+@pytest.mark.asyncio
+async def test_multi_reply_invalid_json_never_reaches_onebot(
+    monkeypatch, chat_plugin, multi_reply_session,
+):
+    """未遵守协议的正文直接失败，不把原始模型包装发到 QQ。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", True)
+    monkeypatch.setattr(
+        chat_plugin.chat_service, "generate_queued", AsyncMock(return_value='["残缺"'),
+    )
+    with pytest.raises(ChatAiProtocolError, match="多条回复"):
+        await chat_plugin._ConversationProcessor().generate(queued_job())
+
+
+@pytest.mark.asyncio
+async def test_multi_reply_file_contains_decoded_readable_text(
+    monkeypatch, chat_plugin, multi_reply_session,
+):
+    """超总长度改发完整文件，文件内容不含 JSON 包装或截断正文。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_max_reply_chars", 5)
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
+        return_value='["第一条消息", "第二条消息"]',
+    ))
+    result = await chat_plugin._ConversationProcessor().generate(queued_job())
+    assert result.reply_as_file
+    assert result.reply.text == "第一条消息\n第二条消息"
+    assert result.delivery_parts == ("第一条消息\n第二条消息",)
+
+
+@pytest.mark.asyncio
+async def test_multi_reply_auto_speak_limits_decoded_body(monkeypatch, chat_plugin):
+    """主动发言先解析数组，再使用专用预算裁剪最后一条，不能截断 JSON。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", True)
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
+        return_value='["第一条", "第二条内容"]',
+    ))
+    result = await chat_plugin._ConversationProcessor().generate(queued_job(
+        chatTools=(), autoSpeakMaxReplyChars=6,
+    ))
+    assert result.delivery_parts == ("第一条", "第二")
+    assert result.reply.text == "第一条\n第二"
+    assert not result.reply_as_file
+
+
+@pytest.mark.asyncio
+async def test_multi_reply_generation_uses_one_configuration_snapshot(monkeypatch, chat_plugin):
+    """生成中途配置切换不能使本轮提示、校验和发送间隔互相矛盾。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", True)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_max_messages", 2)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_interval_seconds", 0.5)
+
+    async def generate(*args, **kwargs):
+        """在模型调用边界模拟管理员保存新配置。"""
+        assert "2 条" in kwargs["system_prompt_append"]
+        monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
+        monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_max_messages", 1)
+        monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_interval_seconds", 9)
+        return '["一", "二"]'
+
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
+    result = await chat_plugin._ConversationProcessor().generate(queued_job(chatTools=()))
+    assert result.delivery_parts == ("一", "二")
+    assert result.delivery_interval_seconds == 0.5
+
+
+@pytest.mark.asyncio
+async def test_multi_reply_does_not_change_decision_report_protocol(
+    monkeypatch, chat_plugin, multi_reply_session,
+):
+    """结构化决策报告不应套用面向 QQ 聊天正文的数组要求。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", True)
+    agent = AsyncMock(return_value='{"decision": "silence"}')
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", agent)
+    result = await chat_plugin._ConversationProcessor().generate(queued_job(
+        chatTools=(), layaDecision=True, systemPromptAppend="决策规则",
+    ))
+    assert agent.await_args.kwargs["system_prompt_append"] == "决策规则"
+    assert result.reply.text == '{"decision": "silence"}'
+    assert not result.multi_reply
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_fails", [False, True])
 async def test_processor_keeps_first_of_two_collected_images(

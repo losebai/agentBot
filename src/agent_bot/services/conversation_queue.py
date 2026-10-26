@@ -242,6 +242,11 @@ class ConversationResult(BaseModel):
     )
     reply: PersistedGeneratedReply | None = None
     reply_as_file: bool = Field(default=False, alias="replyAsFile")
+    # 旧结果默认使用原有拼接规则，新协议显式保存消息边界及间隔以支持重启恢复。
+    multi_reply: bool = Field(default=False, alias="multiReply")
+    delivery_interval_seconds: float = Field(
+        default=0, alias="deliveryIntervalSeconds", ge=0, le=10, allow_inf_nan=False,
+    )
     delivery_parts: tuple[str, ...] = Field(
         default_factory=tuple,
         alias="deliveryParts",
@@ -295,9 +300,15 @@ class ConversationResult(BaseModel):
         ):
             raise ValueError("silent result cannot contain delivery fields")
         if self.kind == "TOOL_REPLY" and (
-            self.reply is None or self.media is not None or len(self.delivery_parts) != 1
+            self.reply is None or self.media is not None
+            or (not self.multi_reply and len(self.delivery_parts) != 1)
         ):
             raise ValueError("tool reply must contain exactly one message")
+        if self.multi_reply and (
+            self.kind not in {"TEXT", "TOOL_REPLY"}
+            or not 1 <= len(self.delivery_parts) <= 10
+        ):
+            raise ValueError("multi reply requires bounded text messages")
         if self.kind == "IMAGE_QUEUED" and (
             self.reply is None or self.media is not None or self.workflow_images
             or len(self.delivery_parts) != 1
@@ -341,7 +352,7 @@ class ConversationResult(BaseModel):
         if self.reply is not None and (
             not self.delivery_parts
             or any(not part for part in self.delivery_parts)
-            or "".join(self.delivery_parts) != self.reply.text
+            or ("\n" if self.multi_reply else "").join(self.delivery_parts) != self.reply.text
         ):
             raise ValueError("delivery parts must equal the generated reply")
         return self
@@ -935,6 +946,10 @@ class ConversationQueue:
                         raise ValueError("conversation delivery parts are invalid")
                     for index in range(state.delivery_index, delivery_count):
                         self._remaining_seconds(entry)
+                        if index > 0 and result.delivery_interval_seconds:
+                            # 间隔属于已生成结果；取消或期限耗尽时保留最后确认的索引。
+                            await asyncio.sleep(result.delivery_interval_seconds)
+                            self._remaining_seconds(entry)
                         if execution is None:
                             await self.processor.deliver_part(entry.job, result, index)
                         else:

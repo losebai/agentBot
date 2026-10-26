@@ -10,7 +10,7 @@ auto_speak_call: ContextVar[bool] = ContextVar("auto_speak_call", default=False)
 
 @asynccontextmanager
 async def auto_speak_scope() -> AsyncIterator[None]:
-    """独立提示词的普通模型决策使用系统分类，退出或取消时恢复标记。"""
+    """独立模型的单次群聊决策使用系统分类，退出或取消时恢复标记。"""
     token = auto_speak_call.set(True)
     try:
         yield

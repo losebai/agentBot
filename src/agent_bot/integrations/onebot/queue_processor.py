@@ -44,6 +44,7 @@ from agent_bot.services.conversation_queue import (
     WorkflowImageArtifact,
 )
 from agent_bot.services.image_task_context import active_image_task
+from agent_bot.services.multi_reply import build_multi_reply_prompt, parse_multi_reply
 from agent_bot.services.replies import (
     FeatureUnavailableFacts,
     GeneratedReply,
@@ -75,15 +76,16 @@ _SILENT_FAILURES = (
 
 
 def generated_reply_from_model(
-    text: str, request_id: str, *, as_file: bool = False,
+    text: str, request_id: str, *, as_file: bool = False, preserve_format: bool = False,
 ) -> GeneratedReply:
-    """仅适配非空模型正文，文件保留格式；空白结果不能二次模型解释。"""
+    """集中验证模型正文来源，文件及明确分条保留格式，拒绝空白结果。"""
 
-    normalized = text if as_file else text.strip()
+    normalized = text if as_file or preserve_format else text.strip()
     if not normalized.strip():
         raise ChatAiProtocolError("model reply is empty")
     return GeneratedReply.model_validate(
-        {"text": normalized, "requestId": request_id}, context={"file_reply": as_file},
+        {"text": normalized, "requestId": request_id},
+        context={"file_reply": as_file, "preserve_format": preserve_format},
     )
 
 
@@ -167,6 +169,14 @@ class ConversationQueueProcessor:
         """绑定直接生图和工作流提交器，生成结果与投递检查点共用原队列。"""
 
         async with self._runtime_lease():
+            # 模型提示和最终解析必须来自同一快照，热更新不能在生成中途切换协议。
+            reply_config = self._config_provider().model_copy()
+            multi_reply = reply_config.chat_multi_reply_enabled and not job.laya_decision
+            prompt_append = job.system_prompt_append
+            if multi_reply:
+                prompt_append = "\n\n".join(filter(None, (
+                    prompt_append, build_multi_reply_prompt(reply_config),
+                )))
             await self._receive_original(job)
             if (execution := active_image_task.get()) is not None:
                 await execution.check_cancelled()
@@ -234,8 +244,8 @@ class ConversationQueueProcessor:
                             recent_group_context=job.recent_group_context,
                             **({"laya_decision": True} if job.laya_decision else {}),
                             **(
-                                {"system_prompt_append": job.system_prompt_append}
-                                if job.system_prompt_append is not None
+                                {"system_prompt_append": prompt_append}
+                                if prompt_append is not None
                                 else {}
                             ),
                         )
@@ -340,6 +350,12 @@ class ConversationQueueProcessor:
                 )
             if not answer and current_tool_images():
                 return ConversationResult(kind="TOOL_IMAGES", toolImages=current_tool_images())
+            if multi_reply:
+                if reply_collector is not None and reply_collector.already_delivered:
+                    return ConversationResult(kind="SILENT")
+                if answer is None:
+                    raise ChatAiProtocolError("多条回复正文不能为空")
+                return self._multi_reply_result(job, answer, reply_config, tools, reply_collector)
             # 普通聊天超过文字上限改为完整文件；自动发言继续遵循专用长度上限。
             if (
                 answer is not None and job.auto_speak_max_reply_chars is None
@@ -393,6 +409,46 @@ class ConversationQueueProcessor:
                 )
             )
             return ConversationResult(kind="TEXT", reply=persisted, deliveryParts=parts)
+
+    def _multi_reply_result(
+        self, job: ConversationJob, answer: str, config: RuntimeConfig,
+        tools: Sequence[ChatToolName], reply_collector: Any,
+    ) -> ConversationResult:
+        """先解析模型边界再应用正文预算，文件与历史均不保留 JSON 包装。"""
+        parts = tuple(part.strip() for part in parse_multi_reply(
+            answer, config.chat_multi_reply_max_messages,
+        ))
+        limit = self._reply_limit(job, config.chat_max_reply_chars)
+        text = "\n".join(parts)
+        as_file = job.auto_speak_max_reply_chars is None and len(text) > limit
+        if job.auto_speak_max_reply_chars is not None:
+            # 专用主动发言预算按可见正文计数，不截断协议或发送空白尾消息。
+            bounded = []
+            remaining = limit
+            for part in parts:
+                clipped = part[:remaining].rstrip()
+                if not clipped:
+                    break
+                bounded.append(clipped)
+                remaining -= len(clipped) + 1
+                if remaining <= 0:
+                    break
+            parts = tuple(bounded)
+            text = "\n".join(parts)
+        reply = generated_reply_from_model(text, job.request_id, preserve_format=True)
+        selected = reply_collector.reply if reply_collector is not None else None
+        return ConversationResult(
+            kind="TOOL_REPLY" if tools else "TEXT",
+            reply=PersistedGeneratedReply.model_validate(reply.model_dump(by_alias=True)),
+            deliveryParts=(text,) if as_file else parts,
+            multiReply=True, replyAsFile=as_file,
+            deliveryIntervalSeconds=0 if as_file else config.chat_multi_reply_interval_seconds,
+            mentionTargetId=(
+                str(selected.target_user_id)
+                if selected is not None and selected.target_user_id is not None
+                else job.mention_target_id
+            ) if tools else None,
+        )
 
     async def _submit_image(
         self, job: ConversationJob, workflow_request: WorkflowImageRequest | None = None,
@@ -687,7 +743,7 @@ class ConversationQueueProcessor:
         job: ConversationJob,
         result: ConversationResult,
     ) -> int:
-        """将图片和完成通知分别计入进度，通知重试时不重发已送达图片。"""
+        """独立计算图片、文字和提醒的投递进度，恢复时不重发已确认片段。"""
 
         if self._requires_image_completion(job, result):
             return 2
@@ -697,6 +753,8 @@ class ConversationQueueProcessor:
             return 0
         if result.kind == "TEXT":
             return len(result.delivery_parts)
+        if result.kind == "TOOL_REPLY" and result.multi_reply:
+            return len(result.delivery_parts) + int(bool(result.workflow_images))
         if result.kind == "WORKFLOW_IMAGES":
             return 1
         if result.kind == "MIXED":
@@ -711,6 +769,20 @@ class ConversationQueueProcessor:
             return None
         return result.mention_target_id if result.kind == "TOOL_REPLY" else job.mention_target_id
 
+    async def _send_multi_reply_part(
+        self, job: ConversationJob, result: ConversationResult, index: int,
+        prefix: MessageSegment | None,
+    ) -> None:
+        """按持久化模型边界发送一条正文，保留代码格式并沿用统一出站登记。"""
+        assert result.reply is not None
+        reply = generated_reply_from_model(
+            result.delivery_parts[index], result.reply.request_id, preserve_format=True,
+        )
+        await self._reply_gateway.send_bot_exact_part(
+            self._bot_provider(job.bot_id), scene=job.scene,
+            target_id=job.group_id or job.user_id, reply=reply, prefix=prefix,
+        )
+
     async def deliver_part(
         self, job: ConversationJob, result: ConversationResult, index: int,
     ) -> None:
@@ -721,7 +793,7 @@ class ConversationQueueProcessor:
     async def _deliver_part(
         self, job: ConversationJob, result: ConversationResult, index: int,
     ) -> None:
-        """按持久化索引先发图片再通知创建人，失败后不重发已确认附件。"""
+        """按持久化索引投递附件或正文，消息边界与提醒目标来自已校验结果。"""
         if job.ai_job_id is not None:
             config = self._config_provider()
             policy = AccessPolicy(
@@ -776,6 +848,25 @@ class ConversationQueueProcessor:
                     validated.reply.model_dump(by_alias=True), context={"file_reply": True},
                 ),
             )
+            return
+        if result.multi_reply:
+            validated = ConversationResult.model_validate(result.model_dump(by_alias=True))
+            if validated.workflow_images and index == 0:
+                await self._reply_gateway.send_media_bot(
+                    self._bot_provider(job.bot_id), scene=job.scene,
+                    target_id=job.group_id or job.user_id,
+                    segment=MessageSegment.image(f"base64://{validated.workflow_images[0].data}"),
+                )
+                return
+            part_index = index - int(bool(validated.workflow_images))
+            target = validated.mention_target_id if validated.kind == "TOOL_REPLY" else (
+                job.mention_target_id
+            )
+            prefix = (
+                MessageSegment.at(target)
+                if part_index == 0 and target is not None and job.scene == "group" else None
+            )
+            await self._send_multi_reply_part(job, validated, part_index, prefix)
             return
         if result.kind == "TOOL_REPLY":
             if index != 0:

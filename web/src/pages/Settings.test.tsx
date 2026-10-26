@@ -14,6 +14,33 @@ const snapshot = {
 };
 
 describe('配置编辑', () => {
+  it('自动回复分类可编辑和保存多条回复规则', async () => {
+    let submitted: unknown;
+    const fields = [
+      { name: 'chat_multi_reply_enabled', description: '自动多条回复', kind: 'boolean', value: false },
+      { name: 'chat_multi_reply_max_messages', description: '最多消息数', kind: 'number', value: 3 },
+      { name: 'chat_multi_reply_interval_seconds', description: '消息间隔', kind: 'number', value: 1 },
+      { name: 'chat_multi_reply_prompt', description: '分条提示词', kind: 'string', value: '按语义分条' },
+    ].map(field => ({ ...field, nullable: false, secret_is_set: false, restart_required: false }));
+    vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+      if (init?.method === 'PATCH') submitted = JSON.parse(init.body);
+      return Response.json({ ...snapshot, fields });
+    }));
+    render(<Settings token="offline-token" />);
+    fireEvent.click(screen.getByRole('button', { name: '自动回复设置' }));
+    fireEvent.click(await screen.findByLabelText('自动多条回复'));
+    fireEvent.change(screen.getByLabelText('最多消息数'), { target: { value: '4' } });
+    fireEvent.change(screen.getByLabelText('消息间隔'), { target: { value: '0.5' } });
+    const prompt = screen.getByLabelText('分条提示词');
+    expect(prompt.tagName).toBe('TEXTAREA');
+    fireEvent.change(prompt, { target: { value: '完整意思一条\n短回答只发一条' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(submitted).toEqual({ expected_revision: 1, values: {
+      chat_multi_reply_enabled: true, chat_multi_reply_max_messages: 4,
+      chat_multi_reply_interval_seconds: 0.5, chat_multi_reply_prompt: '完整意思一条\n短回答只发一条',
+    } }));
+  });
+
   it.each(['string', 'json'])('对象配置类型为 %s 时显示格式化 JSON，保存对象而非字符串', async kind => {
     let submitted: unknown;
     const replies = { '早上好': '早安！', '晚安': '好梦' };

@@ -103,15 +103,17 @@ def make_trigger(
 
 @pytest.mark.asyncio
 async def test_message_trigger_records_before_context_and_decision() -> None:
+    """当前消息先记入快照，与近期消息一起传入决策，且只出现一次。"""
     order: list[str] = []
     store = RecordingContextStore(order)
+    store.append("20001", "近期消息")
     service = RecordingService(order, accepted_groups={"20001"})
     trigger = make_trigger(store=store, service=service, order=order)
 
     await trigger.handle(FakeBot(), group_event("当前消息"))
 
     assert order == ["record:20001:1", "context:20001", "service:20001"]
-    assert service.snapshots == [("20001", "当前消息")]
+    assert service.snapshots == [("20001", "近期消息\n当前消息")]
 
 
 @pytest.mark.asyncio

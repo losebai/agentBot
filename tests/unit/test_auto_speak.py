@@ -154,8 +154,9 @@ def make_service(
     )
 
 
-async def test_llm_decision_does_not_read_history_or_agent_persona():
-    """LLM 决策不传入任何群聊资料，读取会话或 Agent 人设即失败。"""
+@pytest.mark.parametrize("trigger_mode", ["interval", "message"])
+async def test_llm_decision_does_not_read_history_or_agent_persona(trigger_mode):
+    """传入近期及当前群聊文本，同时禁止读取会话记忆、历史和 Agent 人设。"""
     from unittest.mock import AsyncMock
 
     history = AsyncMock(side_effect=AssertionError("must not read session memory/history"))
@@ -165,18 +166,45 @@ async def test_llm_decision_does_not_read_history_or_agent_persona():
     bot = FakeBot()
     value = make_service(
         job_submitter=jobs, decision_client=client,
-        context_store=FakeContextStore({"88888": "当次群聊资料"}), bot_provider=lambda _: bot,
+        context_store=FakeContextStore({"88888": "近期消息\n当前收到消息"}),
+        bot_provider=lambda _: bot, trigger_mode=trigger_mode,
         conversation_context_provider=history, system_prompt_provider=persona,
         system_prompt="不得传入的机器人人设", prompt="不得传入的正文生成指令",
         decision_backend="llm",
     )
-    assert (await value.run_once()).sent == 1
-    assert (await value.run_once()).sent == 0
+    if trigger_mode == "interval":
+        assert (await value.run_once()).sent == 1
+        assert (await value.run_once()).sent == 0
+    else:
+        assert await value.handle_group_message(bot, "88888", "近期消息\n当前收到消息")
+        assert not await value.handle_group_message(bot, "88888", "近期消息\n当前收到消息")
     history.assert_not_awaited()
     persona.assert_not_awaited()
     assert len(jobs.jobs) == 1
     for call in client.calls:
-        assert call["state"] == ""
+        assert call["state"] == "近期消息\n当前收到消息"
+
+
+@pytest.mark.parametrize(
+    "context", [None, "", "过旧消息" + "旧" * 9000 + "最新消息"],
+    ids=["missing", "empty", "over-limit"],
+)
+async def test_llm_decision_context_is_bounded_and_keeps_latest_text(context):
+    """空快照有明确标识，过长快照优先保留最新文本并遵守八千字符边界。"""
+    client = FakeDecisionClient([decision(False)])
+    value = make_service(
+        job_submitter=FakeJobSubmitter(), decision_client=client,
+        context_store=FakeContextStore({"88888": context}), bot_provider=lambda _: FakeBot(),
+        decision_backend="llm",
+    )
+    await value.run_once()
+    state = client.calls[0]["state"]
+    assert 0 < len(state) <= 8000
+    if context:
+        assert state.endswith("最新消息")
+        assert "过旧消息" not in state
+    else:
+        assert "没有可用的近期群聊文本" in state
 
 
 def decision_payload(state: str) -> dict[str, object]:

@@ -39,9 +39,16 @@ class AutoSpeakDecisionClient(Protocol):
         session_id: str,
         request_id: str,
     ) -> AutoSpeakDecisionResponse | AutoSpeakDecision:
-        """Laya 使用有界状态；LLM 忽略状态，仅按独立提示词返回发言许可。"""
+        """Laya 使用完整有界状态；LLM 仅使用当前及近期群聊资料作单次判断。"""
 
         ...
+
+
+def build_llm_decision_state(recent_group_context: str | None) -> str:
+    """使用含当前消息的群聊快照，截去过旧文本，不读取会话历史或记忆。"""
+    if recent_group_context and recent_group_context.strip():
+        return recent_group_context[-_MAX_STATE_CHARS:]
+    return _NO_RECENT_CONTEXT
 
 
 class AutoSpeakContextBuilder:

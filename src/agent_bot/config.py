@@ -27,6 +27,7 @@ from agent_bot.keyword_reply import (
     contains_disallowed_control,
     normalize_keyword,
 )
+from agent_bot.services.multi_reply import DEFAULT_MULTI_REPLY_PROMPT
 
 _MCP_SERVICE_CODE = re.compile(r"[a-z0-9][a-z0-9_-]{0,99}")
 
@@ -282,6 +283,13 @@ class PluginConfig(BaseModel):
     chat_cooldown_seconds: float = Field(default=2, ge=0)
     chat_chunk_chars: int = Field(default=1200, gt=0)
     chat_max_reply_chars: int = Field(default=6000, gt=0)
+    # 分条规则由模型声明边界，默认关闭以兼容已有提示词和持久化任务。
+    chat_multi_reply_enabled: bool = False
+    chat_multi_reply_max_messages: int = Field(default=3, ge=1, le=10)
+    chat_multi_reply_interval_seconds: float = Field(
+        default=1, ge=0, le=10, allow_inf_nan=False,
+    )
+    chat_multi_reply_prompt: str = Field(default=DEFAULT_MULTI_REPLY_PROMPT, max_length=8000)
     chat_queue_max_pending: int = Field(default=1000, ge=1, le=100_000)
     chat_queue_workers: int = Field(default=8, ge=1, le=64)
     chat_queue_media_workers: int = Field(default=1, ge=1, le=16)
@@ -883,6 +891,10 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_cooldown_seconds": "非排队聊天冷却时间 (秒)",
     "chat_chunk_chars": "回复分段字符数",
     "chat_max_reply_chars": "单次回复最大字符数",
+    "chat_multi_reply_enabled": "自动多条回复：按模型 JSON 列表逐条发送",
+    "chat_multi_reply_max_messages": "自动多条回复最多消息数 (1-10 条)",
+    "chat_multi_reply_interval_seconds": "自动多条回复发送间隔 (0-10 秒)",
+    "chat_multi_reply_prompt": "自动多条回复提示词 (程序自动追加 JSON 协议与条数限制)",
     "chat_queue_max_pending": "Redis 对话队列最大待处理任务数",
     "chat_queue_workers": "对话队列文本并发工作数 (重启生效，满额立即拒绝)",
     "chat_queue_media_workers": "Redis 对话队列媒体并发工作数",

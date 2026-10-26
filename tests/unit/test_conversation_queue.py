@@ -577,6 +577,91 @@ async def test_delivery_retry_reuses_persisted_generation_result(queue_store) ->
 
 
 @pytest.mark.asyncio
+async def test_multi_reply_interval_and_retry_keep_confirmed_delivery(queue_store):
+    """间隔属于持久化结果，第二条失败只重试第二条，首条立即发送。"""
+    await queue_store.enqueue(text_job())
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    result = ConversationResult(
+        kind="TEXT", reply={"text": "第一条\n第二条", "requestId": "req-1"},
+        deliveryParts=("第一条", "第二条"), multiReply=True, deliveryIntervalSeconds=0.02,
+    )
+    processor = processor_mock()
+    processor.generate.return_value = result
+    processor.delivery_count.return_value = 2
+    sent = []
+    started = asyncio.get_running_loop().time()
+
+    async def deliver(job, restored, index):
+        """通过发送时间和持久化检查点观察真实编排，不替换等待实现。"""
+        sent.append((index, asyncio.get_running_loop().time()))
+        if len(sent) == 2:
+            assert (await queue_store.load_state(entry.stream_id)).delivery_index == 1
+            raise ConnectionError("second message failed")
+
+    processor.deliver_part.side_effect = deliver
+    queue = ConversationQueue(
+        store=queue_store, processor=processor, policy=QueuePolicy(1, 2, 0.01, 0.01, 600),
+        clock=lambda: 1_800_000_000,
+    )
+    await queue.process_entry(entry)
+    assert [item[0] for item in sent] == [0, 1, 1]
+    assert sent[1][1] - sent[0][1] >= 0.019
+    assert sent[0][1] - started < 0.02
+    processor.generate.assert_awaited_once()
+    assert await queue_store.source_length() == 0
+
+
+@pytest.mark.asyncio
+async def test_multi_reply_interval_can_cancel_and_restore_from_checkpoint(queue_store):
+    """取消等待后保留首条进度，恢复只发送剩余消息。"""
+    await queue_store.enqueue(text_job())
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    processor = processor_mock()
+    processor.generate.return_value = ConversationResult(
+        kind="TEXT", reply={"text": "一\n二", "requestId": "req-1"},
+        deliveryParts=("一", "二"), multiReply=True, deliveryIntervalSeconds=0.05,
+    )
+    processor.delivery_count.return_value = 2
+    queue = ConversationQueue(
+        store=queue_store, processor=processor, policy=QueuePolicy(1, 2, 0.01, 0.01, 600),
+        clock=lambda: 1_800_000_000,
+    )
+    task = asyncio.create_task(queue.process_entry(entry))
+    for _ in range(100):
+        if (await queue_store.load_state(entry.stream_id)).delivery_index == 1:
+            break
+        await asyncio.sleep(0.001)
+    assert (await queue_store.load_state(entry.stream_id)).delivery_index == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await queue.process_entry(entry)
+    assert [call.args[2] for call in processor.deliver_part.await_args_list] == [0, 1]
+    processor.generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_multi_reply_interval_does_not_exceed_job_deadline(queue_store):
+    """剩余生命周期不足时不能继续等待并投递第二条。"""
+    await queue_store.enqueue(text_job())
+    entry = (await queue_store.read_new(count=1, block_ms=1))[0]
+    processor = processor_mock()
+    processor.generate.return_value = ConversationResult(
+        kind="TEXT", reply={"text": "一\n二", "requestId": "req-1"},
+        deliveryParts=("一", "二"), multiReply=True, deliveryIntervalSeconds=0.1,
+    )
+    processor.delivery_count.return_value = 2
+    queue = ConversationQueue(
+        store=queue_store, processor=processor, policy=QueuePolicy(1, 2, 0.01, 0.01, 0.03),
+        clock=lambda: 1_800_000_000,
+    )
+    await queue.process_entry(entry)
+    assert [call.args[2] for call in processor.deliver_part.await_args_list] == [0]
+    processor.commit.assert_not_awaited()
+    assert await queue_store.source_length() == 0
+
+
+@pytest.mark.asyncio
 async def test_silent_result_completes_without_delivery_retry_or_failure(queue_store) -> None:
     """零条消息是模型的合法选择，应正常确认任务而不是进入死信或失败回复。"""
     await queue_store.enqueue(text_job())

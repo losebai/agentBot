@@ -47,7 +47,7 @@ function fieldCategory(field: SettingField): Category {
   const name = field.name;
   if (name.startsWith('chat_naraka_')) return 'games';
   if (replySettingNames.has(name) || [
-    'chat_auto_', 'chat_group_', 'chat_user_message_', 'chat_job_',
+    'chat_auto_', 'chat_group_', 'chat_user_message_', 'chat_job_', 'chat_multi_reply_',
   ].some(prefix => name.startsWith(prefix))) return 'reply';
   if (name.startsWith('agent_bot_napcat_') || qqSettingNames.has(name) || [
     'onebot_', 'chat_allowed_', 'chat_blocked_',
@@ -203,6 +203,9 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
     {category === 'basic' && onPlugins && <Button type="link" onClick={onPlugins}>管理内置插件</Button>}
     {category === 'basic' && <QueueMaintenance token={token} />}
     {fields.some(field => field.scope === 'static') && <Alert message="启动配置保存后需手动“服务→重启后端”生效；环境变量覆盖或缺少启动文件的字段只读。" type="info" showIcon className="notice" />}
+    {category === 'reply' && fields.some(field => field.name === 'chat_multi_reply_enabled') && <Alert
+      message="自动多条回复开启后，由模型按语义决定消息边界，短回答可只发送一条；最多条数、发送间隔和分条提示词可在下方调整。"
+      type="info" showIcon className="notice" />}
     <Input prefix={<SearchOutlined />} placeholder="搜索设置名称或描述" aria-label="搜索配置" value={filter} onChange={event => setFilter(event.target.value)} className="settings-search" />
     {showModels && <>
       {models.error && <Alert message={`模型列表读取失败：${models.error}`} type="error" showIcon className="notice" />}
@@ -249,11 +252,11 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
             </ChoiceSelect>
               : kind === 'boolean' ? <Switch id={id} disabled={readOnly} checked={value === true} onChange={change} />
               : kind === 'secret' ? <Input.Password id={id} disabled={readOnly} value={String(value)} placeholder={field.secret_is_set ? readOnly ? '已设置' : '已设置 · 留空保持原值' : '未设置'} autoComplete="new-password" onChange={event => change(event.target.value)} />
-              : kind === 'json' || field.name === 'chat_auto_speak_llm_prompt' || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
+              : kind === 'json' || ['chat_auto_speak_llm_prompt', 'chat_multi_reply_prompt'].includes(field.name) || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
               : <Input id={id} disabled={readOnly} type={kind === 'number' ? 'number' : 'text'} step="any" value={String(value)} onChange={event => change(event.target.value)} />}
             {field.name === 'nickname' && <small>每行一个名称或别名，保存后热更新；留空关闭名字触发。</small>}
             {field.name === 'chat_agent_max_steps' && <small>按实际工具调用次数计数，所有 Agent 和联网请求共用。默认 5，可填写任意正整数；留空不限次数，仍遵守请求超时。</small>}
-            {field.name === 'chat_auto_speak_llm_prompt' && <small>每次只发送此提示词，使用独立决策模型普通调用；不传群聊文本、人设、记忆或历史。仅返回 {`{"choice":"speak"}`} 或 {`{"choice":"silent"}`}。</small>}
+            {field.name === 'chat_auto_speak_llm_prompt' && <small>使用独立决策模型和此提示词，结合当前收到的消息及近期群聊进行单次普通调用；不读取会话记忆、历史轮次或 Agent 人设。仅返回 {`{"choice":"speak"}`} 或 {`{"choice":"silent"}`}。</small>}
             {field.name === 'onebot_v11_access_token' && <small>{readOnly
               ? '当前字段由启动环境覆盖或缺少启动文件，请检查启动配置；与 NapCat Token 保持一致。'
               : '静态启动配置，可在这里保存；手动“服务→重启后端”后生效，请与 NapCat Token 保持一致。留空不修改。'}</small>}

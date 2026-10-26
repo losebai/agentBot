@@ -126,6 +126,10 @@ EXPECTED_RUNTIME_FIELDS = {
     "chat_cooldown_seconds",
     "chat_chunk_chars",
     "chat_max_reply_chars",
+    "chat_multi_reply_enabled",
+    "chat_multi_reply_max_messages",
+    "chat_multi_reply_interval_seconds",
+    "chat_multi_reply_prompt",
     "chat_queue_max_pending",
     "chat_queue_workers",
     "chat_queue_media_workers",
@@ -288,6 +292,10 @@ def runtime_config() -> RuntimeConfig:
         "chat_cooldown_seconds": 3.25,
         "chat_chunk_chars": 777,
         "chat_max_reply_chars": 4321,
+        "chat_multi_reply_enabled": True,
+        "chat_multi_reply_max_messages": 4,
+        "chat_multi_reply_interval_seconds": 0.5,
+        "chat_multi_reply_prompt": "multi-reply-prompt-private-marker",
         "chat_queue_max_pending": 876,
         "chat_queue_workers": 6,
         "chat_queue_media_workers": 2,
@@ -369,7 +377,7 @@ def test_empty_system_prompt_persists_without_default_fallback(
 def test_existing_snapshot_without_chat_agent_steps_keeps_default_behavior(
     database_params: DatabaseParams, fake_mysql: FakeMySQL, runtime_config: RuntimeConfig,
 ) -> None:
-    """老配置表缺少新增轮次字段时可以加载，不需要数据库迁移。"""
+    """老配置缺少轮次字段时使用已约定的五次默认预算，无需迁移。"""
     store = _make_store(database_params)
     store.initialize(runtime_config)
     fake_mysql.table[:] = [
@@ -378,8 +386,26 @@ def test_existing_snapshot_without_chat_agent_steps_keeps_default_behavior(
 
     loaded = store.load()
 
-    assert loaded.config.chat_agent_max_steps is None
+    assert loaded.config.chat_agent_max_steps == 5
     assert loaded.config.chat_web_search_max_steps == 3
+
+
+def test_existing_snapshot_without_multi_reply_settings_keeps_feature_disabled(
+    database_params: DatabaseParams, fake_mysql: FakeMySQL, runtime_config: RuntimeConfig,
+) -> None:
+    """既有数据库缺少新键时默认关闭，读取不改写配置或要求迁移表结构。"""
+    store = _make_store(database_params)
+    store.initialize(runtime_config)
+    fake_mysql.table[:] = [
+        row for row in fake_mysql.table if not row["config_key"].startswith("chat_multi_reply_")
+    ]
+    before = len(fake_mysql.table)
+    loaded = store.load()
+    assert loaded.config.chat_multi_reply_enabled is False
+    assert loaded.config.chat_multi_reply_max_messages == 3
+    assert loaded.config.chat_multi_reply_interval_seconds == 1
+    assert loaded.revision == 1
+    assert len(fake_mysql.table) == before
 
 
 def test_message_trigger_snapshot_accepts_unused_sub_minute_interval(

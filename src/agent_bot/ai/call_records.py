@@ -127,7 +127,7 @@ def python_record(row, type, context=None):
     }
     is_decision = auto_speak_call.get()
     if is_decision:
-        # 决策输入只有独立提示词，沿用普通归档，但不混入普通对话分页。
+        # 单次群聊决策沿用普通调用归档，系统分类不混入普通对话分页。
         type = "auto_speak"
         data.update(system_kind="auto_speak", decision_backend="llm")
     elif command_call.get():

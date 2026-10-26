@@ -13,7 +13,7 @@ from agent_bot.ai.errors import AiError
 
 @pytest.mark.parametrize("choice", ["speak", "silent"])
 async def test_llm_decision_is_fresh_ordinary_call(catalog, ai_params, ai_database, choice):
-    """两次判断只发送独立指令，外部状态不能成为模型输入或会话历史。"""
+    """每次只携带独立指令和本次群聊快照，不把前次决策积累成会话历史。"""
     from agent_bot.ai.llm_auto_speak import LlmAutoSpeakDecisionService
 
     requests = []
@@ -31,15 +31,17 @@ async def test_llm_decision_is_fresh_ordinary_call(catalog, ai_params, ai_databa
     try:
         for index in range(2):
             decision = await client.decide_auto_speak(
-                state=f"当次输入{index}", session_id="group-session",
+                state=f"近期群聊{index}\n当前收到消息{index}", session_id="group-session",
                 request_id=f"auto-decision-{index}",
             )
             assert decision.should_speak is (choice == "speak")
-        for request in requests:
+        for index, request in enumerate(requests):
             assert request["model"] == "exact/model"
             assert [item["role"] for item in request["messages"]] == ["system", "user"]
-            assert request["messages"][1]["content"] == "独立决策提示词"
-            assert "当次输入" not in json.dumps(request, ensure_ascii=False)
+            assert "独立决策提示词" in request["messages"][0]["content"]
+            assert "群聊资料" in request["messages"][0]["content"]
+            assert request["messages"][1]["content"] == f"近期群聊{index}\n当前收到消息{index}"
+            assert f"近期群聊{1 - index}" not in json.dumps(request, ensure_ascii=False)
         records = CallRecordStore(ai_params, connect=ai_database.connect)
         page = await records.list_calls(category="system", system_kind="auto_speak")
         assert len(page.items) == 2
@@ -47,12 +49,12 @@ async def test_llm_decision_is_fresh_ordinary_call(catalog, ai_params, ai_databa
         assert not (await records.list_calls(category="conversation")).items
         for row in page.items:
             detail = await records.get_call(row.id)
-            assert detail.content == "独立决策提示词"
-            archived = json.dumps(detail.model_dump(), ensure_ascii=False, default=str)
-            assert "当次输入" not in archived
+            index = int(row.request_id.rsplit("-", 1)[1])
+            assert detail.content == f"近期群聊{index}\n当前收到消息{index}"
+            assert "独立决策提示词" in detail.request_context["messages"][0]["content"]
         saved = await ordinary.sessions.list_records(session_id="group-session")
         detail = await ordinary.sessions.get_record(saved.items[0].execution_id)
-        assert detail.prompt == "独立决策提示词"
+        assert "当前收到消息" in detail.prompt
     finally:
         await ordinary.aclose()
 

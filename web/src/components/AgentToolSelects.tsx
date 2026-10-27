@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AgentApi } from '../agent-api';
 import { errorMessage } from '../api';
 import type { McpServer } from '../agent-types';
+import { useRunningPlugins } from '../plugin-runtime';
 
 // 内置名称对应服务端工具策略；选择只保存配置，不授予当前 QQ 会话执行权限。
 const builtinTools = [
@@ -19,7 +20,15 @@ const builtinTools = [
   ['tts_generate', '语音生成'], ['job', '后台任务（QQ）'],
 ];
 
-/** 读取完整 MCP 目录以关联服务；远端工具随服务自动开放，内置工具单独选择。 */
+// 共享媒体与知识工具由公共核心提供；平台专属工具须等所属插件启动。
+const pluginTools: Record<string, string> = {
+  bilibili_login_status: 'bilibili', bilibili_get_comments: 'bilibili',
+  bilibili_reply_comment: 'bilibili', bilibili_publish_video: 'bilibili',
+  memory: 'qqbot', naraka_query: 'qqbot', naraka_search: 'qqbot', mention_member: 'qqbot',
+  local_workflow_tasks: 'qqbot', local_workflow_cancel: 'qqbot', job: 'qqbot',
+};
+
+/** 平台工具随插件实际运行状态展示，已有配置在停用期间保留。 */
 export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsChange }: {
   token: string; tools: string[]; mcpIds: number[];
   onToolsChange: (tools: string[]) => void; onMcpsChange: (ids: number[]) => void;
@@ -29,6 +38,7 @@ export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsCh
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const { runningPlugins, pluginsLoading, pluginsError } = useRunningPlugins(token, refresh);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -53,9 +63,11 @@ export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsCh
 
   // 分类仅用于展示，搜索类 MCP 与其他服务使用同一关联和白名单规则。
   const selected = servers.filter(server => mcpIds.includes(server.id));
-  const toolOptions = new Map(builtinTools.map(([value, name]) => [value, { value, label: name + ' · ' + value }]));
+  const toolVisible = (name: string) => !Object.hasOwn(pluginTools, name) || runningPlugins.has(pluginTools[name]);
+  const toolOptions = new Map(builtinTools.filter(([value]) => toolVisible(value))
+    .map(([value, name]) => [value, { value, label: name + ' · ' + value }]));
   // 保留历史手动配置，关联 MCP 的新工具由服务端发现，不要求重复勾选。
-  for (const name of tools) if (!toolOptions.has(name)) toolOptions.set(name, { value: name, label: name + '（原有配置）' });
+  for (const name of tools) if (toolVisible(name) && !toolOptions.has(name)) toolOptions.set(name, { value: name, label: name + '（原有配置）' });
   const mcpOptions = servers.map(server => ({
     value: server.id, label: server.name + ' · ' + server.code + (server.enabled ? '' : '（停用）'),
     disabled: !mcpIds.includes(server.id) && mcpIds.length >= 3,
@@ -66,6 +78,7 @@ export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsCh
 
   return <>
     {error && <Alert type="error" showIcon message={'MCP 列表读取失败：' + error} />}
+    {pluginsError && <Alert type="error" showIcon message={'插件状态读取失败：' + pluginsError} />}
     <label htmlFor="agent-mcp-select">关联 MCP（最多 3 个）</label>
     <Select id="agent-mcp-select" aria-label="关联 MCP（最多 3 个）" mode="multiple" showSearch allowClear
       loading={loading} disabled={loading} value={mcpIds} options={mcpOptions} optionFilterProp="label"
@@ -74,8 +87,12 @@ export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsCh
     <div className="heading-actions"><Button loading={loading} onClick={() => setRefresh(value => value + 1)}>刷新 MCP 列表</Button></div>
     <label htmlFor="agent-tools-select">允许工具</label>
     <Select id="agent-tools-select" aria-label="允许工具" mode="multiple" showSearch allowClear
-      value={tools} options={Array.from(toolOptions.values())} optionFilterProp="label"
-      placeholder="搜索并选择工具" style={{ width: '100%' }} onChange={onToolsChange} />
+      loading={pluginsLoading} value={tools.filter(toolVisible)} options={Array.from(toolOptions.values())} optionFilterProp="label"
+      placeholder="搜索并选择工具" style={{ width: '100%' }} onChange={next => {
+        // 修改当前可见工具时不覆盖未运行插件的历史配置，重新启动后仍可使用。
+        onToolsChange([...tools.filter(name => !toolVisible(name)), ...next]);
+      }} />
+    {tools.some(name => !toolVisible(name)) && <p>未运行插件的工具配置已保留，插件启动后显示。</p>}
     <p>此处选择内置工具，QQ 工具仍需当前会话授权。已关联 MCP 的工具自动可用，无需在此逐个选择；具体范围由 MCP 服务白名单决定。</p>
     {selected.some(server => server.allowed_tools.includes('*')) && <p>白名单为 * 时自动使用服务返回的全部工具。</p>}
   </>;

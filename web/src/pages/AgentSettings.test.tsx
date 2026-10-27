@@ -1,8 +1,11 @@
+import { useRunningPluginFixture } from '../test-plugins';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { Agents } from './Agents';
 import { Settings } from './Settings';
 import type { SettingField, SettingsSnapshot } from '../types';
+
+useRunningPluginFixture();
 
 const common = { nullable: false, secret_is_set: false, restart_required: false };
 const agentFields: SettingField[] = [
@@ -31,7 +34,7 @@ it('机器人配置将模型和 Agent 归入 LLM，提及授权归入 QQ，端�
   for (const field of agentFields.filter(field => !['chat_mention_tool_enabled', 'chat_web_search_max_steps'].includes(field.name))) {
     expect(screen.getByLabelText(field.description)).toBeVisible();
   }
-  fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
   expect(screen.getByLabelText('群成员提及工具授权')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: '基础设置' }));
   expect(await screen.findByLabelText('监听端口')).toBeDisabled();
@@ -80,7 +83,7 @@ it('切换机器人配置分类保留 Agent 草稿，保存冲突仍保留输入
   render(<Settings token="offline" />);
   fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
   fireEvent.change(await screen.findByLabelText('默认 Agent 预设'), { target: { value: 'unsaved-agent' } });
-  fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
   expect(screen.getByLabelText('群成员提及工具授权')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
   expect(screen.getByLabelText('默认 Agent 预设')).toHaveValue('unsaved-agent');

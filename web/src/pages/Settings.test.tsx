@@ -1,7 +1,10 @@
+import { useRunningPluginFixture } from '../test-plugins';
 import { chooseSelect, selectDisplay } from '../test-select';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Settings } from './Settings';
+
+useRunningPluginFixture();
 
 const snapshot = {
   database_revision: 1, applied_revision: 1, restart_required_fields: [], startup_revision: 'startup-file-one',
@@ -24,7 +27,7 @@ describe('配置编辑', () => {
       return Response.json({ ...snapshot, fields });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: '自动回复设置' }));
+    fireEvent.click(await screen.findByRole('button', { name: '自动回复设置' }));
     const prompt = await screen.findByLabelText('自动发言补充规则');
     expect(prompt.tagName).toBe('TEXTAREA');
     expect(screen.getByText(/message 使用触发时消息，interval 使用群里最新有效消息/)).toBeInTheDocument();
@@ -47,7 +50,7 @@ describe('配置编辑', () => {
       return Response.json({ ...snapshot, fields });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: '自动回复设置' }));
+    fireEvent.click(await screen.findByRole('button', { name: '自动回复设置' }));
     fireEvent.click(await screen.findByLabelText('自动多条回复'));
     fireEvent.change(screen.getByLabelText('最多消息数'), { target: { value: '4' } });
     fireEvent.change(screen.getByLabelText('消息间隔'), { target: { value: '0.5' } });
@@ -71,14 +74,14 @@ describe('配置编辑', () => {
       return Response.json({ ...snapshot, fields });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: '自动回复设置' }));
+    fireEvent.click(await screen.findByRole('button', { name: '自动回复设置' }));
     const control = await screen.findByLabelText('关键词回复规则');
     expect(control.tagName).toBe('TEXTAREA');
     expect(control).toHaveValue(JSON.stringify(replies, null, 2));
     expect(control).not.toHaveValue('[object Object]');
     fireEvent.change(control, { target: { value: '{"你好":"你好呀！"}' } });
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
-    fireEvent.click(screen.getByRole('button', { name: '自动回复设置' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
+    fireEvent.click(await screen.findByRole('button', { name: '自动回复设置' }));
     expect(screen.getByLabelText('关键词回复规则')).toHaveValue('{"你好":"你好呀！"}');
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
     await waitFor(() => expect(submitted).toEqual({ expected_revision: 1,
@@ -94,7 +97,7 @@ describe('配置编辑', () => {
       return Response.json({ ...snapshot, fields });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: '自动回复设置' }));
+    fireEvent.click(await screen.findByRole('button', { name: '自动回复设置' }));
     const control = await screen.findByLabelText('自动发言群');
     expect(control.tagName).toBe('TEXTAREA');
     expect(control).toHaveValue(JSON.stringify(fields[0].value, null, 2));
@@ -115,7 +118,7 @@ describe('配置编辑', () => {
       return Response.json({...snapshot, fields});
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
     const names = await screen.findByLabelText('机器人名称与触发别名');
     expect(names).toBeEnabled();
     expect(names).toHaveValue('桃桃\n小桃');
@@ -186,7 +189,7 @@ describe('配置编辑', () => {
     ];
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...snapshot, fields })));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
     const control = await screen.findByLabelText('OneBot Token');
     expect(control).toBeDisabled();
     expect(control).toHaveValue('');
@@ -231,7 +234,7 @@ describe('配置编辑', () => {
     fireEvent.change(screen.getByLabelText('监听端口'), { target: { value: '9090' } });
     fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
     fireEvent.change(screen.getByLabelText('温度'), { target: { value: '0.4' } });
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
     const control = screen.getByLabelText('OneBot Token');
     expect(control).toBeEnabled();
     expect(control).toHaveValue('');
@@ -272,7 +275,7 @@ describe('配置编辑', () => {
       return Response.json({ ...snapshot, fields });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
     const control = await screen.findByLabelText('OneBot 签名密钥');
     expect(control).toBeEnabled();
     fireEvent.change(control, { target: { value: 'temporary-signature-secret' } });
@@ -297,7 +300,7 @@ describe('配置编辑', () => {
       return Response.json({ ...snapshot, fields });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
     const control = await screen.findByLabelText('OneBot Token');
     expect(control).toBeEnabled();
     fireEvent.change(control, { target: { value: 'temporary-static-token' } });
@@ -306,7 +309,7 @@ describe('配置编辑', () => {
     expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
     fireEvent.change(screen.getByLabelText('温度'), { target: { value: '0.4' } });
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
     fireEvent.change(screen.getByLabelText('OneBot Token'), { target: { value: 'temporary-static-token' } });
     fireEvent.change(screen.getByLabelText('OneBot Token'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
@@ -324,7 +327,7 @@ describe('配置编辑', () => {
       return Response.json({ ...snapshot, fields });
     }));
     render(<Settings token="offline-token" />);
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
     const control = await screen.findByLabelText('OneBot Token');
     expect(control).toBeDisabled();
     // 即使人为触发表单事件，只读权限也不能生成 Token 草稿。
@@ -333,7 +336,7 @@ describe('配置编辑', () => {
     expect(screen.getByRole('button', { name: '保存修改' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
     fireEvent.change(await screen.findByLabelText('温度'), { target: { value: '0.4' } });
-    fireEvent.click(screen.getByRole('button', { name: 'QQ' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'QQ' }));
     expect(screen.getByLabelText('OneBot Token')).toHaveValue('');
     // Token 的只读事件不影响已经编辑的其他分类草稿。
     fireEvent.change(screen.getByLabelText('OneBot Token'), { target: { value: 'temporary-token' } });
@@ -373,6 +376,7 @@ describe('配置编辑', () => {
       : { ...snapshot, fields })));
     render(<Settings token="offline-token" />);
     const navigation = screen.getByRole('navigation', { name: '机器人配置分类' });
+    await within(navigation).findByRole('button', { name: 'QQ' });
     expect(within(navigation).getAllByRole('button').map(button => button.textContent)).toEqual([
       '基础设置', 'LLM设置', 'QQ', '自动回复设置', '游戏资讯设置', 'Comfy',
     ]);

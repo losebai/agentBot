@@ -10,9 +10,11 @@ import { MediaUpload } from './MediaUpload';
 import { VideoUpload } from './VideoUpload';
 import { MediaAttachment } from './MediaAttachment';
 import type { MediaAsset } from '../media-types';
+import { useRunningPlugins } from '../plugin-runtime';
 
 /** 图片仅随当前请求发送；工具附件独立于最后一轮模型回复保存。 */
 export function AgentChat({token}:{token:string}) {
+  const { runningPlugins, pluginsError } = useRunningPlugins(token);
   const api=useMemo(()=>new AgentApi(token),[token]);const [agents,setAgents]=useState<Agent[]>([]),[cursor,setCursor]=useState<string|null>(null);
   const [code,setCode]=useState(''),[input,setInput]=useState(''),[error,setError]=useState(''),[sending,setSending]=useState(false),[streaming,setStreaming]=useState(true);
   const [session,setSession]=useState(()=>crypto.randomUUID());const [messages,setMessages]=useState<ChatMessage[]>([]),[steps,setSteps]=useState<AgentEvent[]>([]);
@@ -37,7 +39,7 @@ export function AgentChat({token}:{token:string}) {
     while(history.reduce((sum,m)=>sum+m.content.length,0)>12000)history=history.slice(2);
     // 视频独立传引用，资产说明由服务端构造，不占用用户的 2000 字输入预算。
     const body={agent_code:code,prompt,session_id:session,messages:history,attachment_ids,
-      ...(video ? { video_asset_id: video.id } : {})};let generated:MediaAsset[]=[];
+      ...(video && runningPlugins.has('bilibili') ? { video_asset_id: video.id } : {})};let generated:MediaAsset[]=[];
     try{
       if(streaming){for await(const event of api.streamAgent(body,abort.signal)){
         if(controller.current!==abort||abort.signal.aborted)throw new DOMException('已停止','AbortError');
@@ -57,11 +59,12 @@ export function AgentChat({token}:{token:string}) {
   return <div className="page-content chat-page"><div className="page-heading"><div><p className="eyebrow">AGENT CONVERSATION</p><h1>Agent 对话</h1><p>使用已启用的 Agent，查看模型与工具执行进度。</p></div><Button onClick={reset}>新会话</Button></div>
     <div className="chat-controls"><label htmlFor="agent-choice">选择 Agent</label><ChoiceSelect id="agent-choice" value={code} onChange={value=>{setCode(value);reset();}}><option value="">选择已启用的 Agent</option>{agents.filter(a=>a.enabled).map(a=><option key={a.id} value={a.code}>{a.name}</option>)}</ChoiceSelect>{cursor&&<Button disabled={sending} onClick={()=>void more()}>加载更多 Agent</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式执行</label></div>
     <p className="chat-scope">管理测试可使用网页、预设 MCP 和已启用的绘图、语音工具。QQ 会话工具需在机器人会话中使用。</p>
+    {pluginsError && <Alert className="notice" type="error" showIcon message={'插件状态读取失败：' + pluginsError} />}
     {error&&<Alert className="notice" type="error" showIcon message={error}/>}{metadata&&!metadata.record_saved&&<Alert className="notice" type="warning" message="回复已生成，但运行记录未保存。请检查数据库，无需重新发送。"/>}
     <div className="conversation" aria-live="polite"><div data-testid="agent-history">{messages.map((m,i)=><article className={`message ${m.role}`} key={i}><span className="message-avatar">{m.role==='user'?'你':'AB'}</span><div className="message-body"><MarkdownRenderer content={m.content}/></div></article>)}</div>
       {partial?<article className="message"><div className="message-body"><Tag>{partial.state}</Tag><MarkdownRenderer content={partial.content||'等待模型或工具返回…'}/></div></article>:!messages.length&&<div className="conversation-empty"><div className="bot-mark">AB</div><h2>让助手处理一个任务</h2><p>选择 Agent 后输入问题。</p></div>}
     </div><section className="media-results">{artifacts.map(asset=><MediaAttachment api={api.media} asset={asset} key={asset.id}/>)}</section>{steps.length>0&&<details className="agent-steps" open><summary>工具步骤 · {steps.length}</summary><ol>{steps.map(e=><li key={e.sequence}>第 {e.turn} 轮 · {e.tool||'服务提示'} · {e.kind==='tool_start'?'开始':e.kind==='warning'?'警告':e.code?'失败':'完成'} {e.duration_ms!==undefined?`${e.duration_ms} ms`:''} {e.code||''}</li>)}</ol></details>}
-    <VideoUpload key={`video-${session}`} api={api.media} sessionId={session} disabled={sending || uploading} onChange={setVideo} onBusyChange={setUploading}/><MediaUpload key={session} api={api.media} sessionId={session} maximumCount={maximumImages} disabled={sending || uploading} consumedIds={consumed} onChange={setInputs} onBusyChange={setUploading}/><form className="composer" onSubmit={e=>{e.preventDefault();void send();}}><label className="sr-only" htmlFor="agent-prompt">发送给 Agent</label><textarea id="agent-prompt" rows={3} maxLength={2000} value={input} disabled={sending} placeholder="输入需要 Agent 处理的任务…" onChange={e=>setInput(e.target.value)}/><div className="composer-footer"><span>{input.length} / 2000</span>{sending?<Button aria-label="停止" onClick={()=>controller.current?.abort()}>停止</Button>:<Button type="primary" htmlType="submit" disabled={!code||uploading||(!input.trim()&&!inputs.length)}>运行 Agent</Button>}</div></form>
+    {runningPlugins.has('bilibili') && <VideoUpload key={`video-${session}`} api={api.media} sessionId={session} disabled={sending || uploading} onChange={setVideo} onBusyChange={setUploading}/>}<MediaUpload key={session} api={api.media} sessionId={session} maximumCount={maximumImages} disabled={sending || uploading} consumedIds={consumed} onChange={setInputs} onBusyChange={setUploading}/><form className="composer" onSubmit={e=>{e.preventDefault();void send();}}><label className="sr-only" htmlFor="agent-prompt">发送给 Agent</label><textarea id="agent-prompt" rows={3} maxLength={2000} value={input} disabled={sending} placeholder="输入需要 Agent 处理的任务…" onChange={e=>setInput(e.target.value)}/><div className="composer-footer"><span>{input.length} / 2000</span>{sending?<Button aria-label="停止" onClick={()=>controller.current?.abort()}>停止</Button>:<Button type="primary" htmlType="submit" disabled={!code||uploading||(!input.trim()&&!inputs.length)}>运行 Agent</Button>}</div></form>
     {metadata&&<p className="result-metadata">Python · {metadata.model} · {metadata.duration_ms} ms · {metadata.usage?.total_tokens??'—'} tokens · 执行 {metadata.execution_id}</p>}
   </div>;
 }

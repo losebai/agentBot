@@ -79,8 +79,9 @@ class ChatToolSessionManager:
         image_tasks_provider: Callable[[], ImageTaskService | None] = lambda: None,
         material_store_provider: Callable[[], object | None] = lambda: None,
         catalog_provider: Callable[[], AiCatalog | None] = lambda: None,
+        plugin_tools_provider: Callable[[], Sequence[ChatToolName]] = lambda: (),
     ) -> None:
-        """保存热更新配置和工具依赖提供器。"""
+        """保存热更新配置和依赖；跨插件工具只能由宿主的实时能力提供器授予。"""
 
         self._config_provider = config_provider
         self._store_provider = store_provider
@@ -94,6 +95,7 @@ class ChatToolSessionManager:
         self._image_tasks_provider = image_tasks_provider
         self._material_store_provider = material_store_provider
         self._catalog_provider = catalog_provider
+        self._plugin_tools_provider = plugin_tools_provider
 
     def available_tools(self, event: MessageEvent) -> tuple[ChatToolName, ...]:
         """按真实事件计算白名单，B站写工具仅授予已有超级用户。"""
@@ -111,7 +113,7 @@ class ChatToolSessionManager:
         return self._available_tools(group=True)
 
     def _available_tools(self, *, group: bool) -> tuple[ChatToolName, ...]:
-        """按运行开关与真实服务授权，直接生图仅依赖持久队列而不依赖 Comfy。"""
+        """按真实服务授权，插件待重启的启用选择不能提前开放工具。"""
 
         config = self._config_provider()
         if not config.chat_mcp_enabled or self._store_provider() is None:
@@ -142,10 +144,7 @@ class ChatToolSessionManager:
             tools.extend(("local_workflow_tasks", "local_workflow_cancel"))
         if config.chat_tts_enabled and self._tts_service_provider() is not None:
             tools.append("tts_generate")
-        if 'bilibili' in config.app_enabled_plugins:
-            from agent_bot.plugins.bilibili.contracts import BILIBILI_TOOLS
-
-            tools.extend(sorted(BILIBILI_TOOLS))
+        tools.extend(self._plugin_tools_provider())
         return tuple(tools)
 
     @asynccontextmanager

@@ -7,6 +7,7 @@ import type { JsonValue, SettingField, SettingsSnapshot } from '../types';
 import { ComfyWorkflows } from './ComfyWorkflows';
 import { QueueMaintenance } from './QueueMaintenance';
 import { modelSettingNames, SettingsModelSelect, useSettingsModels } from '../components/SettingsModelSelect';
+import { useRunningPlugins } from '../plugin-runtime';
 
 // 分类仅改变展示，共享同一草稿与版本；按字段用途归类，不用描述文本猜测。
 const categories = [
@@ -112,21 +113,28 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState('');
   const [category, setCategory] = useState<Category>('basic');
+  const [pluginsRevision, setPluginsRevision] = useState(0);
+  const { runningPlugins, pluginsError } = useRunningPlugins(token, pluginsRevision);
+  const qqRunning = runningPlugins.has('qqbot');
+  // QQ 的接入、自动回复和游戏查询均属于插件；共享模型和工作流仍由公共核心提供。
+  const visibleCategories = categories.filter(item => qqRunning || !['qq', 'reply', 'games'].includes(item.key));
+  const currentCategory = visibleCategories.some(item => item.key === category) ? category : 'basic';
   const [comfyTab, setComfyTab] = useState('connection');
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [settingsRefreshing, setSettingsRefreshing] = useState(false);
   const decisionBackend = String(draft.chat_auto_speak_decision_backend
     ?? snapshot?.fields.find(field => field.name === 'chat_auto_speak_decision_backend')?.value ?? 'laya');
   const showModels = !!snapshot?.fields.some(field => modelSettingNames.has(field.name)
-    && fieldCategory(field) === category && visibleDecisionField(field.name, decisionBackend));
+    && fieldCategory(field) === currentCategory && visibleDecisionField(field.name, decisionBackend));
   const models = useSettingsModels(token, showModels);
-  const load = useCallback(async () => {
+  const load = useCallback(async (refreshPlugins = true) => {
+    if (refreshPlugins) setPluginsRevision(previous => previous + 1);
     setLoading(true); setError('');
     try { setSnapshot(await api.settings()); setDraft({}); setSaved(false); }
     catch (failure) { setError(errorMessage(failure)); }
     finally { setLoading(false); }
   }, [api]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(false); }, [load]);
 
   /** 默认工作流已单独保存：刷新配置版本，移除旧默认键草稿并保留其他修改。 */
   const workflowSettingsChanged = useCallback(async () => {
@@ -161,7 +169,7 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
     finally { setSaving(false); }
   }
 
-  const fields = snapshot?.fields.filter(field => !hiddenSettingNames.has(field.name) && fieldCategory(field) === category
+  const fields = snapshot?.fields.filter(field => !hiddenSettingNames.has(field.name) && fieldCategory(field) === currentCategory
     && visibleDecisionField(field.name, decisionBackend)
     && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase()))
     // 名称是群聊触发入口，在 QQ 分类中优先展示。
@@ -175,35 +183,36 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
         <Button type="primary" icon={<SaveOutlined aria-hidden />} loading={saving} disabled={!Object.keys(draft).length || loading || workflowBusy || settingsRefreshing} onClick={() => void save()}>保存修改</Button></div>
     </div>
     {error && <Alert message={error} type="error" showIcon className="notice" />}
+    {pluginsError && <Alert message={'插件状态读取失败：' + pluginsError} type="error" showIcon className="notice" />}
     {saved && <Alert message="配置已保存；请查看应用版本与重启提示。" type="success" showIcon className="notice" />}
     {snapshot && <div className="version-strip"><span>数据库版本 {snapshot.database_revision} · 运行时版本 {snapshot.applied_revision}</span>
       <Tag color={snapshot.database_revision === snapshot.applied_revision && !snapshot.restart_required_fields.length ? 'green' : 'gold'}>
         {snapshot.restart_required_fields.length ? `需要重启：${snapshot.restart_required_fields.join(', ')}` : snapshot.database_revision !== snapshot.applied_revision ? '等待热刷新' : '已应用'}</Tag></div>}
     <div className="settings-layout">
       <nav className="settings-navigation" aria-label="机器人配置分类">
-        {categories.map(item => <button key={item.key} type="button"
+        {visibleCategories.map(item => <button key={item.key} type="button"
           disabled={workflowBusy || settingsRefreshing}
-          className={item.key === category ? 'active' : ''}
-          aria-current={item.key === category ? 'page' : undefined}
+          className={item.key === currentCategory ? 'active' : ''}
+          aria-current={item.key === currentCategory ? 'page' : undefined}
           onClick={() => setCategory(item.key)}>{item.label}</button>)}
       </nav>
-      <section className="settings-category" aria-label={categories.find(item => item.key === category)?.label}>
+      <section className="settings-category" aria-label={categories.find(item => item.key === currentCategory)?.label}>
         <div className="settings-category-heading">
-          <h2>{categories.find(item => item.key === category)?.label}</h2>
-          <p>{categories.find(item => item.key === category)?.description}</p>
+          <h2>{categories.find(item => item.key === currentCategory)?.label}</h2>
+          <p>{categories.find(item => item.key === currentCategory)?.description}</p>
         </div>
-        {category === 'comfy' && <Tabs activeKey={comfyTab} onChange={setComfyTab} items={[
+        {currentCategory === 'comfy' && <Tabs activeKey={comfyTab} onChange={setComfyTab} items={[
           { key: 'connection', label: '连接设置', disabled: workflowBusy || settingsRefreshing },
           { key: 'workflows', label: '工作流管理', disabled: loading || saving },
         ]} />}
-        {category === 'comfy' && comfyTab === 'workflows'
+        {currentCategory === 'comfy' && comfyTab === 'workflows'
           ? <ComfyWorkflows token={token} disabled={loading || saving || settingsRefreshing}
             onSettingsChanged={workflowSettingsChanged} onBusyChange={setWorkflowBusy} />
           : <>
-    {category === 'basic' && onPlugins && <Button type="link" onClick={onPlugins}>管理内置插件</Button>}
-    {category === 'basic' && <QueueMaintenance token={token} />}
+    {currentCategory === 'basic' && onPlugins && <Button type="link" onClick={onPlugins}>管理内置插件</Button>}
+    {currentCategory === 'basic' && qqRunning && <QueueMaintenance token={token} />}
     {fields.some(field => field.scope === 'static') && <Alert message="启动配置保存后需手动“服务→重启后端”生效；环境变量覆盖或缺少启动文件的字段只读。" type="info" showIcon className="notice" />}
-    {category === 'reply' && fields.some(field => field.name === 'chat_multi_reply_enabled') && <Alert
+    {currentCategory === 'reply' && fields.some(field => field.name === 'chat_multi_reply_enabled') && <Alert
       message="自动多条回复开启后，由模型按语义决定消息边界，短回答可只发送一条；最多条数、发送间隔和分条提示词可在下方调整。"
       type="info" showIcon className="notice" />}
     <Input prefix={<SearchOutlined />} placeholder="搜索设置名称或描述" aria-label="搜索配置" value={filter} onChange={event => setFilter(event.target.value)} className="settings-search" />

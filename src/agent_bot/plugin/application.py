@@ -64,7 +64,7 @@ from agent_bot.memory_store import (
     ChatMemoryStoreError,
     GroupContextPolicy,
 )
-from agent_bot.models import ChatContext, ChatMediaResponse
+from agent_bot.models import ChatContext, ChatMediaResponse, ChatToolName
 from agent_bot.plugin.handlers import (
     PluginHandlerDependencies,
     register_plugin_handlers,
@@ -350,6 +350,15 @@ if _context is not None:
 
 
 
+def _plugin_tool_names() -> tuple[ChatToolName, ...]:
+    """只有宿主已启动的 B站服务提供工具；停用时不沿用配置列表授予能力。"""
+    if _context is None or _context.runtime.bilibili_service is None:
+        return ()
+    from agent_bot.plugins.bilibili.contracts import BILIBILI_TOOLS
+
+    return tuple(sorted(BILIBILI_TOOLS))
+
+
 _tool_session_manager = ChatToolSessionManager(
     config_provider=lambda: plugin_config,
     store_provider=lambda: _tool_session_store,
@@ -365,6 +374,7 @@ _tool_session_manager = ChatToolSessionManager(
     material_store_provider=lambda: _media_resources.materials,
     operation_store_provider=_tool_operations,
     catalog_provider=lambda: model_guard.catalog,
+    plugin_tools_provider=_plugin_tool_names,
 )
 
 _runtime_gate = _context.runtime.gate if _context is not None else RuntimeLeaseGate()

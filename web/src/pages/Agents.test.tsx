@@ -2,6 +2,9 @@ import { chooseSelect, clearSelect, selectDisplay } from '../test-select';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { Agents } from './Agents';
+import { useRunningPluginFixture } from '../test-plugins';
+
+useRunningPluginFixture();
 
 it('三种角色允许复用同一模型并说明图片模型留空的影响', async () => {
   let patch: unknown;

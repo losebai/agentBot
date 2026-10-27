@@ -4,13 +4,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { NapCatPlugin } from '../components/NapCatPlugin';
 import { BilibiliPlugin } from '../components/BilibiliPlugin';
+import { isPluginRunning } from '../plugin-runtime';
 import type { PluginInfo, SettingsSnapshot } from '../types';
 
 const statusLabels: Record<PluginInfo['status'], string> = {
   disabled: '未启用', prepared: '已准备', running: '运行中', stopped: '已停止', failed: '启动失败',
 };
 
-/** 插件选择保存后重启生效；QQ 卡片另提供所属 NapCat 启动与登录入口。 */
+/** 插件选择始终可编辑；只有已启动插件挂载专属设置，避免提前读取插件服务。 */
 export function Plugins({ token }: { token: string }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
@@ -93,8 +94,8 @@ export function Plugins({ token }: { token: string }) {
           }} />
           <small>当前进程：{plugin.enabled ? '已启用' : '未启用'}；已保存：{plugin.saved_enabled ? '启用' : '停用'}</small>
         </div></div>
-        {plugin.id === 'qqbot' && <NapCatPlugin api={api} />}
-        {plugin.id === 'bilibili' && <BilibiliPlugin api={api} enabled={plugin.enabled && plugin.status === 'running'} />}
+        {isPluginRunning(plugin) && plugin.id === 'qqbot' && <NapCatPlugin api={api} />}
+        {isPluginRunning(plugin) && plugin.id === 'bilibili' && <BilibiliPlugin api={api} enabled />}
       </div>)}
     </div>}
   </div>;

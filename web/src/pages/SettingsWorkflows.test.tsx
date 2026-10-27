@@ -1,6 +1,9 @@
+import { useRunningPluginFixture } from '../test-plugins';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Settings } from './Settings';
+
+useRunningPluginFixture();
 
 /** 以具体按钮文本定位并验证真实可见性，避免对整页所有按钮重复计算样式。 */
 function getVisibleButton(name: string | RegExp, root: HTMLElement = document.body) {

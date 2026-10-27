@@ -1,7 +1,10 @@
+import { useRunningPluginFixture } from '../test-plugins';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { chooseSelect, selectDisplay } from '../test-select';
 import { Settings } from './Settings';
+
+useRunningPluginFixture();
 
 /** 模拟统一配置 API，使用模型目录稳定引用验证决策与聊天模型独立。 */
 it('自动发言二选一，LLM 独立模型和提示词保存且切换保留草稿', async () => {
@@ -29,7 +32,7 @@ it('自动发言二选一，LLM 独立模型和提示词保存且切换保留草
       : { available: false, text: 0, images: 0, total: 0 });
   }));
   render(<Settings token="offline" />);
-  fireEvent.click(screen.getByRole('button', { name: '自动回复设置' }));
+  fireEvent.click(await screen.findByRole('button', { name: '自动回复设置' }));
   await screen.findByLabelText('自动发言决策方式');
   expect(screen.getByLabelText('自动发言 MCP')).toBeInTheDocument();
   expect(screen.queryByLabelText('自动发言决策模型')).not.toBeInTheDocument();

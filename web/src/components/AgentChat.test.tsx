@@ -1,7 +1,10 @@
+import { useRunningPluginFixture } from '../test-plugins';
 import { chooseSelect } from '../test-select';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { AgentChat } from './AgentChat';
+
+useRunningPluginFixture();
 
 it('2000字提示附视频使用独立字段，不作为图片附件或挤占输入长度', async () => {
   const asset = { id: 'd'.repeat(32), purpose: 'input', mime_type: 'video/mp4', size_bytes: 10,

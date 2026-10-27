@@ -1,7 +1,10 @@
+import { useRunningPluginFixture } from '../test-plugins';
 import { chooseSelect, selectDisplay } from '../test-select';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { Settings } from './Settings';
+
+useRunningPluginFixture();
 
 const modelFields = [
   ['chat_model', '聊天模型', 'old-chat'],

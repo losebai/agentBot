@@ -1,7 +1,10 @@
+import { useRunningPluginFixture } from '../test-plugins';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { expect, it, vi } from 'vitest';
 import { AgentToolSelects } from './AgentToolSelects';
+
+useRunningPluginFixture();
 
 /** 用受控草稿检查实际选择结果，不访问真实 MCP。 */
 function Editor({ initialTools = [] as string[], initialMcps = [] as number[] }) {

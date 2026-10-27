@@ -213,10 +213,15 @@ def database_params(bootstrap: BootstrapConfig) -> DatabaseParams:
 
 
 def load_startup_settings(bootstrap: BootstrapConfig | None = None) -> VersionedSettings:
-    """从数据库加载唯一权威配置；失败时不会回退旧环境。"""
+    """验证静态配置后先自动升级所选业务库，再加载唯一权威运行配置。"""
+
+    from agent_bot.database_upgrade import upgrade_database
 
     bootstrap = bootstrap or load_bootstrap_config()
-    return SettingsStore(database_params(bootstrap), static_config=load_static_config()).load()
+    params = database_params(bootstrap)
+    static = load_static_config()
+    upgrade_database(params)
+    return SettingsStore(params, static_config=static).load()
 
 
 def nonebot_init_kwargs(config: RuntimeConfig) -> dict[str, Any]:

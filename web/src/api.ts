@@ -1,5 +1,6 @@
 import type { BotInfo, ChatMessage, ChatResponse, DeadLetterClearResult, DeadLetterStatus, JsonValue, NapCatStatus, PluginInfo, ServiceStatus, SettingsSnapshot } from './types';
 import { readChatEvents } from './stream';
+import type { BilibiliQr, BilibiliStatus } from './components/BilibiliPlugin';
 
 export class ApiFailure extends Error {
   constructor(message: string, public status: number, public code: string, public requestId?: string) {
@@ -48,6 +49,14 @@ export class ApiClient {
   clearDeadLetters(signal?: AbortSignal) { return this.request<DeadLetterClearResult>('queues/dead-letters', 'DELETE', undefined, signal); }
   /** 插件目录返回已保存选择及当前进程状态，不触发平台连接。 */
   plugins(signal?: AbortSignal) { return this.request<PluginInfo[]>('plugins', 'GET', undefined, signal); }
+  /** 每次实际检查当前 B 站账号，不返回凭据。 */
+  bilibiliStatus(signal?: AbortSignal) { return this.request<BilibiliStatus>('bilibili/status', 'GET', undefined, signal); }
+  /** 新二维码替换旧扫码会话。 */
+  bilibiliGenerateQr(signal?: AbortSignal) { return this.request<BilibiliQr>('bilibili/login/qr', 'POST', {}, signal); }
+  /** 轮询本地会话 ID，平台扫码 key 仅留在后端。 */
+  bilibiliPollQr(id: string, signal?: AbortSignal) { return this.request<Pick<BilibiliQr, 'status'>>(`bilibili/login/qr/${encodeURIComponent(id)}`, 'GET', undefined, signal); }
+  /** 清除本地授权，不声称其他设备退出。 */
+  bilibiliClearLogin() { return this.request<{ cleared: boolean }>('bilibili/login', 'DELETE'); }
   /** 运行草稿使用数据库版本；包含静态修改时另传启动文件版本防止覆盖外部编辑。 */
   updateSettings(expected_revision: number, values: Record<string, JsonValue>, startup_revision?: string | null) {
     return this.request<SettingsSnapshot>('settings', 'PATCH', { expected_revision, values,

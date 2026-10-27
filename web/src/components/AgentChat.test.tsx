@@ -3,6 +3,33 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { AgentChat } from './AgentChat';
 
+it('2000字提示附视频使用独立字段，不作为图片附件或挤占输入长度', async () => {
+  const asset = { id: 'd'.repeat(32), purpose: 'input', mime_type: 'video/mp4', size_bytes: 10,
+    sha256: 'e'.repeat(64), status: 'ready', created_at: '2026-10-27T00:00:00', expires_at: '2026-10-28T00:00:00' };
+  let body: any;
+  vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+    if (String(url).includes('/media/video/uploads')) return Response.json(asset);
+    if (String(url).endsWith('/agent-runs')) {
+      body = JSON.parse(init.body);
+      return Response.json({ execution_id: 'a'.repeat(32), content: '已处理', model: 'chat', record_saved: true });
+    }
+    return Response.json({ items: [{ id: 1, code: 'helper', name: '助手', enabled: true }], next_cursor: null });
+  }));
+  render(<AgentChat token="offline" />);
+  await chooseSelect(screen.getByRole('combobox', { name: '选择 Agent' }), '助手');
+  fireEvent.click(screen.getByLabelText('流式执行'));
+  fireEvent.change(screen.getByLabelText('添加投稿视频'), {
+    target: { files: [new File(['video'], '投稿.mp4', { type: 'video/mp4' })] },
+  });
+  await screen.findByText('投稿.mp4 · 已上传');
+  fireEvent.change(screen.getByLabelText('发送给 Agent'), { target: { value: '文'.repeat(2000) } });
+  fireEvent.click(screen.getByRole('button', { name: '运行 Agent' }));
+  await screen.findByText('已处理');
+  expect(body.prompt).toHaveLength(2000);
+  expect(body.video_asset_id).toBe(asset.id);
+  expect(body.attachment_ids).toEqual([]);
+});
+
 it('停止与退出取消请求，工具前草稿不进入成功历史',async()=>{
   let receivedSignal:AbortSignal|undefined;let stream:ReadableStreamDefaultController<Uint8Array>;
   const fetcher=vi.fn(async (url,init)=>{

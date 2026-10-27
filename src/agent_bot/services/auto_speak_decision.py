@@ -64,14 +64,13 @@ class AutoSpeakContextBuilder:
         conversation_context: ConversationContext,
         recent_group_context: str | None,
     ) -> str:
-        """允许空机器人人设，保留主动发言指令及有界的最新会话和群聊内容。"""
+        """人设和补充规则可空，保留必要决策指令及有界会话、群聊资料。"""
 
         normalized_system_prompt = system_prompt.strip()
         normalized_auto_prompt = auto_speak_prompt.strip()
         normalized_laya_prompt = laya_prompt.strip()
         if (
-            not normalized_auto_prompt
-            or len(normalized_auto_prompt) > _MAX_PROMPT_CHARS
+            len(normalized_auto_prompt) > _MAX_PROMPT_CHARS
             or not normalized_laya_prompt
             or len(normalized_laya_prompt) > _MAX_PROMPT_CHARS
         ):

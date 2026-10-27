@@ -15,7 +15,7 @@ import pymysql
 from pymysql.err import DatabaseError, InterfaceError, OperationalError
 
 from agent_bot.database import database_connector
-from agent_bot.group_context import RecentGroupMessage
+from agent_bot.group_context import RecentGroupMessage, RecentGroupSnapshot
 from agent_bot.models import ChatMessage
 from agent_bot.settings import DatabaseParams
 from agent_bot.state import (
@@ -975,7 +975,7 @@ class MySqlConversationMemoryStore:
 
 
 class MySqlRecentGroupContextStore:
-    """Persist bounded recent group text as a locked JSON snapshot."""
+    """通过所选数据库的短事务读写有界群聊 JSON 快照。"""
 
     def __init__(
         self,
@@ -1017,14 +1017,16 @@ class MySqlRecentGroupContextStore:
         sender_id: str,
         sender_name: str | None,
         content: str,
+        delivery_id: str | None = None,
     ) -> None:
-        """Append one normalized group text in a locked transaction."""
+        """短事务追加群文本；可选出站投递标识随快照去重，兼容旧成员消息。"""
 
         policy = self.policy
         message = _normalize_group_message(
             sender_id=sender_id,
             sender_name=sender_name,
             content=content,
+            delivery_id=delivery_id,
         )
         message = _fit_group_message(message, policy.max_chars)
         if message is None:
@@ -1049,6 +1051,11 @@ class MySqlRecentGroupContextStore:
                         if row is None:
                             raise ChatMemoryStoreError("group context row is unavailable")
                         messages = _decode_group_messages(row["messages_json"])
+                        if delivery_id is not None and any(
+                            item.delivery_id == delivery_id for item in messages
+                        ):
+                            connection.commit()
+                            return
                         messages.append(message)
                         messages = _trim_group_messages(messages, policy)
                         encoded = _encode_group_messages(messages)
@@ -1069,7 +1076,11 @@ class MySqlRecentGroupContextStore:
             raise ChatMemoryStoreError("failed to persist group context") from exc
 
     def context(self, *, bot_id: str, group_id: str) -> str | None:
-        """Load and renew a group-context snapshot."""
+        """保留普通聊天读取群背景的原接口及既有续期策略。"""
+        return self.snapshot(bot_id=bot_id, group_id=group_id).context
+
+    def snapshot(self, *, bot_id: str, group_id: str) -> RecentGroupSnapshot:
+        """在同一事务内读取背景和最后消息，避免定时输入与群背景发生版本偏差。"""
 
         policy = self.policy
         scope_id = self._scope_id(bot_id, group_id)
@@ -1081,11 +1092,11 @@ class MySqlRecentGroupContextStore:
                     with connection.cursor() as cursor:
                         if self._delete_expired(cursor, scope_id, now):
                             connection.commit()
-                            return None
+                            return RecentGroupSnapshot(None, None)
                         row = self._lock_group(cursor, scope_id)
                         if row is None:
                             connection.commit()
-                            return None
+                            return RecentGroupSnapshot(None, None)
                         messages = _trim_group_messages(
                             _decode_group_messages(row["messages_json"]),
                             policy,
@@ -1107,8 +1118,10 @@ class MySqlRecentGroupContextStore:
         except (InterfaceError, OperationalError, DatabaseError) as exc:
             raise ChatMemoryStoreError("failed to load group context") from exc
         if not messages:
-            return None
-        return "\n".join(message.render() for message in messages)
+            return RecentGroupSnapshot(None, None)
+        return RecentGroupSnapshot(
+            "\n".join(message.render() for message in messages), messages[-1],
+        )
 
     def cleanup_expired(self, *, limit: int = _MAX_CLEANUP_ROWS) -> int:
         """Delete a bounded batch of expired group snapshots."""
@@ -1231,7 +1244,9 @@ def _normalize_group_message(
     sender_id: str,
     sender_name: str | None,
     content: str,
+    delivery_id: str | None = None,
 ) -> RecentGroupMessage:
+    """规范成员及确认出站消息，投递标识只用于群快照中的幂等追加。"""
     normalized_sender_id = _validate_numeric_id(sender_id, "sender id")
     if sender_name is not None and not isinstance(sender_name, str):
         raise ChatMemoryValidationError("sender name must be text")
@@ -1242,6 +1257,7 @@ def _normalize_group_message(
         sender_id=normalized_sender_id,
         sender_name=sender_name,
         content=normalized_content,
+        delivery_id=delivery_id,
     )
 
 
@@ -1249,6 +1265,7 @@ def _fit_group_message(
     message: RecentGroupMessage,
     max_chars: int,
 ) -> RecentGroupMessage | None:
+    """裁剪可见正文时保留投递标识，避免预算变化破坏已发送消息去重。"""
     rendered = message.render()
     if len(rendered) <= max_chars:
         return message
@@ -1259,6 +1276,7 @@ def _fit_group_message(
         sender_id=message.sender_id,
         sender_name=message.sender_name,
         content=message.content[:content_chars],
+        delivery_id=message.delivery_id,
     )
 
 
@@ -1278,6 +1296,7 @@ def _rendered_group_size(messages: Sequence[RecentGroupMessage]) -> int:
 
 
 def _decode_group_messages(value: object) -> list[RecentGroupMessage]:
+    """兼容原成员消息 JSON，只为确认出站消息允许可选投递标识。"""
     if not isinstance(value, (str, bytes)):
         raise ChatMemoryStoreError("group context payload is invalid")
     try:
@@ -1289,31 +1308,32 @@ def _decode_group_messages(value: object) -> list[RecentGroupMessage]:
     messages: list[RecentGroupMessage] = []
     try:
         for item in raw:
-            if not isinstance(item, Mapping) or set(item) != {
-                "sender_id",
-                "sender_name",
-                "content",
-            }:
+            required = {"sender_id", "sender_name", "content"}
+            if (not isinstance(item, Mapping) or not required <= set(item)
+                    or set(item) - required - {"delivery_id"}):
                 raise ChatMemoryValidationError("group context item is invalid")
             messages.append(
                 _normalize_group_message(
                     sender_id=item["sender_id"],
                     sender_name=item["sender_name"],
                     content=item["content"],
+                    delivery_id=item.get("delivery_id"),
                 )
             )
-    except (KeyError, ChatMemoryValidationError) as exc:
+    except (KeyError, ValueError) as exc:
         raise ChatMemoryStoreError("group context payload is invalid") from exc
     return messages
 
 
 def _encode_group_messages(messages: Sequence[RecentGroupMessage]) -> str:
+    """成员消息保持旧格式，确认出站消息额外保留投递去重标识。"""
     encoded = json.dumps(
         [
             {
                 "sender_id": message.sender_id,
                 "sender_name": message.sender_name,
                 "content": message.content,
+                **({"delivery_id": message.delivery_id} if message.delivery_id is not None else {}),
             }
             for message in messages
         ],

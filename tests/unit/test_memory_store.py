@@ -764,6 +764,59 @@ def _group_store(
     )
 
 
+def test_confirmed_group_reply_deduplicates_after_store_reconstruction(memory_database) -> None:
+    """投递标识随原 JSON 持久化，重建仓库后不能重复追加同一机器人回答。"""
+    values = dict(bot_id="90001", group_id="20001", sender_id="90001",
+                  sender_name="机器人[桃桃]", content="这是刚刚发出的回答。", delivery_id="b" * 64)
+    _group_store(memory_database).record(**values)
+    restored = _group_store(memory_database)
+    restored.record(**values)
+    restored.record(bot_id="90001", group_id="20001", sender_id="10001",
+                    sender_name="小明", content="为什么？")
+    snapshot = _group_store(memory_database).snapshot(bot_id="90001", group_id="20001")
+    assert snapshot.context.count("这是刚刚发出的回答。") == 1
+    assert "机器人[桃桃]" in snapshot.context
+    assert snapshot.latest_message.content == "为什么？"
+    assert restored.context(bot_id="90002", group_id="20001") is None
+
+
+async def test_confirmed_large_reply_uses_recent_context_budget(memory_database) -> None:
+    """合法长文件回复先按近期群预算截取，不能在投递成功后因快照输入过大失败。"""
+    from types import SimpleNamespace
+
+    from agent_bot.integrations.onebot.context import EventContextService
+
+    store = _group_store(memory_database)
+    config = SimpleNamespace(chat_group_recent_context_enabled=True, nickname={"桃桃"},
+                             chat_group_recent_context_max_chars=1000)
+    service = EventContextService(
+        config_provider=lambda: config, access_policy_provider=lambda: None,
+        session_secret_provider=lambda: "unused", group_member_store_provider=lambda: None,
+        recent_context_store_provider=lambda: store,
+    )
+    await service.record_sent_group_text(
+        bot_id="90001", group_id="20001", delivery_id="c" * 64, content="长" * 400_000,
+    )
+    context = store.context(bot_id="90001", group_id="20001")
+    assert "机器人[桃桃]" in context and "长" in context
+    assert len(context) <= 1000
+
+
+def test_persistent_group_snapshot_returns_whole_latest_message(memory_database) -> None:
+    """读取既有 JSON 快照，同时获取群背景与最后一条的完整内容和身份。"""
+    store = _group_store(memory_database)
+    for content in ("旧消息", "最新消息第一行\n第二行"):
+        store.record(
+            bot_id="90001", group_id="20001", sender_id="10001",
+            sender_name="小明", content=content,
+        )
+    restored = _group_store(memory_database).snapshot(bot_id="90001", group_id="20001")
+    assert restored.context == "小明(QQ 10001)：旧消息\n小明(QQ 10001)：最新消息第一行\n第二行"
+    assert restored.latest_message.content == "最新消息第一行\n第二行"
+    assert restored.latest_message.sender_id == "10001"
+    assert store.snapshot(bot_id="90001", group_id="20002").latest_message is None
+
+
 def test_group_context_survives_reconstruction_and_hides_scope_ids(
     memory_database,
 ) -> None:

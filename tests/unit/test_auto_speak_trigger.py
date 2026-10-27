@@ -60,6 +60,7 @@ class RecordingService:
         self.order = order
         self.accepted_groups = accepted_groups
         self.snapshots: list[tuple[str, str | None]] = []
+        self.trigger_messages: list[str] = []
         self.block_first = block_first
         self.first_started = asyncio.Event()
         self.release_first = asyncio.Event()
@@ -72,9 +73,14 @@ class RecordingService:
         bot: FakeBot,
         group_id: str,
         recent_group_context: str | None,
+        *,
+        trigger_message: str,
+        chat_context_provider=None,
     ) -> bool:
+        """记录已捕获的正文；测试替身不主动执行额外 QQ 来源查询。"""
         self.order.append(f"service:{group_id}")
         self.snapshots.append((group_id, recent_group_context))
+        self.trigger_messages.append(trigger_message)
         if self.block_first and len(self.snapshots) == 1:
             self.first_started.set()
             await self.release_first.wait()
@@ -114,6 +120,7 @@ async def test_message_trigger_records_before_context_and_decision() -> None:
 
     assert order == ["record:20001:1", "context:20001", "service:20001"]
     assert service.snapshots == [("20001", "近期消息\n当前消息")]
+    assert service.trigger_messages == ["当前消息"]
 
 
 @pytest.mark.asyncio
@@ -137,6 +144,19 @@ async def test_message_trigger_serializes_same_group_and_preserves_each_snapshot
         ("20001", "第一条"),
         ("20001", "第一条\n第二条"),
     ]
+    assert service.trigger_messages == ["第一条", "第二条"]
+
+
+async def test_message_trigger_uses_original_multiline_message() -> None:
+    """适配器清理后的正文及更新中的群快照不能替换触发消息原文。"""
+    order: list[str] = []
+    store = RecordingContextStore(order)
+    service = RecordingService(order, accepted_groups={"20001"})
+    trigger = make_trigger(store=store, service=service, order=order)
+    event = group_event("被适配器处理的消息")
+    event.original_message = Message("实际触发消息\n第二行")
+    await trigger.handle(FakeBot(), event)
+    assert service.trigger_messages == ["实际触发消息\n第二行"]
 
 
 @pytest.mark.asyncio

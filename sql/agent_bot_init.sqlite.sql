@@ -1,4 +1,4 @@
--- 用途：显式初始化 SQLite 的业务表与可选本地队列表。
+-- 用途：显式初始化 agentBot 0.5.7 SQLite 的业务表与可选本地队列表。
 -- 执行顺序：由 agent-bot database init 在启用外键的事务中执行，再运行 settings init。
 -- 数据影响：仅创建缺失结构，不清空数据、不写入配置或密钥。
 -- 统一会话仅建 chat_session_context；既有部署校验迁移与备份后使用 2026-10-20-retire-legacy-session-context.sqlite.sql 清理旧表。
@@ -993,3 +993,37 @@ CREATE TABLE IF NOT EXISTS chat_memory_embedding (
 
 -- 来源撤回按事件和会话定向定位，避免扫描并锁定无关证据。
 CREATE INDEX IF NOT EXISTS idx_memory_evidence_event ON chat_memory_evidence (source_event_id,source_session_id);
+
+-- B 站单账号与外部操作记录；0.5.7 既有 SQLite 库由管理员显式执行一次。
+-- 在完整初始化之后执行；只新增表和索引，不修改或删除业务数据，不由普通启动执行。
+CREATE TABLE IF NOT EXISTS agent_bot_bilibili_account (
+    id INTEGER PRIMARY KEY CHECK (id = 1), -- 固定单账号，避免模型选择其他身份
+    uid TEXT NOT NULL, -- B 站账号 UID
+    name TEXT NOT NULL, -- 最近验证的账号昵称
+    cookies TEXT NOT NULL, -- 仅服务端可读的登录凭据，不回填 API
+    updated_at INTEGER NOT NULL -- 最近确认登录的 UTC 秒
+);
+CREATE TABLE IF NOT EXISTS agent_bot_bilibili_operation (
+    operation_key TEXT PRIMARY KEY, -- 账号、归属、请求和参数的 SHA256 唯一占位
+    uid TEXT NOT NULL, -- 操作时绑定的账号，不随清除登录删除记录
+    tool TEXT NOT NULL, -- 产生外部副作用的工具名
+    status TEXT NOT NULL CHECK (status IN ('pending', 'completed')), -- 未知结果禁止重发
+    result TEXT NULL, -- 成功后的安全 JSON 结果，不含凭据
+    created_at INTEGER NOT NULL -- 操作占位的 UTC 秒
+);
+
+-- 启动版本管理增量：用于已有 0.5.5–0.5.7 完整结构，先执行本脚本再运行已登记业务增量。
+-- 仅新增版本与迁移流水表，不写入版本号、不修改业务数据；运行器成功核验后登记版本。
+CREATE TABLE IF NOT EXISTS agent_bot_schema_version (
+    id INTEGER PRIMARY KEY CHECK (id = 1), -- 单例版本记录，防止并行版本分叉
+    version TEXT NOT NULL, -- 完成核验的程序稳定版本号
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP -- 版本推进时间
+);
+CREATE TABLE IF NOT EXISTS agent_bot_schema_migration (
+    migration_id TEXT PRIMARY KEY, -- 发布清单中的唯一迁移 ID，主键避免重复登记
+    target_version TEXT NOT NULL, -- 该迁移所属程序版本
+    checksum TEXT NOT NULL, -- 当前后端 SQL 的 SHA256，禁止静默篡改历史迁移
+    status TEXT NOT NULL CHECK (status IN ('applying', 'applied', 'failed')), -- 中断可审计
+    applied_at DATETIME NULL, -- 迁移完成时间，未完成时为空
+    last_error TEXT NULL -- 仅保存固定错误码，不记录业务值或原始数据库异常
+);

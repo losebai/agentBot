@@ -135,7 +135,16 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
         "chat_knowledge", "chat_knowledge_tag", "chat_material", "chat_material_source",
         "chat_session_context", "chat_memory_revision", "chat_memory_evidence",
         "chat_memory_operation", "chat_memory_embedding",
+        "agent_bot_bilibili_account", "agent_bot_bilibili_operation",
+        "agent_bot_schema_version", "agent_bot_schema_migration",
     }
+    # 插件既有库增量和新库完整脚本必须得到相同字段、默认值及约束。
+    bilibili = definitions((ROOT / 'sql/bilibili-init.sql').read_text('utf-8'))
+    for name, declarations in bilibili.items():
+        assert normalized(','.join(tables[name])) == normalized(','.join(declarations)), name
+    versioning = definitions((ROOT / 'sql/startup-versioning.sql').read_text('utf-8'))
+    for name, declarations in versioning.items():
+        assert normalized(','.join(tables[name])) == normalized(','.join(declarations)), name
     from agent_bot.memory.schema import MYSQL_ADDITIONAL
 
     # 新辅助表同样核对完整字段、主键、来源索引和外键，不能只增加预期表数量。

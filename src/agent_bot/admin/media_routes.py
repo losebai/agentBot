@@ -62,6 +62,38 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         value.require_ready()
         return value
 
+    @router.post('/media/video/uploads', response_model=MediaAssetView, status_code=201)
+    async def upload_video(
+        request: Request,
+        session_id: str = Query(..., min_length=1, max_length=128, pattern=r'^[A-Za-z0-9_-]+$'),
+    ):
+        """认证后有界读取 MP4，只生成当前管理会话的投稿输入，不进入图片解码。"""
+        from agent_bot.media.video import MAX_VIDEO_BYTES
+
+        if request.headers.get('content-type', '').split(';', 1)[0].lower() != 'video/mp4':
+            raise MediaError('BILIBILI_INVALID_MEDIA', status_code=422)
+        async with runtime.lease():
+            current = resources()
+            async with current.uploads.slot():
+                async def receive_video():
+                    """以实际字节限制上传，不能信任浏览器声明的文件长度。"""
+                    data = bytearray()
+                    async for chunk in request.stream():
+                        if len(data) + len(chunk) > MAX_VIDEO_BYTES:
+                            raise MediaError('MEDIA_TOO_LARGE', status_code=413)
+                        data.extend(chunk)
+                    payload = bytes(data)
+                    return await run_with_disconnect(request, current.store.put(
+                        owner=MediaOwner(entry='admin', session_id=f'admin_{session_id}'),
+                        purpose='input', data=payload, mime_type='video/mp4',
+                    ))
+                try:
+                    return await asyncio.wait_for(receive_video(), UPLOAD_SECONDS)
+                except asyncio.TimeoutError:
+                    raise MediaError('MEDIA_UPLOAD_TIMEOUT', status_code=408) from None
+                except ClientDisconnect:
+                    raise MediaError('MEDIA_CANCELLED', status_code=499) from None
+
     @router.post("/media/uploads", response_model=MaterialUploadView, status_code=201)
     async def upload(
         request: Request,

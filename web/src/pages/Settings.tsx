@@ -33,7 +33,7 @@ const replySettingNames = new Set([
   'chat_cooldown_seconds', 'chat_chunk_chars', 'chat_max_reply_chars',
 ]);
 // 兼容旧服务端快照：菜单开关和内部搜索绑定均不能作为设置字段编辑或提交。
-const hiddenSettingNames = new Set(['app_enabled_plugins', 'chat_python_search_mcp_code', 'chat_web_search_max_steps']);
+const hiddenSettingNames = new Set(['app_enabled_plugins', 'chat_web_search_max_steps']);
 
 /** 仅展示当前决策方式的依赖，切换方式时不删除另一方式的草稿或已存值。 */
 function visibleDecisionField(name: string, backend: string): boolean {
@@ -252,11 +252,12 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
             </ChoiceSelect>
               : kind === 'boolean' ? <Switch id={id} disabled={readOnly} checked={value === true} onChange={change} />
               : kind === 'secret' ? <Input.Password id={id} disabled={readOnly} value={String(value)} placeholder={field.secret_is_set ? readOnly ? '已设置' : '已设置 · 留空保持原值' : '未设置'} autoComplete="new-password" onChange={event => change(event.target.value)} />
-              : kind === 'json' || ['chat_auto_speak_llm_prompt', 'chat_multi_reply_prompt'].includes(field.name) || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
+              : kind === 'json' || ['chat_auto_speak_llm_prompt', 'chat_auto_speak_prompt', 'chat_multi_reply_prompt'].includes(field.name) || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
               : <Input id={id} disabled={readOnly} type={kind === 'number' ? 'number' : 'text'} step="any" value={String(value)} onChange={event => change(event.target.value)} />}
             {field.name === 'nickname' && <small>每行一个名称或别名，保存后热更新；留空关闭名字触发。</small>}
             {field.name === 'chat_agent_max_steps' && <small>按实际工具调用次数计数，所有 Agent 和联网请求共用。默认 5，可填写任意正整数；留空不限次数，仍遵守请求超时。</small>}
             {field.name === 'chat_auto_speak_llm_prompt' && <small>使用独立决策模型和此提示词，结合当前收到的消息及近期群聊进行单次普通调用；不读取会话记忆、历史轮次或 Agent 人设。仅返回 {`{"choice":"speak"}`} 或 {`{"choice":"silent"}`}。</small>}
+            {field.name === 'chat_auto_speak_prompt' && <small>留空沿用人设与自动回复规则。message 使用触发时消息，interval 使用群里最新有效消息，无需填写生成引导句。</small>}
             {field.name === 'onebot_v11_access_token' && <small>{readOnly
               ? '当前字段由启动环境覆盖或缺少启动文件，请检查启动配置；与 NapCat Token 保持一致。'
               : '静态启动配置，可在这里保存；手动“服务→重启后端”后生效，请与 NapCat Token 保持一致。留空不修改。'}</small>}

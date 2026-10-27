@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from agent_bot.agent.errors import AgentError
 from agent_bot.jobs.contracts import JobArguments
 from agent_bot.materials.contracts import MaterialGetArguments, MaterialSearchArguments
+from agent_bot.plugins.bilibili.contracts import TOOL_MODELS
 from agent_bot.services.chat_tools import (
     ImageGenerateArguments,
     TtsGenerateArguments,
@@ -19,6 +20,7 @@ from agent_bot.services.chat_tools import (
 from agent_bot.services.tagged_memory import MemoryArguments
 
 ARGUMENT_MODELS = {
+    **TOOL_MODELS,
     "image_generate": ImageGenerateArguments,
     "memory": MemoryArguments,
     "material_search": MaterialSearchArguments,

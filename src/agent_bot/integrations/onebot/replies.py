@@ -18,8 +18,6 @@ from agent_bot.model_guard import MODEL_CONFIGURATION_ERROR_MESSAGE
 from agent_bot.services.replies import GeneratedReply, LlmReplyComposer, ReplyIntent
 from agent_bot.state import split_reply
 
-CHAT_BUSY_MESSAGE = "当前聊天并发已满或会话正在重置，本次请求未执行，请稍后重试。"
-
 
 @dataclass(frozen=True, slots=True)
 class ReplyDeliveryReceipt:
@@ -30,7 +28,7 @@ class ReplyDeliveryReceipt:
 
 
 class OneBotReplyGateway:
-    """统一消息投递；模型正文与配置、忙碌状态的受限系统通知分别校验。"""
+    """统一消息投递，分别校验模型正文与受限配置错误通知。"""
 
     def __init__(
         self, config_provider: Callable[[], RuntimeConfig], *,
@@ -40,21 +38,6 @@ class OneBotReplyGateway:
 
         self._config_provider = config_provider
         self.recorder = recorder
-
-    async def finish_busy_error(self, matcher: Matcher) -> NoReturn:
-        """额度满时直接拒绝，不调用模型生成解释或把请求加入等待。"""
-        message = Message(CHAT_BUSY_MESSAGE)
-        await self._recorded_message(message, lambda: matcher.send(message), key="busy")
-        await matcher.finish()
-        raise AssertionError("matcher.finish must stop execution")
-
-    async def send_busy_error(
-        self, bot: Bot, *, scene: Literal["private", "group"], target_id: str,
-    ) -> None:
-        """恢复任务遇到过载时，向原目标发送固定系统状态而非生成回复。"""
-        await self._send_bot_message(
-            bot, scene=scene, target_id=target_id, message=Message(CHAT_BUSY_MESSAGE),
-        )
 
     async def finish_configuration_error(
         self, matcher: Matcher, *, kind: Literal["model", "catalog", "agent"] = "model",
@@ -104,10 +87,13 @@ class OneBotReplyGateway:
 
         if self.recorder is None:
             return await send_file()
-        return await self.recorder.send_file(
-            name=f"{name}.txt", data=reply.text.encode("utf-8"), text=reply.text,
-            request_id=reply.request_id, sender=send_file,
-        )
+        with self.recorder.destination(
+            getattr(bot, "self_id", None), target_id if scene == "group" else None,
+        ):
+            return await self.recorder.send_file(
+                name=f"{name}.txt", data=reply.text.encode("utf-8"), text=reply.text,
+                request_id=reply.request_id, sender=send_file,
+            )
 
     async def send_file_mention(self, bot: Bot, *, target_id: str, member_id: str) -> None:
         """文件上传确认后发送原生群提醒，队列独立记录进度，重试不重传已确认文件。"""
@@ -295,11 +281,17 @@ class OneBotReplyGateway:
                 return await bot.send_private_msg(user_id=int(target_id), message=message)
         else:
             raise ValueError("unsupported OneBot scene")
-        if video_asset is not None and self.recorder is not None:
-            return await self.recorder.send_video_asset(
-                video_asset, sender, key=key, request_id=request_id,
-            )
-        return await self._recorded_message(message, sender, key=key, request_id=request_id)
+        if self.recorder is None:
+            return await sender()
+        # 网关明确的私聊/群目标优先于当前事件，防止跨群或群转私聊时串入快照。
+        with self.recorder.destination(
+            getattr(bot, "self_id", None), target_id if scene == "group" else None,
+        ):
+            if video_asset is not None:
+                return await self.recorder.send_video_asset(
+                    video_asset, sender, key=key, request_id=request_id,
+                )
+            return await self._recorded_message(message, sender, key=key, request_id=request_id)
 
     async def _recorded_message(
         self, message: Message, sender: Callable[[], Awaitable[Any]], *, key: str,

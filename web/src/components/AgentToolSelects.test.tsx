@@ -30,7 +30,9 @@ it('MCP 下拉覆盖所有分页，关联后自动使用工具而无需逐个勾
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '关联 MCP（最多 3 个）' }));
   fireEvent.click(await screen.findByText('文档服务 · docs'));
   expect(screen.getByLabelText('MCP 草稿')).toHaveTextContent('[2]');
-  expect(screen.queryByText('搜索服务 · search')).not.toBeInTheDocument();
+  expect(await screen.findByText('搜索服务 · search')).toBeVisible();
+  fireEvent.click(screen.getByText('搜索服务 · search'));
+  expect(screen.getByLabelText('MCP 草稿')).toHaveTextContent('[2,1]');
   expect(screen.getByText(/已关联 MCP 的工具自动可用/)).toBeVisible();
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '允许工具' }));
   fireEvent.change(screen.getByRole('combobox', { name: '允许工具' }), { target: { value: 'find_docs' } });

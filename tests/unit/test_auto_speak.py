@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 import pytest
 
 from agent_bot.ai.chat_errors import ChatAiUnavailableError
+from agent_bot.group_context import RecentGroupContextStore, RecentGroupMessage, RecentGroupSnapshot
 from agent_bot.integrations.onebot.auto_speak import AutoSpeakCycleResult, AutoSpeakService
 from agent_bot.models import AutoSpeakDecisionResponse, ChatMessage, ChatToolName
 from agent_bot.services.auto_speak_decision import AutoSpeakContextBuilder
@@ -79,6 +80,12 @@ class FakeContextStore:
         self.calls.append((bot_id, group_id))
         return self.contexts[group_id]
 
+    def snapshot(self, *, bot_id: str, group_id: str) -> RecentGroupSnapshot:
+        """保留原测试的文本快照，同时给出可独立用于正文的当前消息。"""
+        context = self.context(bot_id=bot_id, group_id=group_id)
+        latest = RecentGroupMessage("10001", None, context) if context else None
+        return RecentGroupSnapshot(context, latest)
+
 
 class FakeConversationContextProvider:
     """返回自动发言 session 的持久历史并记录读取范围。"""
@@ -123,6 +130,7 @@ def make_service(
     system_prompt_provider: Callable[[], Awaitable[str | None]] | None = None,
     group_shared_session: bool = False,
     decision_backend: str = "laya",
+    forward_user_name: bool = False,
 ) -> AutoSpeakService:
     """用离线依赖构造群聊自动发言，允许覆盖机器人人设。"""
 
@@ -151,6 +159,7 @@ def make_service(
         on_error=on_error,
         group_shared_session=group_shared_session,
         decision_backend=decision_backend,
+        forward_user_name=forward_user_name,
     )
 
 
@@ -176,8 +185,12 @@ async def test_llm_decision_does_not_read_history_or_agent_persona(trigger_mode)
         assert (await value.run_once()).sent == 1
         assert (await value.run_once()).sent == 0
     else:
-        assert await value.handle_group_message(bot, "88888", "近期消息\n当前收到消息")
-        assert not await value.handle_group_message(bot, "88888", "近期消息\n当前收到消息")
+        assert await value.handle_group_message(
+            bot, "88888", "近期消息\n当前收到消息", trigger_message="当前收到消息",
+        )
+        assert not await value.handle_group_message(
+            bot, "88888", "近期消息\n当前收到消息", trigger_message="当前收到消息",
+        )
     history.assert_not_awaited()
     persona.assert_not_awaited()
     assert len(jobs.jobs) == 1
@@ -190,7 +203,7 @@ async def test_llm_decision_does_not_read_history_or_agent_persona(trigger_mode)
     ids=["missing", "empty", "over-limit"],
 )
 async def test_llm_decision_context_is_bounded_and_keeps_latest_text(context):
-    """空快照有明确标识，过长快照优先保留最新文本并遵守八千字符边界。"""
+    """空快照不调用模型，过长快照优先保留最新文本并遵守八千字符边界。"""
     client = FakeDecisionClient([decision(False)])
     value = make_service(
         job_submitter=FakeJobSubmitter(), decision_client=client,
@@ -198,13 +211,13 @@ async def test_llm_decision_context_is_bounded_and_keeps_latest_text(context):
         decision_backend="llm",
     )
     await value.run_once()
+    if not context:
+        assert client.calls == []
+        return
     state = client.calls[0]["state"]
     assert 0 < len(state) <= 8000
-    if context:
-        assert state.endswith("最新消息")
-        assert "过旧消息" not in state
-    else:
-        assert "没有可用的近期群聊文本" in state
+    assert state.endswith("最新消息")
+    assert "过旧消息" not in state
 
 
 def decision_payload(state: str) -> dict[str, object]:
@@ -350,7 +363,7 @@ async def test_message_decision_error_is_silent_and_never_sends() -> None:
         on_error=errors.append,
     )
 
-    sent = await service.handle_group_message(bot, "88888", "当前消息")
+    sent = await service.handle_group_message(bot, "88888", "当前消息", trigger_message="当前消息")
 
     assert sent is False
     assert job_submitter.jobs == []
@@ -375,7 +388,7 @@ async def test_speak_preserves_context_and_auto_reply_limit_in_queued_job() -> N
         max_reply_chars=max_reply_chars,
     )
 
-    sent = await service.handle_group_message(bot, "88888", context)
+    sent = await service.handle_group_message(bot, "88888", context, trigger_message=context)
 
     assert sent is True
     assert job_submitter.jobs[0].recent_group_context == context
@@ -445,7 +458,9 @@ async def test_auto_speak_material_owner_matches_shared_group_only(
     if trigger_mode == "interval":
         assert (await service.run_once()).sent == 1
     else:
-        assert await service.handle_group_message(bot, "88888", "群聊上下文")
+        assert await service.handle_group_message(
+            bot, "88888", "群聊上下文", trigger_message="群聊上下文",
+        )
     job = submitter.jobs[0]
     expected_scope = (
         "bot:90009:group:88888" if group_shared_session else "bot:90009:auto:group:88888"
@@ -681,8 +696,81 @@ async def test_speak_enqueues_normal_group_chat_with_all_selected_tools() -> Non
     assert job.group_id == "88888"
     assert job.bot_id == "90009"
     assert job.user_id == "90009"
-    assert job.prompt == "请结合当前自动发言会话历史和群聊上下文，生成本次主动发言。"
-    assert job.system_prompt_append == "生成一句自然的群聊开场白"
+    assert job.prompt == "群聊上下文"
+    assert "生成一句自然的群聊开场白" in job.system_prompt_append
     assert job.recent_group_context == "群聊上下文"
     assert job.chat_tools == available_tools
     assert job.auto_speak_max_reply_chars == 321
+
+
+@pytest.mark.parametrize("trigger_mode", ["interval", "message"])
+@pytest.mark.parametrize("backend", ["laya", "llm"])
+@pytest.mark.parametrize("generation_prompt", ["", "规则" * 500], ids=["empty", "max-length"])
+async def test_auto_speak_uses_real_input_and_shared_multi_reply_rules(
+    monkeypatch, chat_plugin, trigger_mode, backend, generation_prompt,
+) -> None:
+    """两种触发都把对应的真实消息交给正文模型，并经过普通队列的分条规则。"""
+    from unittest.mock import AsyncMock
+
+    store = RecentGroupContextStore(
+        message_limit=10, max_chars=4000, ttl_seconds=60, max_groups=10,
+    )
+    for content in ("旧消息", "最新消息第一行\n第二行"):
+        store.record(
+            bot_id="90009", group_id="88888", sender_id="10001", sender_name="成员",
+            content=content,
+        )
+    jobs = FakeJobSubmitter()
+    bot = FakeBot()
+    value = make_service(
+        job_submitter=jobs, decision_client=FakeDecisionClient([decision(True)]),
+        context_store=store, bot_provider=lambda _: bot, trigger_mode=trigger_mode,
+        prompt=generation_prompt, decision_backend=backend, max_reply_chars=20,
+    )
+    if trigger_mode == "interval":
+        assert (await value.run_once()).sent == 1
+        expected = "最新消息第一行\n第二行"
+    else:
+        expected = "触发消息原文\n完整第二行"
+        assert await value.handle_group_message(
+            bot, "88888", "成员：触发消息原文", trigger_message=expected,
+        )
+    job = jobs.jobs[0]
+    assert job.prompt == expected
+    if generation_prompt:
+        assert job.system_prompt_append.startswith(generation_prompt)
+    assert job.auto_speak_max_reply_chars == 20
+    assert "请结合当前自动发言会话历史和群聊上下文" not in job.prompt
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", True)
+    agent = AsyncMock(return_value='["第一条", "第二条"]')
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", agent)
+    result = await chat_plugin._ConversationProcessor().generate(job)
+    assert agent.await_args.args[1] == expected
+    assert "JSON" in agent.await_args.kwargs["system_prompt_append"]
+    assert result.delivery_parts == ("第一条", "第二条")
+
+
+async def test_interval_without_latest_message_skips_decision_and_generation() -> None:
+    """没有有效群消息时不制造引导句，也不调用模型空聊。"""
+    jobs, client = FakeJobSubmitter(), FakeDecisionClient([])
+    value = make_service(
+        job_submitter=jobs, decision_client=client, context_store=FakeContextStore({"88888": None}),
+        bot_provider=lambda _: FakeBot(), decision_backend="llm",
+    )
+    assert (await value.run_once()).sent == 0
+    assert jobs.jobs == [] and client.calls == []
+
+
+async def test_tool_routing_uses_trigger_message_instead_of_generation_style() -> None:
+    """战绩等本地能力按真实群消息选择，风格提示词不能替代本轮话题。"""
+    jobs = FakeJobSubmitter()
+    bot = FakeBot()
+    value = make_service(
+        job_submitter=jobs, decision_client=FakeDecisionClient([decision(True)]),
+        context_store=FakeContextStore({"88888": "最近消息"}), bot_provider=lambda _: bot,
+        trigger_mode="message", prompt="自然参与群聊", available_tools=("naraka_query",),
+    )
+    assert await value.handle_group_message(
+        bot, "88888", "最近消息", trigger_message="帮忙看看永劫无间战绩",
+    )
+    assert jobs.jobs[0].chat_tools == ("naraka_query",)

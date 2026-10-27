@@ -10,7 +10,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] in (["--help"], ["-h"]):
         print(
-            "usage: agent-bot [database init | records migrate | "
+            "usage: agent-bot [database init/upgrade | records migrate | "
             "settings ... | workflows ... | --help]\n"
             "Without a subcommand, start the bot and browser management service."
         )

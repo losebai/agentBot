@@ -177,6 +177,8 @@ def build_runtime_state(
             decision_client = LlmAutoSpeakDecisionService(
                 ai_client.python_service, model=config.chat_auto_speak_decision_model,
                 prompt=config.chat_auto_speak_llm_prompt,
+                bot_id=config.chat_auto_speak_bot_id.get_secret_value(),
+                bot_name="、".join(sorted(config.nickname)),
             )
         else:
             assert config.chat_auto_speak_mcp_code is not None
@@ -197,6 +199,7 @@ def build_runtime_state(
             group_ids=config.chat_auto_speak_groups,
             trigger_mode=config.chat_auto_speak_trigger_mode,
             decision_backend=config.chat_auto_speak_decision_backend,
+            forward_user_name=config.chat_llm_forward_user_name,
             prompt=config.chat_auto_speak_prompt,
             system_prompt=config.chat_system_prompt,
             system_prompt_provider=ai_client.current_system_prompt,

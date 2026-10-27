@@ -10,6 +10,21 @@ def _store_type():
     return module.RecentGroupContextStore
 
 
+def test_confirmed_bot_reply_deduplicates_and_keeps_followup_order() -> None:
+    """恢复同一投递不重复追加，机器人回答与成员追问按群隔离保留。"""
+    store = _store_type()(message_limit=10, max_chars=1000, ttl_seconds=60, max_groups=10)
+    for _ in range(2):
+        store.record(bot_id="90001", group_id="20001", sender_id="90001",
+                     sender_name="机器人[桃桃]", content="先完成第一步。", delivery_id="a" * 64)
+    store.record(bot_id="90001", group_id="20001", sender_id="10001",
+                 sender_name="成员", content="为什么？")
+    snapshot = store.snapshot(bot_id="90001", group_id="20001")
+    assert snapshot.context.count("先完成第一步。") == 1
+    assert snapshot.context.index("机器人[桃桃]") < snapshot.context.index("为什么？")
+    assert snapshot.latest_message.content == "为什么？"
+    assert store.context(bot_id="90001", group_id="20002") is None
+
+
 def test_store_returns_only_latest_messages_in_original_order() -> None:
     store = _store_type()(
         message_limit=2,
@@ -43,6 +58,39 @@ def test_store_returns_only_latest_messages_in_original_order() -> None:
     assert store.context(bot_id="90001", group_id="20001") == (
         "小红(QQ 10002)：第二条\nQQ 10003：第三条"
     )
+
+
+def test_snapshot_keeps_latest_message_separate_from_rendered_transcript() -> None:
+    """定时发言读取真实最后一条，不能把多行消息的末行误当完整消息。"""
+    store = _store_type()(
+        message_limit=2, max_chars=1000, ttl_seconds=60, max_groups=10,
+    )
+    for content in ("旧消息", "最新消息第一行\n最新消息第二行"):
+        store.record(
+            bot_id="90001", group_id="20001", sender_id="10001",
+            sender_name="小明", content=content,
+        )
+    snapshot = store.snapshot(bot_id="90001", group_id="20001")
+    assert snapshot.context == (
+        "小明(QQ 10001)：旧消息\n小明(QQ 10001)：最新消息第一行\n最新消息第二行"
+    )
+    assert snapshot.latest_message.content == "最新消息第一行\n最新消息第二行"
+    assert snapshot.latest_message.sender_id == "10001"
+    assert store.snapshot(bot_id="90001", group_id="20002").latest_message is None
+
+
+def test_snapshot_expires_latest_message_with_group_history() -> None:
+    """过期后不能继续把旧的最后消息作为新的定时输入。"""
+    now = [0.0]
+    store = _store_type()(
+        message_limit=2, max_chars=1000, ttl_seconds=60, max_groups=10, clock=lambda: now[0],
+    )
+    store.record(
+        bot_id="90001", group_id="20001", sender_id="10001", sender_name=None, content="旧消息",
+    )
+    now[0] = 60
+    snapshot = store.snapshot(bot_id="90001", group_id="20001")
+    assert snapshot.context is None and snapshot.latest_message is None
 
 
 def test_store_isolates_context_by_bot_and_group() -> None:

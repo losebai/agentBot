@@ -44,9 +44,6 @@ class PluginConfig(BaseModel):
     chat_python_agent_code: str | None = Field(
         default=None, pattern=r"^[a-z][a-z0-9_-]{0,63}$"
     )
-    chat_python_search_mcp_code: str | None = Field(
-        default=None, pattern=r"^[a-z][a-z0-9_-]{0,63}$"
-    )
     chat_model: str = Field(
         default="Qwen/Qwen3-8B",
         min_length=1,
@@ -221,8 +218,7 @@ class PluginConfig(BaseModel):
     chat_auto_speak_groups: set[str] | str | int = Field(default_factory=set, repr=False)
     chat_auto_speak_trigger_mode: Literal["interval", "message"] = "interval"
     chat_auto_speak_prompt: str = Field(
-        default="生成一句自然、友好、适合主动发给当前会话的简短消息。",
-        min_length=1, max_length=1000, repr=False,
+        default="", max_length=1000, repr=False,
     )
     chat_auto_speak_laya_prompt: str = Field(
         default=("结合自动发言会话历史和当前群聊，判断现在是否适合主动发言；"
@@ -796,7 +792,6 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "agent_bot_napcat_webui_port": "NapCat 登录页端口 (启动配置，重启生效)",
     # AI 服务
     "chat_python_agent_code": "Python Agent 预设代码 (空值使用当前聊天模型与提示词)",
-    "chat_python_search_mcp_code": "Python 网页搜索 MCP 服务代码 (search 分类)",
     "chat_model": "聊天模型 (供应商 / 模型)",
     "chat_vision_model": "图片理解模型 (供应商 / 模型)",
     "chat_image_model": "图片生成模型 (供应商 / 模型)",
@@ -814,7 +809,7 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_llm_forward_user_name": "是否额外发送当前 QQ 昵称元数据",
     "chat_agent_max_steps": "Agent 工具调用次数上限 (默认 5，留空不限次数)",
     "chat_mcp_services": "普通聊天可使用的通用 MCP 服务 code 列表",
-    "chat_web_search_enabled": "是否为普通 QQ 对话启用受限搜索和网页读取",
+    "chat_web_search_enabled": "是否为普通 QQ 对话启用网页读取（不控制独立 MCP 搜索）",
     "chat_web_search_max_steps": "联网搜索 Agent 最大推理步数",
     "chat_image_recognition_enabled": "是否识别 QQ 消息中的图片素材",
     "chat_max_images_per_message": "单条消息最多识别的图片数量",
@@ -937,7 +932,7 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_auto_speak_bot_id": "自动发言机器人 QQ 号",
     "chat_auto_speak_groups": "自动发言目标群列表",
     "chat_auto_speak_trigger_mode": "自动发言触发方式：interval 定时或 message 群消息",
-    "chat_auto_speak_prompt": "自动发言生成提示词",
+    "chat_auto_speak_prompt": "自动发言补充规则 (可留空，沿用现有人设与自动回复规则)",
     "chat_auto_speak_laya_prompt": "自动发言决策指令",
     "chat_auto_speak_initial_delay_seconds": "自动发言启动等待秒数",
     "chat_auto_speak_interval_seconds": "自动发言轮次间隔秒数，定时模式至少 60 秒",

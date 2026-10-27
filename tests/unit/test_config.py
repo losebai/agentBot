@@ -589,7 +589,6 @@ def test_auto_speak_rejects_invalid_qq_identifiers(field: str, value: object) ->
     [
         ("chat_auto_speak_initial_delay_seconds", 9.99),
         ("chat_auto_speak_interval_seconds", 59.99),
-        ("chat_auto_speak_prompt", ""),
         ("chat_auto_speak_prompt", "x" * 1001),
         ("chat_auto_speak_laya_prompt", ""),
         ("chat_auto_speak_laya_prompt", "x" * 1001),
@@ -617,6 +616,16 @@ def test_auto_speak_accepts_identifier_and_length_boundaries() -> None:
         "23456",
         "12345678901234567890",
     }
+
+
+@pytest.mark.parametrize("prompt", ["", "  \n  "])
+def test_auto_speak_generation_prompt_can_be_empty(prompt: str) -> None:
+    """两种触发都能只使用现有人设与自动回复规则，不必手写生成引导句。"""
+    for mode in ("interval", "message"):
+        config = make_enabled_auto_speak_config(
+            chat_auto_speak_trigger_mode=mode, chat_auto_speak_prompt=prompt,
+        )
+        assert config.chat_auto_speak_prompt == ""
 
 
 def test_message_trigger_auto_speak_accepts_unused_sub_minute_interval() -> None:

@@ -8,6 +8,7 @@ import pytest
 from nonebot.adapters.onebot.v11 import Adapter, Bot
 from nonebug import App
 
+from agent_bot.group_context import RecentGroupMessage, RecentGroupSnapshot
 from agent_bot.integrations.onebot.auto_speak import AutoSpeakService
 from agent_bot.models import AutoSpeakDecisionResponse
 from agent_bot.services.auto_speak_decision import AutoSpeakContextBuilder
@@ -37,6 +38,10 @@ class StaticContextStore:
         """Return deterministic group context for the offline integration test."""
 
         return "群聊上下文"
+
+    def snapshot(self, *, bot_id: str, group_id: str) -> RecentGroupSnapshot:
+        """返回一次读取的群聊背景与最后消息，避免引入真实数据库。"""
+        return RecentGroupSnapshot("群聊上下文", RecentGroupMessage("10001", None, "群聊上下文"))
 
 
 @pytest.mark.integration

@@ -1,4 +1,4 @@
--- 用途：统一初始化 agentBot 0.5.0 的业务表与可选本地队列表，供新独立数据库使用。
+-- 用途：统一初始化 agentBot 0.5.7 的业务表与可选本地队列表，供新独立数据库使用。
 -- 执行顺序：管理员先创建并选中数据库，再执行本文件，最后用 settings import-env 导入配置。
 -- 数据影响：仅创建不存在的表，不插入配置、不覆盖模型、不清空或迁移现有数据。
 -- 统一会话仅建 chat_session_context；既有部署校验迁移与备份后使用 2026-10-20-retire-legacy-session-context.sql 清理旧表。
@@ -669,3 +669,41 @@ CREATE TABLE IF NOT EXISTS chat_memory_embedding (
       -- 外键保证向量仅附着于已有事实，遗忘仍由状态和版本筛选。
       FOREIGN KEY (memory_id) REFERENCES chat_tagged_memory(id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='现有数据库内的记忆向量缓存';
+
+-- B 站单账号与外部操作记录；0.5.7 既有 MySQL 库由管理员显式执行一次。
+-- 在完整初始化之后执行；仅新增表，不修改或删除业务数据，普通启动不执行升级。
+CREATE TABLE IF NOT EXISTS agent_bot_bilibili_account (
+    id TINYINT NOT NULL PRIMARY KEY COMMENT '固定单账号标识，只允许值 1',
+    uid VARCHAR(20) NOT NULL COMMENT 'B 站账号 UID',
+    name VARCHAR(200) NOT NULL COMMENT '最近验证的账号昵称',
+    cookies TEXT NOT NULL COMMENT '仅服务端可读的登录凭据，不回填 API',
+    updated_at BIGINT NOT NULL COMMENT '最近确认登录的 UTC 秒',
+    CONSTRAINT chk_bilibili_account_singleton CHECK (id = 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='B 站单账号登录状态';
+CREATE TABLE IF NOT EXISTS agent_bot_bilibili_operation (
+    operation_key CHAR(64) NOT NULL PRIMARY KEY COMMENT '账号、归属、请求和参数的 SHA256 唯一占位',
+    uid VARCHAR(20) NOT NULL COMMENT '操作绑定账号，清除登录时保留，不设级联外键',
+    tool VARCHAR(64) NOT NULL COMMENT '产生外部副作用的工具名',
+    status VARCHAR(16) NOT NULL COMMENT 'pending 代表进行中或结果未知，completed 代表已保存结果',
+    result TEXT NULL COMMENT '成功后的安全 JSON 结果，不含凭据',
+    created_at BIGINT NOT NULL COMMENT '操作占位的 UTC 秒',
+    CONSTRAINT chk_bilibili_operation_status CHECK (status IN ('pending', 'completed'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='B 站外部操作幂等记录，主键仲裁并发，不自动重试未知结果';
+
+-- 启动版本管理增量：用于已有 0.5.5–0.5.7 完整结构，先执行本脚本再运行已登记业务增量。
+-- 仅新增版本与迁移流水表，不写版本号、不修改业务数据；运行器核验完成后登记版本。
+CREATE TABLE IF NOT EXISTS agent_bot_schema_version (
+    id TINYINT NOT NULL PRIMARY KEY COMMENT '单例版本记录，防止并行版本分叉',
+    version VARCHAR(32) NOT NULL COMMENT '完成核验的程序稳定版本号',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '版本推进时间',
+    CONSTRAINT chk_schema_version_singleton CHECK (id = 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='启动自动升级的数据库版本';
+CREATE TABLE IF NOT EXISTS agent_bot_schema_migration (
+    migration_id VARCHAR(128) NOT NULL PRIMARY KEY COMMENT '发布清单迁移唯一标识，主键防止重复登记',
+    target_version VARCHAR(32) NOT NULL COMMENT '该迁移所属程序版本',
+    checksum CHAR(64) NOT NULL COMMENT '当前后端 SQL 的 SHA256，禁止静默篡改历史迁移',
+    status VARCHAR(16) NOT NULL COMMENT 'applying 执行中、applied 完成、failed 失败',
+    applied_at DATETIME NULL COMMENT '迁移完成时间，未完成时为空',
+    last_error VARCHAR(64) NULL COMMENT '仅保存固定错误码，不记录业务值或原始数据库异常',
+    CONSTRAINT chk_schema_migration_status CHECK (status IN ('applying', 'applied', 'failed'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='启动迁移流水，不设业务外键以保留失败审计';

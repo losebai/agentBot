@@ -62,6 +62,7 @@ def build_core_state(
     workflow_store: WorkflowStore | None = None,
     chat_bridge: ChatToolBridge | None = None,
     knowledge_store: KnowledgeStore | None = None,
+    bilibili_tools=None,
 ) -> CoreRuntimeState:
     """QQ 与管理工具共用公共生图服务，消息队列仍由 QQ 宿主独立装配。"""
     chat_tool_bridge = chat_bridge
@@ -143,6 +144,7 @@ def build_core_state(
             ToolRuntime(
                 mcp_connector,
                 chat_tool_bridge,
+                bilibili_tools=bilibili_tools,
                 knowledge_store=(knowledge_store if knowledge_store is not None else
                                  KnowledgeStore(database, connect=database_pool.connect)),
                 job_tools=JobTools(job_store) if config.chat_job_enabled else None,
@@ -160,7 +162,6 @@ def build_core_state(
                 if media_resources is not None
                 else None,
             ),
-            search_code=config.chat_python_search_mcp_code,
             media_store=media_resources.store if media_resources else None,
             material_store=media_resources.materials if media_resources else None,
             image_downloader=QQImageDownloader(remaining=lambda: remaining_timeout(15)),

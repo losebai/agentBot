@@ -6,10 +6,10 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from nonebot.adapters.onebot.v11 import Message
@@ -19,20 +19,26 @@ from agent_bot.ai.errors import AiError
 from agent_bot.materials.contracts import MAX_FILE_BYTES
 from agent_bot.media.contracts import MediaAssetView, MediaOwner
 from agent_bot.media.errors import MediaError
+from agent_bot.memory_store import ChatMemoryStoreError
 from agent_bot.services.tool_operations import DeliveryEffect
 
 
 @dataclass(frozen=True)
 class DeliveryScope:
-    """真实事件或队列提供的会话身份；后台任务保留原始代际。"""
+    """真实事件或队列固化的会话与群目标；身份不能来自模型正文。"""
 
     session_id: str
     generation_id: str
     request_id: str | None
     key: str = ""
+    bot_id: str | None = None
+    group_id: str | None = None
 
 
 _scope: ContextVar[DeliveryScope | None] = ContextVar("outgoing_scope", default=None)
+_destination: ContextVar[tuple[str | None, str | None] | None] = ContextVar(
+    "outgoing_destination", default=None,
+)
 
 
 class OutgoingRecorder:
@@ -43,13 +49,15 @@ class OutgoingRecorder:
         materials_provider: Callable[[], Any],
         scope_provider: Callable[[str | None], Awaitable[DeliveryScope]],
         receipts_provider: Callable[[], Any] | None = None,
+        group_message_recorder: Callable[[DeliveryScope, str, str], Awaitable[None]] | None = None,
     ) -> None:
-        """依赖按当前运行时解析，日志和模型都不持有上传路径或文件字节。"""
+        """按当前运行时解析依赖；可选群快照写入器只在真实投递确认后调用。"""
         self.service_provider = service_provider
         self.store_provider = store_provider
         self.materials_provider = materials_provider
         self.scope_provider = scope_provider
         self.receipts_provider = receipts_provider
+        self.group_message_recorder = group_message_recorder
         self._confirmed: dict[str, DeliveryEffect] = {}
 
     @property
@@ -62,14 +70,25 @@ class OutgoingRecorder:
         """供创建后台子任务时固化当前代际，不从任务文本推断归属。"""
         return _scope.get()
 
+    @contextmanager
+    def destination(self, bot_id: str | None, group_id: str | None) -> Iterator[None]:
+        """以网关实际发送目标覆盖事件来源，显式私聊不能投影回原事件群。"""
+        token = _destination.set((bot_id, group_id))
+        try:
+            yield
+        finally:
+            _destination.reset(token)
+
     @asynccontextmanager
     async def scope(
         self, session_id: str, request_id: str, *, key: str,
         generation_id: str | None = None,
+        bot_id: str | None = None,
+        group_id: str | None = None,
     ) -> AsyncIterator[DeliveryScope]:
-        """队列显式绑定身份并在结束时还原，防止并行任务串用上下文。"""
+        """队列固化会话与群目标，结束时还原；群目标只能由宿主任务提供。"""
         generation = generation_id or await self.service_provider().history_generation(session_id)
-        value = DeliveryScope(session_id, generation, request_id, key)
+        value = DeliveryScope(session_id, generation, request_id, key, bot_id, group_id)
         token = _scope.set(value)
         try:
             yield value
@@ -137,7 +156,10 @@ class OutgoingRecorder:
         self, scope: DeliveryScope, key: str, text: str, ids: tuple[str, ...],
         sender: Callable[[], Awaitable[Any]],
     ) -> Any:
-        """发送成功回执先进入持久队列仓库，日志失败或重启恢复时只补记上下文。"""
+        """先确认出站回执再补群快照；任一上下文补写失败都不能再次发送。"""
+        destination = _destination.get()
+        if destination is not None:
+            scope = replace(scope, bot_id=destination[0], group_id=destination[1])
         # 投递身份不随会话过期或重置变化；旧任务重试只能补记原占位，不能再次发送。
         identity = "\n".join((scope.session_id, scope.request_id or "", scope.key, key))
         delivery_id = hashlib.sha256(identity.encode()).hexdigest()
@@ -151,20 +173,31 @@ class OutgoingRecorder:
             await receipts.completed(delivery_id, "outgoing_message") if receipts else None
         )
         if effect is not None:
-            return await self._finish_confirmed(
+            result = await self._finish_confirmed(
                 scope, delivery_id, signature, effect, None, receipts,
             )
-        try:
-            return await self._claim_and_send(
-                store, receipts, scope, delivery_id, signature, text, ids, sender,
-            )
-        except AiError as error:
-            if error.code == "AI_DATABASE_UNAVAILABLE":
+        else:
+            try:
+                result = await self._claim_and_send(
+                    store, receipts, scope, delivery_id, signature, text, ids, sender,
+                )
+            except AiError as error:
+                if error.code == "AI_DATABASE_UNAVAILABLE":
+                    raise ChatAiUnavailableError(
+                        "出站消息记录暂不可用", error_code="OUTGOING_HISTORY_UNAVAILABLE",
+                        status_code=503,
+                    ) from error
+                raise
+        if self.group_message_recorder is not None and scope.bot_id and scope.group_id and text:
+            try:
+                # 主出站回执已持久化，补写失败重试只能复用回执，不能重发平台消息。
+                await self.group_message_recorder(scope, delivery_id, text)
+            except ChatMemoryStoreError as error:
                 raise ChatAiUnavailableError(
-                    "出站消息记录暂不可用", error_code="OUTGOING_HISTORY_UNAVAILABLE",
-                    status_code=503,
+                    "已发送消息的群聊上下文等待保存",
+                    error_code="OUTGOING_GROUP_CONTEXT_UNAVAILABLE", status_code=503,
                 ) from error
-            raise
+        return result
 
     async def _claim_and_send(
         self, store: Any, receipts: Any, scope: DeliveryScope, delivery_id: str,

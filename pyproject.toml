@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-bot"
-version = "0.5.6"
+version = "0.5.7"
 description = "Independent Agent bot service with browser administration"
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -76,6 +76,9 @@ artifacts = ["src/static/**"]
 # 内置工作流目录允许被 Git 忽略，但源码包重建 wheel 时仍必须提供。
 "src/resources" = "src/resources"
 
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "tools/build_hook.py"
+
 [tool.hatch.build.targets.wheel]
 # 当前源码位于 src/agent_bot，资源目录通过下方规则放到同一发布包。
 only-include = ["src/agent_bot"]
@@ -87,6 +90,12 @@ dev-mode-dirs = ["."]
 path = "tools/build_hook.py"
 
 [tool.hatch.build.targets.wheel.force-include]
+"sql/startup-versioning.sql" = "agent_bot/resources/startup-versioning.sql"
+"sql/startup-versioning.sqlite.sql" = "agent_bot/resources/startup-versioning.sqlite.sql"
+"sql/UPGRADE-AUTOMATIC.md" = "agent_bot/resources/UPGRADE-AUTOMATIC.md"
+"sql/bilibili-init.sql" = "agent_bot/resources/bilibili-init.sql"
+"sql/bilibili-init.sqlite.sql" = "agent_bot/resources/bilibili-init.sqlite.sql"
+"sql/UPGRADE-BILIBILI.md" = "agent_bot/resources/UPGRADE-BILIBILI.md"
 "sql/2026-10-20-model-identity.sql" = "agent_bot/resources/2026-10-20-model-identity.sql"
 "sql/2026-10-20-model-identity.sqlite.sql" = "agent_bot/resources/2026-10-20-model-identity.sqlite.sql"
 "sql/UPGRADE-MODEL-IDENTITY.md" = "agent_bot/resources/UPGRADE-MODEL-IDENTITY.md"

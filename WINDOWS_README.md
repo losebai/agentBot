@@ -10,24 +10,29 @@
 
 ## 一键安装
 
-当前发布版本为 **0.5.5**，命令始终读取下载站 `latest.json` 中的可用版本。
+当前发布版本为 **0.5.7**，命令始终读取下载站 `latest.json` 中的可用版本。
+
+0.5.7 新增 B站扫码登录、视频投稿与按需评论工具、启动数据库版本检测及自动升级，并包含自动多条回复、LLM 自动发言上下文和发布资源改进。
+从已完成历史迁移的 0.5.6 升级，停服备份后更新程序；启动时自动执行当前适用的数据库增量。
+[本版升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.5.7.md) 与
+[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.7-sql.zip) 提供完整升级信息。
 
 0.5.5 增加长期记忆版本、来源、冲突与遗忘管理，并统一模型身份与选择界面。
 从 0.5.4 升级前须停服备份，按
 [升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.5.5.md) 完成模型身份与记忆生命周期迁移。
 [本版 SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.5-sql.zip) 同时提供
-MySQL、SQLite 完整初始化、适用增量、升级说明与四个迁移工具；普通启动不自动升级已有库。
+MySQL、SQLite 完整初始化、适用增量、升级说明与四个迁移工具；启动先按明确的版本清单自动升级适用结构，失败停止启动。
 
 0.5.4 统一会话上下文、普通调用归档和长期标签记忆存储，并更新素材与队列管理。
 从 0.5.3 升级须先停服、备份，按照
 [升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.5.4.md) 执行对应数据库迁移。
 [SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.4-sql.zip) 包含完整初始化 SQL、
-增量 SQL、升级说明和两个离线迁移工具；普通启动不会代替迁移。
+增量 SQL、升级说明和两个离线迁移工具；未登记的历史数据转换仍按对应版本说明处理。
 
 0.5.3 新增持久素材及图片记忆。已有部署升级前请备份业务数据库和媒体目录，
 在所选业务库执行 `2026-10-17-material-memory.sql`（MySQL）或
 `2026-10-17-material-memory.sqlite.sql`（SQLite）；脚本位于安装目录的
-`_internal/agent_bot/resources/`。普通启动不自动升级数据库，不能误对队列库执行。
+`_internal/agent_bot/resources/`。普通启动只升级所选业务库的已登记增量，不对独立队列库执行。
 
 Windows PowerShell：
 

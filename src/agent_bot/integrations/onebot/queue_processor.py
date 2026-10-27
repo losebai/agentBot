@@ -44,7 +44,11 @@ from agent_bot.services.conversation_queue import (
     WorkflowImageArtifact,
 )
 from agent_bot.services.image_task_context import active_image_task
-from agent_bot.services.multi_reply import build_multi_reply_prompt, parse_multi_reply
+from agent_bot.services.multi_reply import (
+    build_multi_reply_prompt,
+    join_reply_array,
+    parse_multi_reply,
+)
 from agent_bot.services.replies import (
     FeatureUnavailableFacts,
     GeneratedReply,
@@ -136,6 +140,7 @@ class ConversationQueueProcessor:
             async with self._outgoing_recorder.scope(
                 job.session_id, job.request_id, key=key,
                 generation_id=job.history_generation_id,
+                bot_id=job.bot_id, group_id=job.group_id if job.scene == "group" else None,
             ):
                 yield
 
@@ -182,7 +187,10 @@ class ConversationQueueProcessor:
                 await execution.check_cancelled()
             if job.ai_job_reply is not None:
                 # 已生成的任务也先走回复格式校验，确保持久化正文与发送分段相同。
-                generated = generated_reply_from_model(job.ai_job_reply.text, job.request_id)
+                text = job.ai_job_reply.text
+                if not reply_config.chat_multi_reply_enabled:
+                    text = join_reply_array(text)
+                generated = generated_reply_from_model(text, job.request_id)
                 return ConversationResult(
                     kind="TEXT",
                     reply=PersistedGeneratedReply.model_validate(
@@ -356,6 +364,9 @@ class ConversationQueueProcessor:
                 if answer is None:
                     raise ChatAiProtocolError("多条回复正文不能为空")
                 return self._multi_reply_result(job, answer, reply_config, tools, reply_collector)
+            if answer is not None:
+                # 关闭分条只合并模型声明的数组；长度、文件和工具发送仍使用普通规则。
+                answer = join_reply_array(answer)
             # 普通聊天超过文字上限改为完整文件；自动发言继续遵循专用长度上限。
             if (
                 answer is not None and job.auto_speak_max_reply_chars is None
@@ -998,7 +1009,7 @@ class ConversationQueueProcessor:
             await self._finish_received_callback(job.session_id, job.request_id)
 
     async def _deliver_failure(self, job: ConversationJob, error: Exception) -> None:
-        """工具及执行失败由无工具LLM说明；解释失败或空白时不发送固定文案。"""
+        """繁忙拒绝保持静默；其他工具及执行失败由无工具 LLM 说明。"""
 
         if (
             job.ai_job_id is not None
@@ -1008,10 +1019,6 @@ class ConversationQueueProcessor:
         if is_chat_busy_error(error) and not (
             isinstance(error, ChatAiError) and error.error_code == "AI_RATE_LIMITED"
         ):
-            await self._reply_gateway.send_busy_error(
-                self._bot_provider(job.bot_id), scene=job.scene,
-                target_id=job.group_id or job.user_id,
-            )
             return
         if model_configuration_error_code(error) is not None:
             await self._reply_gateway.send_configuration_error(

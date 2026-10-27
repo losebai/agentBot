@@ -126,11 +126,12 @@ class MediaStore(AiDatabase):
         if mime_type == "video/mp4":
             from agent_bot.media.video import validate_mp4
 
-            if purpose != "output":
-                raise MediaError("MEDIA_INVALID_RESPONSE")
+            # 投稿上传与工作流产物均可为 MP4，身份由统一 owner 边界验证。
             try:
                 await finish_database_write(lambda: validate_mp4(data))
             except ValueError as error:
+                if purpose == 'input':
+                    raise MediaError('BILIBILI_INVALID_MEDIA', status_code=422) from error
                 raise MediaError("MEDIA_INVALID_RESPONSE") from error
         id = uuid4().hex
         now = self.clock()

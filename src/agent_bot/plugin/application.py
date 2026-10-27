@@ -271,13 +271,20 @@ async def _outgoing_event_scope(request_id: str | None) -> DeliveryScope:
     session = _event_context.session_id(bot, event)
     generation = await chat_service.history_generation(session)
     identity = hashlib.sha256(f"{bot.self_id}:{event.message_id}".encode()).hexdigest()
-    return DeliveryScope(session, generation, request_id or f"qq-event-{identity}")
+    return DeliveryScope(
+        session, generation, request_id or f"qq-event-{identity}",
+        bot_id=str(bot.self_id),
+        group_id=str(event.group_id) if isinstance(event, GroupMessageEvent) else None,
+    )
 
 
 _outgoing_recorder = OutgoingRecorder(
     service_provider=lambda: chat_service, store_provider=lambda: _session_delivery_store,
     materials_provider=lambda: _media_resources.materials, scope_provider=_outgoing_event_scope,
     receipts_provider=lambda: _tool_operations(),
+    group_message_recorder=lambda scope, delivery_id, text: _event_context.record_sent_group_text(
+        bot_id=scope.bot_id, group_id=scope.group_id, delivery_id=delivery_id, content=text,
+    ),
 )
 _reply_gateway = OneBotReplyGateway(lambda: plugin_config, recorder=_outgoing_recorder)
 _runtime_state = _build_runtime_state(plugin_config) if _context is None else None
@@ -296,6 +303,7 @@ _group_auto_speak_trigger = GroupAutoSpeakTrigger(
     record_recent_group_text=lambda bot, event: (
         _event_context.record_recent_group_text(bot, event)
     ),
+    chat_context_provider=lambda bot, event: _chat_context(bot, event),
 )
 _message_routing = MessageRouting(
     config_provider=lambda: plugin_config,

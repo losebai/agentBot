@@ -129,7 +129,8 @@ class ConversationJob(BaseModel):
         default=None,
         alias="systemPromptAppend",
         min_length=1,
-        max_length=1_000,
+        # 补充规则本身最多一千字，队列还需容纳程序附加的受信任输入说明。
+        max_length=2_000,
     )
     image_start_reply: PersistedGeneratedReply | None = Field(
         default=None,

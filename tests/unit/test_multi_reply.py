@@ -24,6 +24,23 @@ def test_multi_reply_decodes_only_nonempty_string_messages():
     )
 
 
+@pytest.mark.parametrize(("text", "expected"), [
+    ('["你好", "呀"]', "你好呀"),
+    ('["第一行\\n", "第二行"]', "第一行\n第二行"),
+    ('["只有一条"]', "只有一条"),
+    ('[]', ""),
+    ('普通正文', '普通正文'),
+    ('["尚未闭合"', '["尚未闭合"'),
+    ('["文字", 123]', '["文字", 123]'),
+    ('{"messages": ["内容"]}', '{"messages": ["内容"]}'),
+])
+def test_disabled_multi_reply_joins_string_arrays_only(text, expected):
+    """关闭分条时只合并完整字符串数组，不改写其他正文或结构化资料。"""
+    from agent_bot.services.multi_reply import join_reply_array
+
+    assert join_reply_array(text) == expected
+
+
 @pytest.mark.parametrize("text", [
     '普通正文', '```json\n["正文"]\n```', '{}', '[]', '[null]', '[1]',
     '[true]', '["有效", "   "]', '["一", "二", "三", "四"]', '["未完成"',

@@ -116,12 +116,14 @@ async def test_queue_overload_failures_are_silent(monkeypatch, chat_plugin, erro
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error", [
-    ChatBusyError("secret"), ChatAiUnavailableError("secret", status_code=429),
+    ChatBusyError("conversation concurrency limit reached"),
+    ChatBusyError("this session is being reset"),
+    ChatAiUnavailableError("secret", status_code=429),
 ])
-async def test_queue_busy_failure_sends_status_without_requesting_model(
+async def test_queue_busy_failure_is_silent_without_requesting_model(
     monkeypatch, chat_plugin, error,
 ):
-    """额度已满时仅发系统状态提示，禁止追加模型负载或暴露异常细节。"""
+    """并发已满、会话重置和上游过载均静默结束，禁止追加模型负载。"""
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
     generate = AsyncMock(return_value="不应生成")
@@ -129,10 +131,7 @@ async def test_queue_busy_failure_sends_status_without_requesting_model(
     await chat_plugin._ConversationProcessor().deliver_failure(
         queued_job(), error,
     )
-    bot.call_api.assert_awaited_once()
-    message = str(bot.call_api.await_args.kwargs["message"])
-    assert "并发" in message
-    assert "secret" not in message
+    assert not bot.mock_calls
     generate.assert_not_awaited()
 
 
@@ -171,6 +170,74 @@ def multi_reply_session(monkeypatch, chat_plugin):
         yield job.chat_tools, "test-tool-session"
 
     monkeypatch.setattr(chat_plugin, "_open_queued_tool_session", open_session)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tools", [(), ("mention_member",)])
+async def test_disabled_multi_reply_sends_joined_array_without_json_wrapping(
+    monkeypatch, chat_plugin, tools, multi_reply_session,
+):
+    """关闭分条后合并全部元素，不受分条条数限制，持久化与实际发送均为正文。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_max_messages", 1)
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
+        return_value='["第一句。", "第二句。", "第三句。", "第四句。"]',
+    ))
+    bot = onebot_mock()
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
+    processor = chat_plugin._ConversationProcessor()
+    job = queued_job(chatTools=tools)
+    result = await processor.generate(job)
+    expected = "第一句。第二句。第三句。第四句。"
+    assert result.reply.text == expected
+    assert result.delivery_parts == (expected,)
+    assert not result.multi_reply
+    await processor.deliver_part(job, result, 0)
+    assert bot.call_api.await_args.kwargs["message"].extract_plain_text() == expected
+
+
+@pytest.mark.asyncio
+async def test_disabled_multi_reply_applies_auto_speak_limit_after_join(monkeypatch, chat_plugin):
+    """主动发言的专用上限按合并后正文计算，不先截断数组包装。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
+        return_value='["第一条", "第二条"]',
+    ))
+    result = await chat_plugin._ConversationProcessor().generate(queued_job(
+        chatTools=(), autoSpeakMaxReplyChars=5,
+    ))
+    assert result.reply.text == "第一条第二"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("answer", "expected", "as_file"), [
+    ('["你好", "呀"]', "你好呀", False),
+    ('["第一条", "第二条"]', "第一条第二条", True),
+])
+async def test_disabled_multi_reply_uses_decoded_length_for_file_choice(
+    monkeypatch, chat_plugin, answer, expected, as_file,
+):
+    """是否改发文件取决于合并后的正文长度，不能把 JSON 包装计入文字预算。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_max_reply_chars", 5)
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(return_value=answer))
+    result = await chat_plugin._ConversationProcessor().generate(queued_job(chatTools=()))
+    assert result.reply.text == expected
+    assert result.reply_as_file == as_file
+
+
+@pytest.mark.asyncio
+async def test_disabled_multi_reply_joins_precomputed_job_reply(monkeypatch, chat_plugin):
+    """定时任务已有模型正文也需要去除数组包装，不再次调用模型。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
+    identifier = "a" * 32
+    request_id = f"ai-job-{identifier}"
+    result = await chat_plugin._ConversationProcessor().generate(queued_job(
+        jobId=request_id, requestId=request_id, chatTools=(), aiJobId=identifier,
+        aiJobReply={"text": '["定时", "结果"]', "requestId": request_id},
+    ))
+    assert result.reply.text == "定时结果"
+    assert result.delivery_parts == ("定时结果",)
 
 
 @pytest.mark.asyncio

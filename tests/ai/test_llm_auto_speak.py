@@ -27,7 +27,9 @@ async def test_llm_decision_is_fresh_ordinary_call(catalog, ai_params, ai_databa
         })
 
     ordinary = await make_service(catalog, ai_params, ai_database, respond)
-    client = LlmAutoSpeakDecisionService(ordinary, model="local", prompt="独立决策提示词")
+    client = LlmAutoSpeakDecisionService(
+        ordinary, model="local", prompt="独立决策提示词", bot_id="90001", bot_name="桃桃",
+    )
     try:
         for index in range(2):
             decision = await client.decide_auto_speak(
@@ -40,6 +42,9 @@ async def test_llm_decision_is_fresh_ordinary_call(catalog, ai_params, ai_databa
             assert [item["role"] for item in request["messages"]] == ["system", "user"]
             assert "独立决策提示词" in request["messages"][0]["content"]
             assert "群聊资料" in request["messages"][0]["content"]
+            assert "90001" in request["messages"][0]["content"]
+            assert "桃桃" in request["messages"][0]["content"]
+            assert "追问" in request["messages"][0]["content"]
             assert request["messages"][1]["content"] == f"近期群聊{index}\n当前收到消息{index}"
             assert f"近期群聊{1 - index}" not in json.dumps(request, ensure_ascii=False)
         records = CallRecordStore(ai_params, connect=ai_database.connect)

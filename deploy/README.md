@@ -154,13 +154,13 @@ Inno Setup 6，以及已准备并验证的 `runtime/napcat` Shell 载荷；SSH �
 指定版本发布，例如：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -Version 0.5.6
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -Version 0.5.7
 ```
 
-先准备 `sql/UPGRADE-0.5.6.md`；脚本会同步项目版本及两个发布测试中的固定版本断言，
+先准备 `sql/UPGRADE-0.5.7.md`；脚本会同步项目版本及两个发布测试中的固定版本断言，
 不会修改第三方依赖和历史升级说明。不指定 `-Version` 时沿用现有版本并检查一致性。
 文件同步完成后即使后续构建或发布失败，工作区仍保留指定版本，便于修复后重跑。
-只想同步后在本地构建时使用 `-Version 0.5.6 -BuildOnly`。
+只想同步后在本地构建时使用 `-Version 0.5.7 -BuildOnly`。
 
 手动维护版本时同步 `pyproject.toml`、`src/agent_bot/__init__.py`、`web/package.json`、
 `web/package-lock.json` 和 `uv.lock` 中的项目版本；不要替换第三方依赖的同号版本。
@@ -197,9 +197,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -I
 每次 Windows 安装器构建都会在 `dist/windows/installer/` 生成发布所需文件。
 版本采用 `主版本.次版本.修订号`，发布新程序时同步更新 `pyproject.toml` 和
 `src/agent_bot/__init__.py` 中的版本再构建；安装器的 `AppVersion`、文件名和
-`latest.json` 使用同一发布版本。当前已发布的 Windows 程序为 `0.5.5`。
-同时提供 `AgentBot-0.5.5-sql.zip`、`UPGRADE-0.5.5.md` 和
-`agent_bot-0.5.5-py3-none-any.whl`，供新库初始化与已有库的显式迁移使用。
+`latest.json` 使用同一发布版本。当前已发布的 Windows 程序为 `0.5.7`。
+同时提供 `AgentBot-0.5.7-sql.zip`、`UPGRADE-0.5.7.md` 和
+`agent_bot-0.5.7-py3-none-any.whl`，供新库初始化与已有库的显式迁移使用。
 安装脚本读取当前用户的安装登记，只有服务器版本更高时升级；相同版本跳过下载，
 本机版本更高时保留现有安装。升级成功后由安装器更新登记版本，脚本不提前改写。
 

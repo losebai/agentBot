@@ -46,7 +46,6 @@ class AgentService:
         providers,
         tool_runtime,
         *,
-        search_code=None,
         media_store=None,
         material_store=None,
         image_downloader=None,
@@ -55,7 +54,7 @@ class AgentService:
     ):
         """注入运行配置调用预算和媒体边界，不在构造时下载或读文件。"""
         self.catalog, self.records, self.credentials = catalog, records, model_credentials
-        self.providers, self.tool_runtime, self.search_code = providers, tool_runtime, search_code
+        self.providers, self.tool_runtime = providers, tool_runtime
         self.active = 0
         self.media_store, self.image_downloader = media_store, image_downloader
         self.material_store = material_store
@@ -72,10 +71,7 @@ class AgentService:
 
     async def _prepare(self, request, authority, execution_id, inputs):
         """先固定并检查能力，再准备凭据和媒体，禁止静默移除未实现的预设工具。"""
-        snapshot = await self.catalog.snapshot(
-            request,
-            search_code=(self.search_code if "web_search" in authority.allowed_tools else None),
-        )
+        snapshot = await self.catalog.snapshot(request)
         if (snapshot.agent and set(snapshot.agent.tools) & LEGACY_TOOLS) or any(
             s.code == "laya" for s in snapshot.mcps
         ):

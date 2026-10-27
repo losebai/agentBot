@@ -3,6 +3,7 @@ import { ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { NapCatPlugin } from '../components/NapCatPlugin';
+import { BilibiliPlugin } from '../components/BilibiliPlugin';
 import type { PluginInfo, SettingsSnapshot } from '../types';
 
 const statusLabels: Record<PluginInfo['status'], string> = {
@@ -93,6 +94,7 @@ export function Plugins({ token }: { token: string }) {
           <small>当前进程：{plugin.enabled ? '已启用' : '未启用'}；已保存：{plugin.saved_enabled ? '启用' : '停用'}</small>
         </div></div>
         {plugin.id === 'qqbot' && <NapCatPlugin api={api} />}
+        {plugin.id === 'bilibili' && <BilibiliPlugin api={api} enabled={plugin.enabled && plugin.status === 'running'} />}
       </div>)}
     </div>}
   </div>;

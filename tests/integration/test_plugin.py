@@ -455,7 +455,7 @@ async def test_chat_model_failure_never_calls_reply_model_or_sends_text(
 async def test_natural_queue_overload_finishes_without_composer(
     monkeypatch: pytest.MonkeyPatch, chat_plugin, reply_chat: AsyncMock, error: Exception,
 ) -> None:
-    """队列入口的繁忙、限流和过期直接终止，不再增加回复生成负载。"""
+    """队列入口的繁忙、限流和过期静默终止，不发送提示或增加模型负载。"""
 
     prompt = "普通问题"
     monkeypatch.setattr(chat_plugin.conversation_queue, "enqueue", AsyncMock(side_effect=error))
@@ -465,12 +465,7 @@ async def test_natural_queue_overload_finishes_without_composer(
             Mock(self_id="90001"), private_event(prompt), matcher=matcher,
             mention_handler=AsyncMock(return_value=None),
         )
-    if isinstance(error, ChatBusyError):
-        matcher.send.assert_awaited_once()
-        assert "并发" in str(matcher.send.await_args.args[0])
-        assert "private" not in str(matcher.send.await_args.args[0])
-    else:
-        matcher.send.assert_not_awaited()
+    matcher.send.assert_not_awaited()
     matcher.finish.assert_awaited_once_with()
     reply_chat.assert_not_awaited()
 

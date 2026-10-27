@@ -245,8 +245,8 @@ class AgentCatalog(AiDatabase):
             raise AgentError("AGENT_CONFIG_DISABLED", status_code=409)
         return item
 
-    async def snapshot(self, request: AgentRequest, *, search_code=None) -> AgentSnapshot:
-        """按本次图片输入选路，固定识图与备用快照，备用与当前模型相同则不自我接管。"""
+    async def snapshot(self, request: AgentRequest) -> AgentSnapshot:
+        """固定模型及显式关联的 MCP 快照，不按服务分类隐式选取搜索后端。"""
 
         def read(connection):
             """一致性读取不持有行锁，避免与目录配置写入形成反向锁序。"""
@@ -317,25 +317,10 @@ class AgentCatalog(AiDatabase):
             if vision:
                 revisions[f"model:{vision.model.id}"] = vision.model.revision
                 revisions[f"provider:{vision.provider.id}"] = vision.provider.revision
-            selected = (
-                request.tools
-                if request.tools is not None
-                else (agent.tools if agent else ("web_search",))
-            )
-            search = (
-                self._by_code(connection, "mcp", search_code)
-                if search_code and "web_search" in selected
-                else None
-            )
-            if search is not None:
-                if search.category != "search":
-                    raise AgentError("AGENT_SEARCH_UNAVAILABLE", status_code=409)
-                revisions[f"mcp:{search.id}"] = search.revision
             return AgentSnapshot(
                 agent=agent,
                 skills=skills,
                 mcps=mcps,
-                search_mcp=search,
                 resolved=ResolvedModel(model=model, provider=provider),
                 vision=vision,
                 fallback=fallback,

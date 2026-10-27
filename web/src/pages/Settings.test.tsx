@@ -14,6 +14,26 @@ const snapshot = {
 };
 
 describe('配置编辑', () => {
+  it('自动发言补充规则可留空并提示两种触发的消息来源', async () => {
+    let submitted: unknown;
+    const fields = [{ name: 'chat_auto_speak_prompt', description: '自动发言补充规则',
+      kind: 'string', value: '原有规则', nullable: false, secret_is_set: false,
+      restart_required: false }];
+    vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+      if (init?.method === 'PATCH') submitted = JSON.parse(init.body);
+      return Response.json({ ...snapshot, fields });
+    }));
+    render(<Settings token="offline-token" />);
+    fireEvent.click(screen.getByRole('button', { name: '自动回复设置' }));
+    const prompt = await screen.findByLabelText('自动发言补充规则');
+    expect(prompt.tagName).toBe('TEXTAREA');
+    expect(screen.getByText(/message 使用触发时消息，interval 使用群里最新有效消息/)).toBeInTheDocument();
+    fireEvent.change(prompt, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存修改' }));
+    await waitFor(() => expect(submitted).toEqual({ expected_revision: 1,
+      values: { chat_auto_speak_prompt: '' } }));
+  });
+
   it('自动回复分类可编辑和保存多条回复规则', async () => {
     let submitted: unknown;
     const fields = [

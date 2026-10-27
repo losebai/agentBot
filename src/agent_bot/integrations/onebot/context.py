@@ -17,6 +17,7 @@ from nonebot.adapters.onebot.v11 import (
 from nonebot.adapters.onebot.v11.exception import ActionFailed, ApiNotAvailable, NetworkError
 
 from agent_bot.config import RuntimeConfig
+from agent_bot.database_pool import finish_database_write
 from agent_bot.group_context import RecentGroupContextStoreProtocol
 from agent_bot.group_members import (
     GroupMemberStore,
@@ -308,6 +309,24 @@ class EventContextService:
         )
         await self.record_recent_group_text(bot, event)
         return context
+
+    async def record_sent_group_text(
+        self, *, bot_id: str, group_id: str, delivery_id: str, content: str,
+    ) -> None:
+        """将确认送达的机器人回复并入群快照，不生成入站事件或触发新决策。"""
+        config = self._config_provider()
+        if not config.chat_group_recent_context_enabled or not content.strip():
+            return
+        # 复用昵称预算，防止多个别名拼接后超过持久群消息的名称字节上限。
+        names = self.normalize_context_name("、".join(sorted(config.nickname)))
+        name = f"机器人[{names}]" if names else "机器人"
+        store = self._recent_context_store_provider()
+        # 长正文可能已作为文件成功发送；快照只取当前群预算，避免触及入库字节上限。
+        recent_content = content[:config.chat_group_recent_context_max_chars]
+        await finish_database_write(lambda: store.record(
+            bot_id=bot_id, group_id=group_id, sender_id=bot_id,
+            sender_name=name, content=recent_content, delivery_id=delivery_id,
+        ))
 
     async def record_recent_group_text(self, bot: Bot, event: GroupMessageEvent) -> None:
         """把有效的其他成员纯文本消息写入群聊近期上下文。"""

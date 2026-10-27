@@ -18,5 +18,20 @@ def _qqbot_factory() -> ApplicationPlugin:
     return QQBotPlugin()
 
 
-BUILTIN_PLUGINS = (BuiltinPlugin(QQBOT_METADATA, _qqbot_factory),)
+BILIBILI_METADATA = PluginMetadata(
+    'bilibili', 'B站', __version__, '扫码登录、视频投稿、按需回复评论和登录检测',
+)
+
+
+def _bilibili_factory() -> ApplicationPlugin:
+    """只有明确启用 B 站时才导入专属生命周期。"""
+    from agent_bot.plugins.bilibili.plugin import BilibiliPlugin
+
+    return BilibiliPlugin()
+
+
+BUILTIN_PLUGINS = (
+    BuiltinPlugin(QQBOT_METADATA, _qqbot_factory),
+    BuiltinPlugin(BILIBILI_METADATA, _bilibili_factory),
+)
 BUILTIN_PLUGIN_IDS = frozenset(plugin.metadata.id for plugin in BUILTIN_PLUGINS)

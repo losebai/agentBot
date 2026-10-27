@@ -10,6 +10,16 @@ def check(path: Path) -> None:
     with ZipFile(path) as archive:
         names = archive.namelist()
         required = {
+            'agent_bot/database_upgrade.py',
+            'agent_bot/sql_scripts.py',
+            'agent_bot/resources/startup-versioning.sql',
+            'agent_bot/resources/startup-versioning.sqlite.sql',
+            'agent_bot/resources/UPGRADE-AUTOMATIC.md',
+            'agent_bot/plugins/bilibili/plugin.py',
+            'agent_bot/plugins/bilibili/tools.py',
+            'agent_bot/resources/bilibili-init.sql',
+            'agent_bot/resources/bilibili-init.sqlite.sql',
+            'agent_bot/resources/UPGRADE-BILIBILI.md',
             "agent_bot/ai/model_reference.py",
             "agent_bot/integrations/model_identity_migration.py",
             "agent_bot/resources/2026-10-20-model-identity.sql",

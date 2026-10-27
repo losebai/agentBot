@@ -4,6 +4,14 @@ import type { MediaAsset, MediaGenerationRequest, MediaGenerationResult, MediaRu
 
 /** 文件使用原始请求体和认证头，不生成包含凭据的下载 URL。 */
 export class MediaApi extends ApiClient {
+  /** 投稿视频走独立 MP4 校验入口，不作为图片附件交给模型。 */
+  async uploadVideo(file: File, sessionId: string, signal: AbortSignal): Promise<MediaAsset> {
+    const response = await fetch(`/api/v1/media/video/uploads?session_id=${encodeURIComponent(sessionId)}`, {
+      method: 'POST', headers: { ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+        'Content-Type': 'video/mp4' }, body: file, signal,
+    });
+    await check(response); return response.json();
+  }
   /** 保留文件 MIME，服务器负责解码验证和大小限制。 */
   async upload(file:File,sessionId:string,signal:AbortSignal):Promise<MediaAsset>{
     const response=await fetch(`/api/v1/media/uploads?session_id=${encodeURIComponent(sessionId)}`,{method:'POST',headers:{Authorization:`Bearer ${this.token}`,'Content-Type':file.type||'application/octet-stream'},body:file,signal});

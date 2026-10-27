@@ -12,6 +12,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$previousProjectEnvironment = $env:UV_PROJECT_ENVIRONMENT
 
 function Invoke-ReleaseStep {
     # 外部命令失败立即终止，不能把旧安装器或半成品继续上传。
@@ -48,7 +49,9 @@ try {
     Invoke-ReleaseStep 'Check packaging inputs' {
         uv run --no-project --python 3.12 python tools/ci/check_build_inputs.py
     }
-    Invoke-ReleaseStep 'Install locked development dependencies' {
+    # 隔离发布检查依赖，避免 uv 替换正在运行的开发服务入口。
+    $env:UV_PROJECT_ENVIRONMENT = Join-Path $repoRoot "build/release-checks-$version/venv"
+    Invoke-ReleaseStep 'Install isolated release dependencies' {
         uv sync --locked --extra dev --python 3.12
     }
     Invoke-ReleaseStep 'Python lint' { uv run --no-sync ruff check . }
@@ -94,5 +97,6 @@ try {
     }
     Write-Host "Release $version ready: $repoRoot/$stage"
 } finally {
+    $env:UV_PROJECT_ENVIRONMENT = $previousProjectEnvironment
     Pop-Location
 }

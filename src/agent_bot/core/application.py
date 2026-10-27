@@ -139,6 +139,8 @@ class ApplicationRuntime:
         )
         self._state: CoreRuntimeState | None = None
         self._bridge: ChatToolBridge | None = None
+        # 插件独立持有此服务，工具提供者在每次调用读取当前值。
+        self.bilibili_service = None
         self._participant: RuntimeRefreshParticipant | None = None
         self._started = False
         self._closed = False
@@ -191,6 +193,8 @@ class ApplicationRuntime:
 
     def _build(self, config: RuntimeConfig) -> CoreRuntimeState:
         """媒体和存储按进程共享，只有调用客户端随配置替换。"""
+        from agent_bot.plugins.bilibili.tools import BilibiliTools
+
         return build_core_state(
             config,
             database=self.database_params,
@@ -199,6 +203,9 @@ class ApplicationRuntime:
             workflow_store=self.workflow_store,
             chat_bridge=self._bridge,
             knowledge_store=self.knowledge_store,
+            bilibili_tools=BilibiliTools(
+                lambda: self.bilibili_service, lambda: self.config.superusers,
+            ),
         )
 
     async def start(self) -> None:

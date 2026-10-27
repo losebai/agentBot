@@ -8,6 +8,7 @@ import pytest
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
 
 from agent_bot.config import RuntimeConfig
+from agent_bot.group_context import RecentGroupMessage, RecentGroupSnapshot
 from agent_bot.integrations.onebot.auto_speak import AutoSpeakService
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway
 from agent_bot.integrations.onebot.tooling import ChatToolSessionManager
@@ -80,6 +81,10 @@ class StaticContextStore:
         """Return deterministic context for the provenance boundary tests."""
 
         return "近期群聊"
+
+    def snapshot(self, *, bot_id: str, group_id: str) -> RecentGroupSnapshot:
+        """提供同一群背景与真实最后消息，保持定时触发的存储契约。"""
+        return RecentGroupSnapshot("近期群聊", RecentGroupMessage("10001", None, "近期群聊"))
 
 
 def auto_speak_decision_options() -> dict[str, object]:

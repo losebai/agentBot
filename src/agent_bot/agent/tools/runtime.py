@@ -10,7 +10,6 @@ from agent_bot.agent.tools.policy import ADMIN_MEDIA_TOOLS, CHAT_TOOLS, ToolPoli
 from agent_bot.agent.tools.public_http import PublicPageReader
 from agent_bot.agent.tools.read_url import ReadUrlTool
 from agent_bot.agent.tools.schema import ToolSchema
-from agent_bot.agent.tools.search import SearchTool
 from agent_bot.services.request_deadline import remaining_timeout
 
 
@@ -27,14 +26,11 @@ class BoundTools:
         if definition is None or call.name not in self.handlers:
             raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
         ToolSchema.validate_arguments(definition, call.arguments)
-        if definition.source == "builtin" and definition.name == "web_search":
-            SearchTool.normalize_query(call.arguments["query"])
+        if definition.source == 'builtin':
+            # 登记过的本地模型保留格式和跨字段约束，整批副作用前先验证。
+            validate_local_call(call)
         if definition.source == "builtin" and definition.name == "knowledge_search":
             KnowledgeSearchTool.validate(call.arguments)
-        if definition.source == "builtin" and definition.name in {
-            "material_search", "material_get",
-        }:
-            validate_local_call(call)
         if definition.source in {"chat", "media"}:
             validate_local_call(call)
 
@@ -51,7 +47,8 @@ class ToolRuntime:
     """QQ 和管理入口使用各自媒体适配器，禁止混用身份。"""
 
     def __init__(self, connector, chat_bridge=None, reader=None, *, admin_media_tools=None,
-                 job_tools=None, knowledge_store=None, material_store=None, media_store=None):
+                 job_tools=None, knowledge_store=None, material_store=None, media_store=None,
+                 bilibili_tools=None):
         """本地适配器引用当前运行时的客户端与任务存储。"""
         self.connector, self.chat_bridge = connector, chat_bridge
         self.reader = reader or PublicPageReader()
@@ -60,6 +57,7 @@ class ToolRuntime:
         self.knowledge_store = knowledge_store
         self.material_store = material_store
         self.media_store = media_store
+        self.bilibili_tools = bilibili_tools
 
     @asynccontextmanager
     async def open(self, snapshot, request, authority, *, media_scope=None, images=()):
@@ -68,8 +66,6 @@ class ToolRuntime:
             yield BoundTools((), {})
             return
         servers = snapshot.mcps
-        if any(s.category != "general" for s in servers):
-            raise AgentError("AGENT_MCP_CATEGORY_INVALID", status_code=422)
         if not {s.code for s in servers} <= set(authority.allowed_mcp_services):
             raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
         async with self.connector.open(servers, remaining=lambda: remaining_timeout(300)) as remote:
@@ -81,9 +77,7 @@ class ToolRuntime:
                     )
                 }
             )
-            builtin_tools = [
-                ReadUrlTool(self.reader), SearchTool(self.connector, snapshot.search_mcp)
-            ]
+            builtin_tools = [ReadUrlTool(self.reader)]
             if self.knowledge_store is not None:
                 builtin_tools.append(KnowledgeSearchTool(self.knowledge_store))
             if self.material_store is not None and media_scope is not None:
@@ -96,6 +90,15 @@ class ToolRuntime:
                 if tool.definition.name in handlers:
                     raise AgentError("AGENT_TOOL_NAME_CONFLICT", status_code=409)
                 handlers[tool.definition.name] = tool.call
+            if self.bilibili_tools is not None:
+                session = self.bilibili_tools.bind(
+                    request, authority, media_scope, self.media_store, self.chat_bridge,
+                )
+                for definition in session.definitions:
+                    if definition.name in handlers:
+                        raise AgentError('AGENT_TOOL_NAME_CONFLICT', status_code=409)
+                    definitions.append(definition)
+                    handlers[definition.name] = session.call
             if authority.entry == "qq" and set(authority.allowed_tools) & CHAT_TOOLS:
                 if self.chat_bridge is None:
                     raise AgentError("AGENT_CHAT_TOOLS_UNAVAILABLE", status_code=503)
@@ -159,6 +162,4 @@ class ToolRuntime:
                 authority=auth,
                 available=tuple(definitions),
             )
-            if any(t.name == "web_search" for t in selected) and snapshot.search_mcp is None:
-                raise AgentError("AGENT_SEARCH_UNAVAILABLE", status_code=409)
             yield BoundTools(selected, handlers, remote.warnings)

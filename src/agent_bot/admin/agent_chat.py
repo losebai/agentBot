@@ -17,6 +17,8 @@ class AgentProbeRequest(ApiModel):
     agent_code: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
     prompt: str = Field(max_length=2000)
     attachment_ids: tuple[str, ...] = Field(default=(), max_length=8)
+    # 视频仅供投稿工具引用，不复用图片附件或要求模型支持视频理解。
+    video_asset_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
     messages: list[ChatMessage] = Field(default_factory=list, max_length=24)
     session_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -50,12 +52,15 @@ class AgentChatProbe:
             if body.timeout_seconds > timeout:
                 raise AgentError("AGENT_TIMEOUT_INVALID", status_code=422)
             timeout = body.timeout_seconds
+        prompt = body.prompt or DEFAULT_IMAGE_PROMPT
+        if body.video_asset_id is not None:
+            prompt += f'\n本会话可用于投稿的 MP4 视频资产 ID：{body.video_asset_id}'
         return AgentRequest(
             agent_code=body.agent_code,
-            prompt=body.prompt or DEFAULT_IMAGE_PROMPT,
+            prompt=prompt,
             messages=(
                 *body.messages,
-                ChatMessage(role="user", content=body.prompt or DEFAULT_IMAGE_PROMPT),
+                ChatMessage(role="user", content=prompt),
             ),
             attachment_ids=body.attachment_ids,
             session_id=f"admin_{body.session_id}",
@@ -73,7 +78,7 @@ class AgentChatProbe:
 
     def authority(self):
         """运行时真实可用的管理媒体工具才可加入授权。"""
-        names = ("web_search", "read_url")
+        names = ("read_url",)
         if getattr(self.service().tool_runtime, "knowledge_store", None) is not None:
             names += ("knowledge_search",)
         if getattr(self.service().tool_runtime, "material_store", None) is not None:
@@ -81,6 +86,9 @@ class AgentChatProbe:
         adapter = getattr(self.service().tool_runtime, "admin_media_tools", None)
         if adapter is not None:
             names += tuple(sorted(adapter.allowed_tools))
+        bilibili = getattr(self.service().tool_runtime, 'bilibili_tools', None)
+        if bilibili is not None:
+            names += tuple(sorted(bilibili.allowed_tools))
         return ExecutionAuthority(entry="admin", allowed_tools=names)
 
     async def complete(self, body, request_id):

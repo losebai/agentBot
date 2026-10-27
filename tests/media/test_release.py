@@ -28,7 +28,7 @@ def test_release_versions_match_frontend_and_python():
     import agent_bot
 
     package = json.loads((ROOT / "web/package.json").read_text(encoding="utf-8"))
-    assert agent_bot.__version__ == package["version"] == "0.5.6"
+    assert agent_bot.__version__ == package["version"] == "0.5.7"
     assert (ROOT / "dist/agent_bot-0.3.0-py3-none-any.whl").is_file()
 
 

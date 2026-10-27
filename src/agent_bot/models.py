@@ -18,6 +18,8 @@ ChatToolName = Literal[
     "local_workflow_tasks",
     "local_workflow_cancel",
     "tts_generate",
+    "bilibili_login_status", "bilibili_get_comments",
+    "bilibili_reply_comment", "bilibili_publish_video",
 ]
 AgentToolName = Literal[
     "soloncode",
@@ -36,6 +38,8 @@ AgentToolName = Literal[
     "local_workflow_tasks",
     "local_workflow_cancel",
     "tts_generate",
+    "bilibili_login_status", "bilibili_get_comments",
+    "bilibili_reply_comment", "bilibili_publish_video",
 ]
 AgentEventType = Literal["reason", "text", "action", "result", "done", "error", "images"]
 MediaOutputType = Literal["IMAGE", "AUDIO"]

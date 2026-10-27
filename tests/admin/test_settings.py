@@ -28,18 +28,22 @@ def test_read_never_discloses_secrets(admin_store, admin_runtime):
     assert snapshot.database_revision == snapshot.applied_revision == 1
 
 
-def test_removed_search_setting_is_absent_and_existing_binding_is_preserved(
-    admin_store, admin_runtime,
+def test_removed_search_binding_is_ignored_and_cleaned_on_save(
+    admin_store, admin_runtime, fake_mysql,
 ):
-    """移除设置入口不清空已有搜索绑定，更新其他配置仍保留原值。"""
-    admin_store.save({"chat_python_search_mcp_code": "search"}, expected_revision=1)
+    """旧搜索绑定不再进入配置或影响请求，正常保存会清除历史数据库行。"""
+    fake_mysql.table.append({
+        "config_key": "chat_python_search_mcp_code", "config_value": '"search"',
+    })
+    fake_mysql.commit()
     manager = service(admin_store, admin_runtime)
     assert "chat_python_search_mcp_code" not in {
         item.name for item in manager.read().fields
     }
-    result = manager.update(update(2, chat_llm_temperature=0.4))
+    result = manager.update(update(1, chat_llm_temperature=0.4))
     assert "chat_python_search_mcp_code" not in {item.name for item in result.fields}
-    assert admin_store.load().config.chat_python_search_mcp_code == "search"
+    assert not hasattr(admin_store.load().config, "chat_python_search_mcp_code")
+    assert "chat_python_search_mcp_code" not in admin_store.load_values()[0]
 
 
 def test_structured_values_use_json_kind_without_confusing_generic_element_types(

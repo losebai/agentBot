@@ -14,7 +14,7 @@ export interface McpDraft extends DirectoryDraft { code: string; category: 'gene
 export interface McpServer extends Omit<McpDraft, 'credential'>, Versioned { credential_set: boolean; credential_available: boolean }
 /** 只读发现返回工具定义，开关状态来自服务的 allowed_tools 集合。 */
 export interface McpTool { name: string; description: string; input_schema: Record<string, JsonValue>; source: 'mcp' }
-export interface AgentProbe { agent_code: string; prompt: string; messages: ChatMessage[]; session_id: string; attachment_ids?:string[]; request_id?: string; max_steps?: number; timeout_seconds?: number }
+export interface AgentProbe { agent_code: string; prompt: string; messages: ChatMessage[]; session_id: string; attachment_ids?:string[]; video_asset_id?:string; request_id?: string; max_steps?: number; timeout_seconds?: number }
 export interface AgentMetadata { execution_id: string; request_id: string; model: string; usage: TokenUsage; duration_ms: number; record_saved: boolean; backend: 'python-agent'; attachments?:MediaAsset[] }
 export interface AgentCompletion extends AgentMetadata { content: string }
 export interface AgentEvent { kind: 'start'|'model_start'|'text_delta'|'tool_start'|'tool_result'|'artifact'|'warning'|'done'|'error'; execution_id: string; sequence: number; turn: number; delta?: string; tool?: string; call_id?: string; code?: string; message?: string; metadata?: AgentMetadata; duration_ms?: number; attachment?:MediaAsset }

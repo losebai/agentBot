@@ -6,6 +6,19 @@ from agent_bot.ai.errors import AiError
 def classify_api_error(error: AiError) -> tuple[int, str, str]:
     """稳定中文错误文案不回显上游响应、文件路径或凭据。"""
     messages = {
+        'BILIBILI_DISABLED': 'B站插件未运行，请启用插件并手动重启后端',
+        'BILIBILI_NOT_INITIALIZED': 'B站数据表尚未升级，请先执行对应后端的 bilibili-init 增量 SQL',
+        'BILIBILI_NOT_LOGGED_IN': 'B站尚未登录，请在插件管理扫码登录',
+        'BILIBILI_LOGIN_EXPIRED': 'B站登录已失效，请重新扫码',
+        'BILIBILI_QR_EXPIRED': '二维码会话已失效，请重新生成',
+        'BILIBILI_NETWORK_ERROR': 'B站连接失败，请检查网络后重试登录检测',
+        'BILIBILI_INVALID_RESPONSE': 'B站返回了无法识别的响应',
+        'BILIBILI_UPSTREAM_REJECTED': 'B站拒绝操作，请核对账号权限、稿件或评论参数',
+        'BILIBILI_VERIFICATION_REQUIRED': 'B站要求额外验证，请在官方客户端处理后重试',
+        'BILIBILI_RATE_LIMITED': 'B站限制请求频率，请稍后再试',
+        'BILIBILI_INVALID_MEDIA': '请使用有效 MP4 视频及当前会话的封面图片',
+        'BILIBILI_OPERATION_PENDING': '该操作正在执行或结果未知，请先在B站核对，勿重复发送',
+        'BILIBILI_RESULT_UNKNOWN': '操作结果未知，请先在B站核对稿件或评论，勿重复发送',
         "KNOWLEDGE_NOT_INITIALIZED": "知识库表尚未初始化，请执行对应知识库增量 SQL",
         "KNOWLEDGE_UNAVAILABLE": "知识库数据库暂时不可用，请检查连接",
         "KNOWLEDGE_NOT_FOUND": "知识条目不存在或已删除",
@@ -87,7 +100,6 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         "AGENT_TOOL_UNAUTHORIZED": "当前入口或 Agent 未授权这些工具",
         "AGENT_TOOL_SESSION_EXPIRED": "QQ 工具会话已过期或撤销，请重新发起请求",
         "AGENT_TOOL_UNAVAILABLE": "预设工具不可用，请检查工具名称及 MCP 白名单",
-        "AGENT_SEARCH_UNAVAILABLE": "请配置已启用的 search 分类 MCP 服务",
         "AGENT_SKILL_UNAVAILABLE": "关联 Skill 已停用或缺少已授权的工具依赖",
         "AGENT_BUSY": "Agent 并发已满，请稍后再试",
         "AGENT_CAPABILITY_NOT_MIGRATED": "此 Agent 要求尚未实现的能力，请移除相关工具",

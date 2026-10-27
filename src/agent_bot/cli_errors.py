@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from pymysql.err import DatabaseError
 
 from agent_bot.config import RuntimeConfig
+from agent_bot.database_upgrade import UpgradeError
 from agent_bot.settings import (
     SettingsAlreadyInitializedError,
     SettingsError,
@@ -44,6 +45,9 @@ def describe_config_error(error: Exception | SystemExit) -> str:
         return "该字段为静态配置，请修改 .env 或环境变量并重启服务。"
     if isinstance(error, FileExistsError):
         return "目标文件已存在，请选择新文件；原文件未覆盖。"
+    if isinstance(error, UpgradeError):
+        # 升级器只构造固定提示和发布清单 ID，保留这些可操作的安全错误。
+        return str(error)
     if isinstance(error, ValidationError):
         known = set(RuntimeConfig.model_fields) | {
             "chat_db_host", "chat_db_port", "chat_db_user", "chat_db_password", "chat_db_name",

@@ -6,13 +6,23 @@
 
 新增内置插件需实现 `agent_bot.plugins.contracts.ApplicationPlugin`，提供元数据及 `prepare/start/stop/is_ready/bots`，并显式登记到 `plugins/catalog.py`。准备阶段不联网，异步启动分配资源，停止必须回收部分启动资源；插件不得关闭宿主提供的公共数据库池或媒体资源。本版本只支持内置注册，不支持第三方安装或热加载。
 
+### B站插件
+
+每次启动会按[自动升级说明](sql/UPGRADE-AUTOMATIC.md)检查所选数据库版本，自动执行适用的 MySQL / SQLite 增量；已完成历史迁移的既有库会自动补齐 B站表，新库完整初始化脚本已包含所需表。随后在“插件管理”启用“B站”，保存并手动重启后端，在 B站卡片扫码、用手机客户端确认登录。账号 Cookie 只保存在当前选择的数据库中，不回填页面和模型。可检查登录、重新扫码或清除本地登录；清除不代表其他设备已退出。
+
+在 Agent 的“允许工具”中按需选择 `bilibili_login_status`（实际检测登录）、`bilibili_get_comments`（读取视频评论及楼中楼）、`bilibili_reply_comment`（回复指定评论）、`bilibili_publish_video`（视频投稿）。评论仅由 Agent 按需调用，不运行自动监听任务。投稿和回复仅限管理端或已有 QQ 超级用户，且仍需入口、会话和 Agent 工具授权。
+
+管理 Agent 对话可通过“添加投稿视频”上传不超过 100 MB 的 MP4，用“添加图片”提供封面，并说明标题、简介、分区 ID、标签及原创/转载信息。视频只交给投稿工具，不作为图片输入；工具仅接受当前会话资产，不接受任意本地文件路径或下载 URL。转载必须提供来源。投稿返回“已提交审核”，不表示已公开。
+
+同一请求相同参数的成功写操作会返回已保存结果；结果未知时请先去 B站投稿管理或评论区核对，不能自动重复发送。平台额外验证、限流和权限错误会直接报告。本功能自动验证使用离线 HTTP / 数据库替身，真实扫码及账号投稿需要在用户自己的账号验收。
+
 基于 Python、NoneBot 和 OneBot V11 的机器人服务，提供 React 浏览器管理界面。支持普通对话、多轮 Agent、Skill、MCP、图片理解、图片与对话音频生成，以及 ComfyUI 和 GPT-SoVITS 工具。
 
 管理界面集中提供机器人配置、供应商和模型管理、Agent/Skill/MCP 配置、对话测试及调用记录。当前使用纯 Python 服务，支持普通对话、Agent、媒体、一次性 Job 和自动发言决策。视频、通用 Laya 指令和 SolonCode 暂未迁移。
 
 “标签与知识库”提供知识条目及标签记忆的分页、关键词搜索、标签筛选、详情、新增和逻辑删除。两类记录均不能编辑；同作用域同记忆键（含已删除记录）不能覆盖或恢复，新增事实须使用新键。手工新增记忆可选择已有匿名作用域，或填写机器人及用户、群聊、会话目标；QQ 召回继续按原身份隔离。
 
-知识条目是实例内共享资料，在 Agent 的“允许工具”中显式勾选 `knowledge_search` 后，可在 QQ 命名 Agent 和管理端对话中检索，并按 `【知识 #ID：标题】` 引用真实来源。首版支持手工文本录入及标签/关键词检索。既有部署先按 [SQL 使用说明](sql/README.md) 执行对应数据库的知识库增量，普通启动不升级数据库。
+知识条目是实例内共享资料，在 Agent 的“允许工具”中显式勾选 `knowledge_search` 后，可在 QQ 命名 Agent 和管理端对话中检索，并按 `【知识 #ID：标题】` 引用真实来源。首版支持手工文本录入及标签/关键词检索。既有部署先按 [SQL 使用说明](sql/README.md) 执行对应数据库的知识库增量，普通启动按已登记版本清单升级，不回放历史脚本。
 
 普通文本和 Agent 的模型调用统一通过 LangChain，显式支持 Chat Completions、Responses 和 Ollama 三种协议。Agent 由 LangGraph 编排模型调用、整批工具校验、顺序执行和收尾回答；业务工具通过 StructuredTool 接入，继续使用项目的 QQ 权限、MCP 会话、媒体作用域、总超时及取消机制。模型地址和凭据来自数据库快照，SDK 不自动重试或切换协议，外部 LangSmith tracing 在调用期间关闭。依赖由 `uv.lock` 固定，更新后重启服务加载新执行路径。
 
@@ -25,15 +35,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1
 ```
 
 脚本读取项目版本，完成测试、安装器与 SQL 包构建、上传校验及公网验证。
-也可加 `-Version 0.5.6` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.5.6.md`。
+也可加 `-Version 0.5.7` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.5.7.md`。
 参数与环境要求见 [发布说明](deploy/README.md#一键构建并发布)。
 
-当前 Windows 发布版本：**0.5.5**。后续安装与更新以下载站的
+当前 Windows 发布版本：**0.5.7**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。
 
-0.5.5 更新：增加长期记忆版本、来源、冲突与遗忘管理；模型按供应商和上游标识绑定，统一模型选择界面。
-已有部署升级前请按 [0.5.5 升级说明](sql/UPGRADE-0.5.5.md) 停服、备份并执行适用迁移；
-[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.5-sql.zip) 同时提供完整初始化与增量脚本。
+0.5.7 更新：新增 B站扫码登录、视频投稿与按需评论工具、启动数据库版本检测及自动升级，并包含自动多条回复、LLM 自动发言上下文和发布资源改进。
+从已完成历史迁移的 0.5.6 升级，启动时会自动执行当前适用的数据库增量；详见 [0.5.7 升级说明](sql/UPGRADE-0.5.7.md)。
+[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.7-sql.zip) 同时提供完整初始化与历史适用增量。
 
 适用于 Windows 10/11 x64，无需安装 Python、uv 或 Node.js。
 
@@ -158,7 +168,7 @@ uv run agent-bot database init
 
 命令按所选后端创建业务结构，覆盖配置、群成员、记忆、工作流、模型、Agent、Skill、MCP、媒体、Job 和记录。SQLite 会在首次自动配置或明确初始化时创建文件及父目录，并启用外键和 WAL；已有配置的启动只打开已有业务库。MySQL 需先创建数据库，初始化账户需要建表权限。
 
-两种脚本分别为 [MySQL 初始化](sql/agent_bot_init.sql) 和 [SQLite 初始化](sql/agent_bot_init.sqlite.sql)。重复初始化保留数据，不插入配置或模型，也不修正已有不兼容结构。已有部署启动不会自动升级业务表；本地队列库由独立的 [队列初始化脚本](sql/agent_bot_queue_init.sqlite.sql) 创建。
+两种脚本分别为 [MySQL 初始化](sql/agent_bot_init.sql) 和 [SQLite 初始化](sql/agent_bot_init.sqlite.sql)。重复初始化保留数据，不插入配置或模型，也不修正已有不兼容结构。已有部署启动前按版本清单自动升级适用业务表，失败停止启动；本地队列库由独立的 [队列初始化脚本](sql/agent_bot_queue_init.sqlite.sql) 创建。
 
 本地队列脚本也可作为既有 SQLite 库的独立增量执行；MySQL 结构基线对应
 [队列表增量](sql/2026-10-13-local-queue.sql)。队列运行仍使用独立 SQLite 文件或显式 Redis，
@@ -211,7 +221,7 @@ OneBot Token 在网页“机器人配置 → QQ”中不回显；存在启动文
 
 “QQ”集中管理 OneBot 接入、机器人名称和访问权限；“自动回复设置”管理关键词回复、回复长度与冷却、群聊上下文、主动发言和定时任务；永劫无间的账号凭据、服务器和查询限制统一放在“游戏资讯设置”。分类只改变展示，仍沿用同一数据库版本、草稿和保存操作。
 
-“自动回复设置”可启用 `chat_multi_reply_enabled`，让 Agent 在 QQ 普通对话、工具调用后的最终回复及主动发言中按语义发送多条消息。默认关闭；`chat_multi_reply_max_messages` 默认 3 条（1–10），`chat_multi_reply_interval_seconds` 默认 1 秒（0–10）。`chat_multi_reply_prompt` 可调整分条风格，程序自动追加严格 JSON 字符串数组协议，例如 `["第一条消息", "第二条消息"]`，单条也使用数组；模型格式错误、空消息或超条数会明确失败，不将原始 JSON 发到 QQ。开启时数组元素就是消息边界，不再按 `chat_chunk_chars` 切分；普通聊天超出正文总长度仍发送完整文本文件，主动发言按专用长度限制裁剪已解析正文。仅首条附加原生 @，失败重试沿用已确认发送进度；媒体结果、决策报告和管理端调试不受此开关影响。四项设置均通过现有配置数据库保存并热更新，不需要修改数据库表结构或执行迁移 SQL。
+“自动回复设置”可启用 `chat_multi_reply_enabled`，让 Agent 在 QQ 普通对话、工具调用后的最终回复及主动发言中按语义发送多条消息。默认关闭；`chat_multi_reply_max_messages` 默认 3 条（1–10），`chat_multi_reply_interval_seconds` 默认 1 秒（0–10）。`chat_multi_reply_prompt` 可调整分条风格，程序自动追加严格 JSON 字符串数组协议，例如 `["第一条消息", "第二条消息"]`，单条也使用数组；模型格式错误、空消息或超条数会明确失败，不将原始 JSON 发到 QQ。关闭时若模型仍返回完整的 JSON 字符串数组，则直接拼接全部元素为普通正文，不发送数组包装且不受多条条数限制；普通文本保持原样。开启时数组元素就是消息边界，不再按 `chat_chunk_chars` 切分；普通聊天超出正文总长度仍发送完整文本文件，主动发言按专用长度限制裁剪已解析正文。仅首条附加原生 @，失败重试沿用已确认发送进度；媒体结果、决策报告和管理端调试不受此开关影响。四项设置均通过现有配置数据库保存并热更新，不需要修改数据库表结构或执行迁移 SQL。
 
 模型统一在本地目录登记，QQ 功能按各自开关启用。无需设置普通文本、Agent 或媒体的后端选择字段。模型或工具调用失败会返回对应错误，未迁移能力会在路由预检时拒绝。
 
@@ -223,7 +233,7 @@ OneBot Token 在网页“机器人配置 → QQ”中不回显；存在启动文
 
 统一调用记录的 `create_time` 使用北京时间（UTC+8），与旧系统历史记录保持一致；普通调用的原始 UTC 微秒保存在同表 `created_at_utc`，Agent 执行及自动发言决策表的 `created_at` 继续使用 UTC。`uv run agent-bot records repair-times` 按仍存在的源表校正统一归档时间，不会猜测已退出来源的时间或重复加八小时。校正后刷新记录并回到第一页，原分页游标应丢弃。
 
-普通调用已停止双写 `agent_bot_ai_session`，旧普通列表和详情接口直接读取统一归档，并保留原 UTC 微秒、完整长正文、用量和失败代码。已有部署先备份，执行一次 `sql/2026-10-20-merge-ai-sessions.sql`（MySQL）或对应 `.sqlite.sql`，再运行 `uv run --no-sync agent-bot records merge-ai-sessions`。合并按原来源及执行 ID 去重，补录缺失记录；已有记录逐字段校验后只补原始 UTC 时间，不改 ID、请求快照和指令分类；冲突明确失败，重跑不重复写入。所有旧后台停用并完成新版启动、全字段及备份校验后，显式执行 `sql/2026-10-20-retire-ai-session.sql` 或对应 SQLite 脚本删除旧普通表。普通启动不自动升级或清理，新库初始化不再创建旧普通表，其结构归档在 `sql/legacy/ai-session-v1.*`。
+普通调用已停止双写 `agent_bot_ai_session`，旧普通列表和详情接口直接读取统一归档，并保留原 UTC 微秒、完整长正文、用量和失败代码。已有部署先备份，执行一次 `sql/2026-10-20-merge-ai-sessions.sql`（MySQL）或对应 `.sqlite.sql`，再运行 `uv run --no-sync agent-bot records merge-ai-sessions`。合并按原来源及执行 ID 去重，补录缺失记录；已有记录逐字段校验后只补原始 UTC 时间，不改 ID、请求快照和指令分类；冲突明确失败，重跑不重复写入。所有旧后台停用并完成新版启动、全字段及备份校验后，显式执行 `sql/2026-10-20-retire-ai-session.sql` 或对应 SQLite 脚本删除旧普通表。普通启动不回放这些历史转换或执行旧表清理，新库初始化不再创建旧普通表，其结构归档在 `sql/legacy/ai-session-v1.*`。
 
 ## 配置模型与对话
 
@@ -260,7 +270,7 @@ QQ 当前上下文统一保存在 `chat_session_context`，每个 `session_id` �
 ## 配置 Python Agent 和工具
 
 1. 完成供应商和模型登记，选择支持原生工具调用的模型。
-2. 按需在“MCP 服务”登记 Streamable HTTP 或 SSE 地址、工具白名单和访问令牌。网页搜索使用 `search` 分类并填写搜索工具名称；`read_url` 只读取公网网页。搜索 MCP 代码不再提供管理设置入口，已有搜索绑定保留。
+2. 按需在“MCP 服务”登记 Streamable HTTP 或 SSE 地址、工具白名单和访问令牌。网页搜索选择“网页搜索”（`search`）分类，填写搜索工具名称，并在白名单中保留该工具或 `*`。没有历史绑定时，运行时直接使用唯一启用的网页搜索服务，无需在机器人配置中填写服务代码；启用多个候选会明确提示配置冲突。已有搜索绑定继续优先使用，指定服务停用或不存在时会报错，不自动换用其他服务。QQ 还须开启“LLM设置”的联网搜索，并在 Agent 预设中允许 `web_search`；`read_url` 只读取公网网页。
 3. 按需创建 Skill，再创建 Agent，选择模型、内置工具和 Skill。Agent 可关联最多 3 个通用 MCP 服务，连接后自动向模型提供服务白名单内的工具，无需在 Agent 中逐个勾选；MCP 白名单为 `*` 时提供服务返回的全部工具。白名单筛选后所有服务合计最多 32 个 MCP 工具，超限时明确报错；Skill 所需的内置工具也必须在 Agent 中授权。工具调用次数统一在“机器人配置 → LLM设置”调整，默认 5 次，可填写任意正整数或清空为不限次数；不再受单轮 8 次、整次 40 次、最多 5 轮等固定调用预算限制，请求超时与权限校验仍生效。批量调用按每个工具请求计数，参数校验失败也占用预算；超出预算的项返回未执行结果，并进入最终回答。
 4. 在“对话测试 → Agent 对话”选择 Agent；执行步骤和结果可在“会话记录 → Agent 运行记录”查看。
 5. 在“机器人配置 → LLM设置”通过下拉框选择聊天、图片理解、图片生成和语音模型，只展示已启用模型，多个用途可以重复选择同一模型。此处还可设置默认 Agent 预设代码 `chat_python_agent_code`、工具调用次数 `chat_agent_max_steps`、通用 MCP 服务 `chat_mcp_services`、联网搜索和群成员 @ 工具授权。Agent 管理页只维护预设，运行字段集中在机器人配置；保存沿用配置版本校验和热刷新，分类切换保留草稿。预设代码留空时仍走 Agent，使用当前 Chat 模型、提示词和预算。旧预设字段 `max_steps` 和旧联网字段 `chat_web_search_max_steps` 保留兼容读取但不再决定执行预算，QQ 和管理页聊天均服从统一设置；旧设置中的正整数现在按调用次数计数，已保存的 null 表示不限次数。旧 `chat_agent_enabled` 开关已移除，数据库中的历史值不再生效，下次保存配置时清理；不需要 SQL 结构迁移。每个 MCP 服务独立保存地址与令牌，编辑令牌留空保留、明确清除才删除，保存后新请求立即使用新配置。
@@ -273,7 +283,7 @@ Windows MCP 等服务返回的截图会经过真实图片校验，并作为私�
 
 错误转发默认关闭，选择备用模型后才开启。主模型配置或上游调用失败时，备用每请求最多接管一次，只继续失败的模型轮次，保留已完成的工具结果，不重复执行工作流。备用与本次实际使用的模型相同时跳过转发，避免向同一个模型自我兜底。带图请求的备用也需支持图片理解；跨模型接管移除旧供应商私有延续，不丢弃输入图片。权限拒绝、工具执行错误、取消和请求总超时不会触发转发；备用仍失败时返回实际错误。执行记录的 warning 步骤保存原错误码及转交模型，后续请求重新从主路由开始。
 
-既有数据库升级此功能需在新版本启动前执行一次 `sql/2026-10-13-agent-model-routing.sql`（MySQL）或 `sql/2026-10-13-agent-model-routing.sqlite.sql`（SQLite）。脚本仅新增两个可空模型引用，原聊天模型绑定和数据保留；新库直接执行对应 `agent_bot_init` 初始化脚本。普通服务启动不会自动升级数据库。升级并由运维重启一次后，在管理页修改这些模型路由对新请求即时生效。
+既有数据库升级此功能需在新版本启动前执行一次 `sql/2026-10-13-agent-model-routing.sql`（MySQL）或 `sql/2026-10-13-agent-model-routing.sqlite.sql`（SQLite）。脚本仅新增两个可空模型引用，原聊天模型绑定和数据保留；新库直接执行对应 `agent_bot_init` 初始化脚本。普通启动仅自动执行已登记且适用的版本增量；本段所列历史转换仍先核对原版本起点。升级并由运维重启一次后，在管理页修改这些模型路由对新请求即时生效。
 
 QQ 工具包括标签记忆、永劫无间查询、群成员提及、本地工作流和 TTS；网页工具为 `web_search`、`read_url`。QQ 本地工具链需要启用 `chat_mcp_enabled`，通过会话短期令牌校验权限。
 
@@ -291,7 +301,7 @@ Job 默认关闭，启用后作为 QQ 专属工具执行。管理 Agent 不接�
 
 “调用记录 → 查看详情”直接展示原生 Agent 每次工具调用的入参和返回值，按调用 ID 配对，保留调用轮次、状态、耗时和附件元数据。“Agent 执行详情”同样提供此视图。入参和返回值保存前递归清除凭据，JSON 工具正文格式化展示；媒体二进制及模型私有延续不进入步骤记录。工具取消或异常而没有返回时保留入参、稳定错误码与结果未知状态，不自动重执行。历史未保存的负载显示“未保存入参／未记录返回值”，无法补回。
 
-既有库需在新版本启动前执行一次 `sql/2026-10-13-tool-call-payloads.sql`（MySQL）或 `sql/2026-10-13-tool-call-payloads.sqlite.sql`（SQLite）。增量只添加工具步骤的可空 JSON 字段，不改写历史记录；新库初始化脚本已包含完整结构。此变更加载后，新工具调用即开始保存负载，服务不会在普通启动时自动升级数据库。
+既有库需在新版本启动前执行一次 `sql/2026-10-13-tool-call-payloads.sql`（MySQL）或 `sql/2026-10-13-tool-call-payloads.sqlite.sql`（SQLite）。增量只添加工具步骤的可空 JSON 字段，不改写历史记录；新库初始化脚本已包含完整结构。此变更加载后，新工具调用即开始保存负载，服务启动时会按版本清单自动升级适用数据库结构。
 
 ## 配置图片和音频
 
@@ -335,7 +345,7 @@ uv run agent-bot workflows list
 
 ## Python Job 与自动发言
 
-已有数据库先手动执行 [Job 与决策增量 SQL](sql/2026-10-12-python-jobs-auto-speak.sql)，增加 `agent_bot_job_owner`、`agent_bot_job`、`agent_bot_auto_speak_decision` 三张表。新库直接使用统一脚本。代码不会自动建表，也不会复制旧 Java 待执行任务；切换前应处理旧任务，避免两套服务重复投递。
+已有数据库先手动执行 [Job 与决策增量 SQL](sql/2026-10-12-python-jobs-auto-speak.sql)，增加 `agent_bot_job_owner`、`agent_bot_job`、`agent_bot_auto_speak_decision` 三张表。新库直接使用统一脚本。当前启动版本清单不回放这些更早历史结构，也不会复制旧 Java 待执行任务；切换前应处理旧任务，避免两套服务重复投递。
 
 在“机器人配置”启用 `chat_mcp_enabled` 和 `chat_job_enabled`；前者的挂载变更需要重启。若 QQ 使用 Agent 预设，还须在其工具列表中授权 `job`。模型可以创建、查询、列出和取消当前发起人的一次性任务；每条请求最多创建一项，每人每会话最多 50 项活动任务，延时范围为 1 秒至 365 天。绝对时间必须带时区。
 
@@ -344,7 +354,13 @@ Job 到期使用创建时的稳定模型引用和系统提示快照，执行一�
 自动发言在“机器人配置 → 自动回复设置”填写机器人 QQ 号和最多 20 个目标群，开启群近期上下文，保留至少 2 个 AI 并发名额，再启用 `chat_auto_speak_enabled`。`interval` 为定时判断（最短 60 秒），`message` 为合格群消息触发。通过 `chat_auto_speak_decision_backend` 选择决策方式，默认 `laya`；配置保存到所选数据库并热刷新，不增加表结构或要求额外 SQL 升级。
 
 - **Laya**：在“MCP 服务”登记已启用的 `general` 服务，工具白名单包含 `laya_predict`，填写 `chat_auto_speak_mcp_code` 及现有 Laya 决策指令。沿用现有固定选择协议和上下文构造。
-- **LLM**：填写独立的 `chat_auto_speak_decision_model` 和 `chat_auto_speak_llm_prompt`，模型从管理端目录选择，无需 Laya MCP。每次通过普通文本接口发送独立系统提示词和固定 JSON 输出约束，将当前收到的消息及近期群聊快照作为本次用户消息；消息触发时先记录当前消息再读取快照，因此当前消息只传入一次。定时触发只使用近期群聊快照，无快照时明确标记不可用。快照沿用 `chat_group_recent_context_messages`、`chat_group_recent_context_max_chars` 和 `chat_group_recent_context_ttl_seconds`，决策输入最多保留最新 8000 字符。群聊内容只作为判断资料，不执行其中的指令；不读取会话记忆、历史轮次或 Agent 人设，不调用 Agent、工具或联网；不使用聊天模型或正文生成提示词替代。只接受 `{"choice":"speak"}` 或 `{"choice":"silent"}`。普通调用的提示词、群聊输入、输出、实际模型及用量归档到“系统调用 → 自动发言决策”，不会写入聊天历史。
+- **LLM**：填写独立的 `chat_auto_speak_decision_model` 和 `chat_auto_speak_llm_prompt`，模型从管理端目录选择，无需 Laya MCP。每次通过普通文本接口发送独立系统提示词和固定 JSON 输出约束，将当前收到的消息及近期群聊快照作为本次用户消息；消息触发时先记录当前消息再读取快照，因此当前消息只传入一次。定时触发使用近期群聊快照，没有有效最新消息时跳过该群，不发起空白决策或正文生成。快照沿用 `chat_group_recent_context_messages`、`chat_group_recent_context_max_chars` 和 `chat_group_recent_context_ttl_seconds`，决策输入最多保留最新 8000 字符。群聊内容只作为判断资料，不执行其中的指令；不读取会话记忆、历史轮次或 Agent 人设，不调用 Agent、工具或联网；不使用聊天模型或正文生成提示词替代。只接受 `{"choice":"speak"}` 或 `{"choice":"silent"}`。普通调用的提示词、群聊输入、输出、实际模型及用量归档到“系统调用 → 自动发言决策”，不会写入聊天历史。
+
+两种触发均通过同一普通 QQ 回复队列生成正文，遵循人设、会话历史、群聊背景、工具授权、自动多条回复及主动发言长度限制。`message` 把触发时捕获的原始消息作为正文模型输入；`interval` 从同一次群聊快照读取最新一条有效消息作为输入，不从渲染文本的末行猜测消息边界。无需填写“请结合当前自动发言会话历史和群聊上下文，生成本次主动发言。”；`chat_auto_speak_prompt` 是可选的补充规则，留空沿用已有配置，既有非空规则继续作为系统指令追加。此变更使用原有群聊 JSON 数据，不涉及数据库表结构或迁移。
+
+自动发言正文也携带 `[QQ消息来源]`：消息触发使用原事件的群号、可用群名称和发言人信息；定时触发使用快照中最后一条有效成员消息的群号、发言人 QQ 和名称。额外昵称转发遵循 `chat_llm_forward_user_name`。来源字段只描述触发消息，执行身份仍为机器人，不继承该成员的工具或素材权限；静默决策不额外查询群资料。
+
+近期群聊快照同时保留成员文本和统一网关确认发送成功的机器人消息，机器人名称标记为 `机器人[名称]`；确认消息按投递标识去重，私聊和其他群的内容不会写入本群快照。成员追问“为什么”“怎么做”时，决策和后续正文都能参考机器人上一条真实回答。独立 LLM 决策接收当前机器人 QQ 身份及名称以识别自身发言，不加载 Agent 人设或会话记忆。机器人自己的消息只补充背景，不触发新的消息决策；定时检查若最新一条是机器人消息也会跳过，避免自问自答。已有群快照 JSON 仍可读取，不涉及数据库表结构变更。
 
 两种方式仅决定是否开口；获准后的正文生成、工具能力及发送队列仍按原配置执行。异常或取消时保持群内静默，不自动切换决策方式或模型，也不叠加决策重试；LLM 普通调用复用既有传输层的同模型暂时故障重试和总超时预算。
 
@@ -390,7 +406,7 @@ Windows 独立桌面版可执行 `powershell -ExecutionPolicy Bypass -File tools
 ```powershell
 npm --prefix web run build
 uv build
-uv run python tools/check_package.py dist/agent_bot-0.5.1-py3-none-any.whl
+uv run python tools/check_package.py dist/agent_bot-0.5.7-py3-none-any.whl
 ```
 
 wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行模块、静态界面和 SQL 资源，并排除凭据、缓存、日志及媒体文件。
@@ -399,7 +415,7 @@ wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行�
 
 ```powershell
 uv venv --python 3.12
-uv pip install "D:\packages\agent_bot-0.5.1-py3-none-any.whl"
+uv pip install "D:\packages\agent_bot-0.5.7-py3-none-any.whl"
 .venv\Scripts\agent-bot.exe --help
 ```
 

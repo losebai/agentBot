@@ -296,7 +296,9 @@ async def test_decision_gates_real_auto_speak_queue_submission(job_database, cho
         interval_seconds=60,
         max_reply_chars=500,
     )
-    assert await auto.handle_group_message(bot, "10003", "近期话题") == (choice == "speak")
+    assert await auto.handle_group_message(
+        bot, "10003", "近期话题", trigger_message="当前群消息",
+    ) == (choice == "speak")
     assert submit.await_count == (1 if choice == "speak" else 0)
     if choice == "speak":
         job = submit.await_args.args[0]

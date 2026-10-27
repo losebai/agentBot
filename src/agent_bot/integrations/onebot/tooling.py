@@ -96,9 +96,14 @@ class ChatToolSessionManager:
         self._catalog_provider = catalog_provider
 
     def available_tools(self, event: MessageEvent) -> tuple[ChatToolName, ...]:
-        """计算当前事件可用的工具白名单。"""
+        """按真实事件计算白名单，B站写工具仅授予已有超级用户。"""
 
-        return self._available_tools(group=isinstance(event, GroupMessageEvent))
+        from agent_bot.plugins.bilibili.contracts import WRITE_TOOLS
+
+        tools = self._available_tools(group=isinstance(event, GroupMessageEvent))
+        if str(event.user_id) not in self._config_provider().superusers:
+            tools = tuple(name for name in tools if name not in WRITE_TOOLS)
+        return tools
 
     def available_group_tools(self) -> tuple[ChatToolName, ...]:
         """计算不依赖入站用户事件的普通群聊工具白名单。"""
@@ -137,6 +142,10 @@ class ChatToolSessionManager:
             tools.extend(("local_workflow_tasks", "local_workflow_cancel"))
         if config.chat_tts_enabled and self._tts_service_provider() is not None:
             tools.append("tts_generate")
+        if 'bilibili' in config.app_enabled_plugins:
+            from agent_bot.plugins.bilibili.contracts import BILIBILI_TOOLS
+
+            tools.extend(sorted(BILIBILI_TOOLS))
         return tuple(tools)
 
     @asynccontextmanager

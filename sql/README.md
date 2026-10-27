@@ -31,7 +31,7 @@ uv run agent-bot settings init
   `agent_bot_queue_init.sqlite.sql`。
 - 已有数据库按该版本升级说明执行对应增量，说明须包含适用的升级起点、执行顺序和数据影响；
   不以完整初始化脚本替代迁移，不自动执行全部历史脚本。
-- 完整脚本与迁移后的有效结构必须一致。普通启动不会自动升级数据库。
+- 完整脚本与迁移后的有效结构必须一致。启动会在读取配置前按[版本清单](UPGRADE-AUTOMATIC.md)自动执行适用增量。
 
 日期命名的 `.sql`、`.md` 是允许保留的本地材料，由 `.gitignore` 忽略，已跟踪的同类文件
 也应撤销跟踪，不能删除本地升级材料。Git 忽略只控制版本跟踪，不控制发布资源：
@@ -41,10 +41,10 @@ uv run agent-bot settings init
 
 `legacy/` 仅作为原始 SQL 基线归档，保留原始名称和内容，不用于当前项目初始化。
 
-从源码或 editable 安装开发时直接使用仓库 `sql/` 中的脚本。安装 wheel 后可通过
+从源码或 editable 安装开发时，修改 SQL 后须同步当前安装包资源；启动不会回退读取其他路径下的脚本。安装 wheel 后可通过
 `importlib.resources.files('agent_bot').joinpath('resources/agent_bot_init.sql')` 读取统一脚本。
 wheel 兼容保留三份自有分阶段资源与
-注释增量资源，服务不会自动执行 SQL。补注释必须使用独立增量脚本，保留类型、
+注释增量资源，服务仅自动执行版本清单明确登记的适用 SQL，不执行全部历史脚本。补注释必须使用独立增量脚本，保留类型、
 默认值、可空性和约束；执行前按实例升级流程备份，并评估元数据锁影响。
 
 ## 既有库升级动态凭据
@@ -59,6 +59,6 @@ SQLite 脚本使用中文行注释说明表、字段、索引和外键，替代 
 
 ## 标签知识库升级
 
-既有 MySQL 部署显式执行 [2026-10-14-tags-knowledge-memory.sql](2026-10-14-tags-knowledge-memory.sql)，SQLite 部署执行 [2026-10-14-tags-knowledge-memory.sqlite.sql](2026-10-14-tags-knowledge-memory.sqlite.sql)。增量只新增知识正文与标签关联表，可重复执行，不删除或重建既有配置、记忆和密钥。新安装使用对应完整初始化脚本；普通启动不会自动升级，未启用知识工具的聊天不依赖这两张表。
+既有 MySQL 部署显式执行 [2026-10-14-tags-knowledge-memory.sql](2026-10-14-tags-knowledge-memory.sql)，SQLite 部署执行 [2026-10-14-tags-knowledge-memory.sqlite.sql](2026-10-14-tags-knowledge-memory.sqlite.sql)。增量只新增知识正文与标签关联表，可重复执行，不删除或重建既有配置、记忆和密钥。新安装使用对应完整初始化脚本；尚未完成这些历史结构的数据须先按旧版说明迁移；版本登记机制不会猜测旧库起点。
 
 标签记忆从本版本起只允许新增、查看和逻辑删除。同一作用域已有键会返回冲突，包括已删除键，不再覆盖正文、替换标签或恢复旧记录；新增事实需使用新键。此行为变化不修改既有记忆字段、唯一约束或历史内容。

@@ -45,3 +45,15 @@ def parse_multi_reply(text: str, maximum: int) -> tuple[str, ...]:
             error_code="CHAT_MULTI_REPLY_INVALID",
         )
     return tuple(messages)
+
+
+def join_reply_array(text: str) -> str:
+    """关闭分条时合并完整字符串数组；普通正文及其他 JSON 结构保持原样。"""
+    try:
+        messages = json.loads(text)
+    except (ValueError, RecursionError):
+        # 此模式允许自由文本，解析失败不是协议错误，继续使用原有普通回复规则。
+        return text
+    if isinstance(messages, list) and all(isinstance(message, str) for message in messages):
+        return "".join(messages)
+    return text

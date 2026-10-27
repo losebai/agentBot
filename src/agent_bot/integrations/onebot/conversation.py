@@ -478,7 +478,7 @@ class ConversationHandler:
         message: Message | None = None,
         laya_decision: bool = False,
     ) -> None:
-        """解析自然聊天消息，并将模型开画正文及当前配置分段一起写入持久队列。"""
+        """解析自然聊天并写入持久队列；繁忙、限流和过期拒绝仅记日志，保持静默。"""
 
         config = self._config_provider()
         recent_group_context = await self._recent_context_provider(bot, event)
@@ -684,13 +684,13 @@ class ConversationHandler:
             await self._queue_provider().enqueue(job)
         except asyncio.CancelledError:
             raise
-        except ChatBusyError:
-            await self._reply_service.gateway.finish_busy_error(matcher)
         except (
+            ChatBusyError,
             ChatRateLimitedError,
             ConversationQueueFullError,
             ConversationJobExpiredError,
         ) as exc:
+            # 入口拒绝只留运维日志，不向群聊或私聊发送忙碌提示，也不追加模型负载。
             logger.warning(
                 "对话任务入队受限：job_id={} error={}",
                 job.job_id,

@@ -6,7 +6,9 @@ import type { McpServer } from '../agent-types';
 
 // 内置名称对应服务端工具策略；选择只保存配置，不授予当前 QQ 会话执行权限。
 const builtinTools = [
-  ['web_search', '网页搜索'], ['read_url', '网页读取'],
+  ['bilibili_login_status', 'B站登录检测'], ['bilibili_get_comments', 'B站评论读取'],
+  ['bilibili_reply_comment', 'B站回复评论'], ['bilibili_publish_video', 'B站视频投稿'],
+  ['read_url', '网页读取'],
   ['knowledge_search', '知识库检索'],
   ['material_search', '素材查询'], ['material_get', '素材读取'],
   ['memory', '标签记忆（QQ）'], ['naraka_query', '永劫无间查询（QQ）'],
@@ -49,7 +51,8 @@ export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsCh
     return () => controller.abort();
   }, [api, refresh]);
 
-  const general = servers.filter(server => server.category === 'general');
+  // 分类仅用于展示，搜索类 MCP 与其他服务使用同一关联和白名单规则。
+  const general = servers;
   const selected = general.filter(server => mcpIds.includes(server.id));
   const toolOptions = new Map(builtinTools.map(([value, name]) => [value, { value, label: name + ' · ' + value }]));
   // 保留历史手动配置，关联 MCP 的新工具由服务端发现，不要求重复勾选。

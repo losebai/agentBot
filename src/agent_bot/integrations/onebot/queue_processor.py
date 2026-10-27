@@ -280,7 +280,7 @@ class ConversationQueueProcessor:
                     ):
                         # 只记录本地稳定错误码，不输出可能含凭据的异常正文。
                         logger.warning(
-                            "本地工作流处理失败：stage=agent_generate job_id=%s "
+                            "Agent 对话处理失败：stage=agent_generate job_id=%s "
                             "request_id=%s session_id=%s collected_images=%s error=%s code=%s",
                             job.job_id,
                             job.request_id,
@@ -365,7 +365,7 @@ class ConversationQueueProcessor:
                     raise ChatAiProtocolError("多条回复正文不能为空")
                 return self._multi_reply_result(job, answer, reply_config, tools, reply_collector)
             if answer is not None:
-                # 关闭分条只合并模型声明的数组；长度、文件和工具发送仍使用普通规则。
+                # 单条 JSON 字符串与数组均先解码，再按实际正文决定长度、文件和工具发送。
                 answer = join_reply_array(answer)
             # 普通聊天超过文字上限改为完整文件；自动发言继续遵循专用长度上限。
             if (
@@ -1050,16 +1050,9 @@ class ConversationQueueProcessor:
             )
 
     def _operation_name(self, job: ConversationJob) -> str:
-        """将任务类型转换为不包含用户内容的稳定失败操作名。"""
+        """按实际任务类型报告失败；可用绘图工具只代表权限，不能证明发生过绘图。"""
 
-        if (
-            job.background_image
-            or job.media_output == "IMAGE"
-            or bool(
-                {"local_workflow_generate_image", "local_workflow_generate_video"}
-                & set(job.chat_tools)
-            )
-        ):
+        if job.background_image or job.media_output == "IMAGE":
             return "image_generation"
         if job.media_output == "AUDIO":
             return "audio_generation"

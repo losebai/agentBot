@@ -314,7 +314,8 @@ class RoutingAiClient:
                 and error.partial_content.strip()
             ):
                 return error.partial_content
-            if error.status_code in {503, 504, 429}:
+            # 上游 HTTP 5xx 对外统一为 502，仍应保留不可用类别，不能误报请求被拒绝。
+            if error.status_code in {503, 504, 429} or error.code == "AI_UPSTREAM_UNAVAILABLE":
                 exception = ChatAiUnavailableError
             elif error.code.startswith("AI_RESPONSE"):
                 exception = ChatAiProtocolError

@@ -161,6 +161,44 @@ def queued_job(**overrides: object) -> ConversationJob:
     return ConversationJob.model_validate(values)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "job_fields,operation",
+    [
+        ({}, "conversation"),
+        ({"backgroundImage": True, "mediaOutput": "IMAGE", "chatTools": ()}, "image_generation"),
+        ({"mediaOutput": "IMAGE", "chatTools": ()}, "image_generation"),
+        ({"mediaOutput": "AUDIO", "chatTools": ()}, "audio_generation"),
+    ],
+)
+async def test_failure_operation_uses_task_type_instead_of_available_tools(
+    monkeypatch, chat_plugin, job_fields, operation,
+) -> None:
+    """桌面请求即使携带绘图权限也不能误报生图失败，媒体任务仍按实际类型说明。"""
+    composer = RecordingComposer()
+    bot = onebot_mock()
+    monkeypatch.setattr(chat_plugin, "_reply_composer", composer)
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _bot_id: bot)
+    fields = {
+        "prompt": "查看我的桌面",
+        "chatTools": (
+            "local_workflow_generate_image", "local_workflow_generate_video", "tts_generate",
+        ),
+    }
+    fields.update(job_fields)
+    job = queued_job(**fields)
+
+    await chat_plugin._ConversationProcessor().deliver_failure(
+        job, ChatAiUnavailableError("private upstream body", error_code="AI_UPSTREAM_UNAVAILABLE"),
+    )
+
+    assert len(composer.intents) == 1
+    facts = composer.intents[0].facts
+    assert facts.operation == operation
+    assert facts.error_code == "AI_UPSTREAM_UNAVAILABLE"
+    assert "private upstream body" not in composer.intents[0].model_dump_json()
+
+
 @pytest.fixture
 def multi_reply_session(monkeypatch, chat_plugin):
     """只替代 QQ 令牌租约，不连接实际 MCP 或 QQ 服务。"""
@@ -174,21 +212,22 @@ def multi_reply_session(monkeypatch, chat_plugin):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tools", [(), ("mention_member",)])
-async def test_disabled_multi_reply_sends_joined_array_without_json_wrapping(
-    monkeypatch, chat_plugin, tools, multi_reply_session,
+@pytest.mark.parametrize(("answer", "expected"), [
+    ('["第一句。", "第二句。", "第三句。", "第四句。"]', "第一句。第二句。第三句。第四句。"),
+    ('"核心差别：\\n1. 交互\\n2. 能力"', "核心差别：\n1. 交互\n2. 能力"),
+])
+async def test_disabled_multi_reply_sends_decoded_messages_without_json_wrapping(
+    monkeypatch, chat_plugin, tools, multi_reply_session, answer, expected,
 ):
-    """关闭分条后合并全部元素，不受分条条数限制，持久化与实际发送均为正文。"""
+    """单个 JSON 字符串和数组均在投递前解码，真实 OneBot 消息包含换行而非转义文本。"""
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_max_messages", 1)
-    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
-        return_value='["第一句。", "第二句。", "第三句。", "第四句。"]',
-    ))
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(return_value=answer))
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
     processor = chat_plugin._ConversationProcessor()
     job = queued_job(chatTools=tools)
     result = await processor.generate(job)
-    expected = "第一句。第二句。第三句。第四句。"
     assert result.reply.text == expected
     assert result.delivery_parts == (expected,)
     assert not result.multi_reply
@@ -213,6 +252,7 @@ async def test_disabled_multi_reply_applies_auto_speak_limit_after_join(monkeypa
 @pytest.mark.parametrize(("answer", "expected", "as_file"), [
     ('["你好", "呀"]', "你好呀", False),
     ('["第一条", "第二条"]', "第一条第二条", True),
+    ('"第一\\n第二"', "第一\n第二", False),
 ])
 async def test_disabled_multi_reply_uses_decoded_length_for_file_choice(
     monkeypatch, chat_plugin, answer, expected, as_file,

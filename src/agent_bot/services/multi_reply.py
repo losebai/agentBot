@@ -48,12 +48,15 @@ def parse_multi_reply(text: str, maximum: int) -> tuple[str, ...]:
 
 
 def join_reply_array(text: str) -> str:
-    """关闭分条时合并完整字符串数组；普通正文及其他 JSON 结构保持原样。"""
+    """关闭分条时解码单条 JSON 字符串或合并数组；普通正文及其他结构保持原样。"""
     try:
         messages = json.loads(text)
     except (ValueError, RecursionError):
         # 此模式允许自由文本，解析失败不是协议错误，继续使用原有普通回复规则。
         return text
+    if isinstance(messages, str):
+        # 人设允许单条 JSON 字符串，解析一层即可恢复换行，不能再替换正文中的反斜杠。
+        return messages
     if isinstance(messages, list) and all(isinstance(message, str) for message in messages):
         return "".join(messages)
     return text

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agent_bot.agent.errors import AgentError
-from agent_bot.ai.chat_errors import ChatAiUnavailableError
+from agent_bot.ai.chat_errors import ChatAiRejectedError, ChatAiUnavailableError
 from agent_bot.ai.routing import RoutingAiClient
 from agent_bot.models import LlmRequestOptions
 
@@ -25,6 +25,38 @@ async def test_qq_routes_interrupted_body_without_calling_another_model(code):
     ) == "已生成内容"
     agent.complete.assert_awaited_once()
     plain.complete.assert_not_awaited()
+
+
+@pytest.mark.parametrize("use_agent", [False, True])
+@pytest.mark.parametrize(
+    "code,exception",
+    [
+        ("AI_UPSTREAM_UNAVAILABLE", ChatAiUnavailableError),
+        ("AI_UPSTREAM_AUTH_REJECTED", ChatAiRejectedError),
+        ("AI_UPSTREAM_REJECTED", ChatAiRejectedError),
+    ],
+)
+async def test_upstream_http_failure_keeps_its_category(use_agent, code, exception) -> None:
+    """HTTP 5xx 的稳定错误码表示上游不可用，不能因对外状态为 502 误判为拒绝。"""
+    plain, agent = AsyncMock(), AsyncMock()
+    service = agent if use_agent else plain
+    service.complete.side_effect = AgentError(code, status_code=502)
+    client = RoutingAiClient(
+        plain, agent_service=agent, timeout_seconds=30,
+        default_options=LlmRequestOptions(), mcp_services=(),
+    )
+    try:
+        with pytest.raises(exception) as caught:
+            await client.complete(
+                model="local", session_id="s", prompt="查看我的桌面", messages=(), request_id="r",
+                use_agent=use_agent, use_web_search=False,
+            )
+        assert caught.value.error_code == code
+        assert caught.value.status_code == 502
+        service.complete.assert_awaited_once()
+        (plain if use_agent else agent).complete.assert_not_awaited()
+    finally:
+        await client.aclose()
 
 
 async def test_python_failure_never_falls_back():

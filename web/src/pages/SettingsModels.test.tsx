@@ -17,8 +17,6 @@ const snapshot = { database_revision: 4, applied_revision: 4, startup_revision: 
       nullable: false, secret_is_set: false, restart_required: false },
     { name: 'chat_max_sessions', description: '最大会话数', value: 20, kind: 'number',
       nullable: false, secret_is_set: false, restart_required: false },
-    { name: 'chat_python_search_mcp_code', description: '搜索 MCP 服务', value: 'search', kind: 'string',
-      nullable: true, secret_is_set: false, restart_required: false },
   ] };
 const firstPage = { items: [
   {provider_name: '测试供应商', reference: `model:${1}`, provider_id: 1, upstream_model: 'universal', revision: 1,  id: 1, alias: 'universal', enabled: true },

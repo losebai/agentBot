@@ -24,14 +24,12 @@ def test_new_settings_cas_preserves_existing_credentials_and_budgets():
     values = runtime_config_to_plain_values(first.config)
     values.update(
         chat_python_agent_code="helper",
-        chat_python_search_mcp_code="search",
     )
     updated = store.save(values, expected_revision=first.revision)
     assert updated.revision == 2 and updated.config.chat_python_agent_code == "helper"
     values = runtime_config_to_plain_values(updated.config)
     for name in (
         "chat_python_agent_code",
-        "chat_python_search_mcp_code",
     ):
         values.pop(name)
     restored = store.save(values, expected_revision=updated.revision)

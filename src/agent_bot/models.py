@@ -27,7 +27,6 @@ AgentToolName = Literal[
     "memory",
     "material_search",
     "material_get",
-    "web_search",
     "read_url",
     "naraka_query",
     "naraka_search",

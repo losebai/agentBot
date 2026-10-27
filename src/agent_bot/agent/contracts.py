@@ -68,6 +68,12 @@ class AgentCreate(CodedItem):
             raise ValueError("invalid tool name")
         return value
 
+    @field_validator("tools")
+    @classmethod
+    def remove_retired_search(cls, value):
+        """清理旧内置搜索授权；MCP 同名工具仍由关联服务的白名单独立开放。"""
+        return tuple(name for name in value if name != "web_search")
+
 
 class SkillCreate(DirectoryItem):
     category: str = Field(default="text", min_length=1, max_length=64)
@@ -86,6 +92,7 @@ class McpFields(CodedItem):
     endpoint: str = Field(min_length=1, max_length=512)
     # 空集合显式关闭全部工具；星号表示允许发现结果中的全部工具。
     allowed_tools: tuple[str, ...] = Field(max_length=MAX_MCP_TOOLS)
+    # 仅兼容旧数据库列，执行时不再读取该字段或改写 MCP 原生工具参数。
     search_tool: str | None = Field(default=None, min_length=1, max_length=100)
     timeout_seconds: int = Field(default=10, ge=1, le=30)
     required: bool = False
@@ -109,14 +116,6 @@ class McpFields(CodedItem):
         if parts.port is not None and not 1 <= parts.port <= 65535:
             raise ValueError("invalid port")
         return value
-
-    @model_validator(mode="after")
-    def search_definition(self):
-        if self.category == "search" and (
-            not self.search_tool or not ({"*", self.search_tool} & set(self.allowed_tools))
-        ):
-            raise ValueError("search tool must be allowed")
-        return self
 
 
 class McpCreate(McpFields):
@@ -225,7 +224,6 @@ class AgentSnapshot(AiModel):
     vision: ResolvedModel | None = None
     fallback: ResolvedModel | None = None
     revisions: dict[str, int] = Field(default_factory=dict)
-    search_mcp: McpView | None = None
 
 
 class ToolDefinition(AiModel):

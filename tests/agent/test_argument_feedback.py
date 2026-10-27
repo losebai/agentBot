@@ -183,21 +183,21 @@ def test_local_business_combination_error_preserves_reason_without_raw_inputs() 
     assert "private-invalid-value" not in result["bad-save"].content
 
 
-def test_whitespace_search_query_is_rejected_before_any_batch_member_executes() -> None:
-    """搜索已有的非空白约束也必须在预检阶段生效，不能到网络调用时才中断。"""
+def test_remote_search_uses_its_own_parameter_schema() -> None:
+    """MCP 搜索仅校验服务端声明的 schema，不套用旧内置搜索的关键词约束。"""
     from agent_bot.agent.tools.langchain import LangChainTools
-    from agent_bot.agent.tools.search import SearchTool
 
     checked = CheckedTools()
-    bound = BoundTools((*checked.bound.definitions, SearchTool.definition),
+    definition = ToolDefinition(name="web_search", source="mcp", input_schema={
+        "type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"],
+    })
+    bound = BoundTools((*checked.bound.definitions, definition),
                        {**checked.bound.handlers, "web_search": None})
     results = LangChainTools(bound).validate_batch((
         ToolCall(call_id="good", name="lookup", arguments={"query": "正常"}),
         ToolCall(call_id="blank", name="web_search", arguments={"query": " \n\t "}),
     ))
-    assert "blank" in results and "good" in results
-    issue = json.loads(results["blank"].content)["error"]["issues"][0]
-    assert issue["field"] == "query" and issue["rule"] == "string_too_short"
+    assert results == {}
     assert checked.invoked == []
 
 

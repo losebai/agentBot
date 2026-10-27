@@ -52,16 +52,15 @@ export function AgentToolSelects({ token, tools, mcpIds, onToolsChange, onMcpsCh
   }, [api, refresh]);
 
   // 分类仅用于展示，搜索类 MCP 与其他服务使用同一关联和白名单规则。
-  const general = servers;
-  const selected = general.filter(server => mcpIds.includes(server.id));
+  const selected = servers.filter(server => mcpIds.includes(server.id));
   const toolOptions = new Map(builtinTools.map(([value, name]) => [value, { value, label: name + ' · ' + value }]));
   // 保留历史手动配置，关联 MCP 的新工具由服务端发现，不要求重复勾选。
   for (const name of tools) if (!toolOptions.has(name)) toolOptions.set(name, { value: name, label: name + '（原有配置）' });
-  const mcpOptions = general.map(server => ({
+  const mcpOptions = servers.map(server => ({
     value: server.id, label: server.name + ' · ' + server.code + (server.enabled ? '' : '（停用）'),
     disabled: !mcpIds.includes(server.id) && mcpIds.length >= 3,
   }));
-  for (const id of mcpIds) if (!general.some(server => server.id === id)) {
+  for (const id of mcpIds) if (!servers.some(server => server.id === id)) {
     mcpOptions.push({ value: id, label: 'MCP #' + id + '（未在当前目录）', disabled: false });
   }
 

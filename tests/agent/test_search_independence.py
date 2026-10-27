@@ -5,7 +5,13 @@ from types import SimpleNamespace
 import pytest
 
 from agent_bot.agent.catalog import AgentCatalog
-from agent_bot.agent.contracts import AgentRequest, ExecutionAuthority, McpCreate, ToolCall
+from agent_bot.agent.contracts import (
+    AgentCreate,
+    AgentRequest,
+    ExecutionAuthority,
+    McpCreate,
+    ToolCall,
+)
 from agent_bot.agent.mcp.client import McpConnector
 from agent_bot.agent.mcp.credentials import McpCredentials
 from agent_bot.agent.tools.runtime import ToolRuntime
@@ -34,7 +40,8 @@ async def test_unlinked_search_services_are_not_implicitly_selected(
 
 @pytest.mark.parametrize("tool_name", ["search", "web_search"])
 @pytest.mark.parametrize("entry", ["qq", "admin"])
-async def test_search_mcp_uses_native_tool_without_builtin_authority(entry, tool_name):
+@pytest.mark.parametrize("with_agent", [False, True])
+async def test_search_mcp_uses_native_tool_without_builtin_authority(entry, tool_name, with_agent):
     """搜索和同名工具都按远端 schema 执行，不要求任何本地搜索授权或特殊参数。"""
     schema = {
         "type": "object", "properties": {"keywords": {"type": "string"}},
@@ -42,7 +49,9 @@ async def test_search_mcp_uses_native_tool_without_builtin_authority(entry, tool
     }
     async with peer(tool_name=tool_name, tool_schema=schema) as (url, state):
         remote = server(url, category="search", allowed_tools=(tool_name,))
-        snapshot = SimpleNamespace(agent=None, mcps=(remote,))
+        snapshot = SimpleNamespace(
+            agent=SimpleNamespace(tools=()) if with_agent else None, mcps=(remote,),
+        )
         request = AgentRequest(prompt="搜索", session_id="s", request_id="r")
         authority = ExecutionAuthority(entry=entry, allowed_mcp_services=("docs",))
         async with ToolRuntime(McpConnector(McpCredentials())).open(
@@ -56,3 +65,19 @@ async def test_search_mcp_uses_native_tool_without_builtin_authority(entry, tool
         assert state["tool_requests"] == [{
             "name": tool_name, "arguments": {"keywords": "原样查询"},
         }]
+
+
+async def test_saving_old_agent_removes_retired_builtin_search(
+    agent_database, agent_params, seeded_model,
+):
+    """旧搜索授权从实际持久化配置清理，其余内置工具保持原样。"""
+    catalog = AgentCatalog(agent_params, connect=agent_database.connect)
+    agent = await catalog.create_agent(AgentCreate(
+        name="助手", code="helper", model_id=seeded_model[2].id,
+        enabled=True, tools=("web_search", "read_url"),
+    ))
+    assert (await catalog.get_agent(agent.id)).tools == ("read_url",)
+    row = agent_database.connection.execute(
+        "SELECT tools FROM agent_bot_agent WHERE id=?", (agent.id,),
+    ).fetchone()
+    assert row["tools"] == '["read_url"]'

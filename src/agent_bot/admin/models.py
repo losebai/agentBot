@@ -3,6 +3,7 @@
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, create_model, model_validator
+from pydantic_core import PydanticCustomError
 
 from agent_bot.agent.contracts import AgentReadiness
 from agent_bot.ai.call_records import CallStatistics
@@ -41,7 +42,10 @@ class PatchBase(ApiModel):
             value = getattr(self, name)
             plain = value.get_secret_value() if hasattr(value, "get_secret_value") else value
             if isinstance(plain, str) and len(plain) >= 3 and set(plain) == {"*"}:
-                raise ValueError("a secret display mask is not a credential")
+                # 只携带已声明字段名，管理错误边界无需读取密钥值即可定位问题。
+                raise PydanticCustomError(
+                    "secret_mask", "a secret display mask is not a credential", {"field": name},
+                )
         return self
 
 

@@ -1,5 +1,6 @@
 """在 MCP SDK 下层限制源站和响应大小，为有界截图响应保留空间。"""
 
+import logging
 from urllib.parse import urljoin
 
 import httpx2
@@ -9,6 +10,7 @@ from agent_bot.media.config import MAX_TOTAL_IMAGE_BYTES
 
 # 图片使用 base64 编码；额外 1 MiB 留给 JSON 元数据，SSE 和普通 JSON 共用同一上限。
 MAX_MCP_RESPONSE_BYTES = (MAX_TOTAL_IMAGE_BYTES + 2) // 3 * 4 + 1048576
+logger = logging.getLogger(__name__)
 
 
 def origin(url):
@@ -66,6 +68,7 @@ class McpTransport(httpx2.AsyncBaseTransport):
         self.inner = httpx2.AsyncHTTPTransport(retries=0)
 
     async def handle_async_request(self, request):
+        """限制源站并分类 HTTP 失败，日志只记录主机、方法和状态码。"""
         if origin(request.url) != self.allowed_origin:
             raise AgentError("AGENT_MCP_ORIGIN_REJECTED", status_code=422)
         response = await self.inner.handle_async_request(request)
@@ -73,6 +76,10 @@ class McpTransport(httpx2.AsyncBaseTransport):
             await response.aclose()
             raise AgentError("AGENT_MCP_AUTH_REJECTED", status_code=502)
         if response.status_code >= 400 and request.method == "POST":
+            logger.warning(
+                "MCP HTTP 请求失败：host=%s method=%s status=%s",
+                request.url.host, request.method, response.status_code,
+            )
             await response.aclose()
             raise AgentError("AGENT_MCP_PROTOCOL_ERROR", status_code=502)
         headers = [

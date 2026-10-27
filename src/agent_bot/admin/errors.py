@@ -75,6 +75,11 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         "AGENT_MCP_UNAVAILABLE": "MCP 服务连接失败或超时，请检查地址及服务状态",
         "AGENT_MCP_AUTH_REJECTED": "MCP 服务拒绝鉴权，请检查此服务的访问令牌",
         "AGENT_MCP_PROTOCOL_ERROR": "MCP 协议交互失败，请检查连接协议及服务端日志",
+        "AGENT_TOOL_SCHEMA_UNSUPPORTED": (
+            "MCP 工具参数定义包含尚不支持的约束，"
+            "请检查工具 schema 或在白名单中关闭对应工具"
+        ),
+        "AGENT_TOOL_SCHEMA_INVALID": "MCP 工具参数 schema 格式无效，请检查服务端工具定义",
         "AGENT_MCP_RESPONSE_TOO_LARGE": "MCP 响应超过允许的大小限制",
         "AGENT_MCP_TOOL_LIMIT": "MCP 工具数量超过上限，单次最多支持 32 个工具",
         "AGENT_MCP_DISCOVERY_LIMIT": "MCP 工具目录过大或分页异常，管理目录最多支持 256 项",

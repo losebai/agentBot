@@ -36,6 +36,7 @@ from agent_bot.admin.plugin_routes import install_plugin_routes
 from agent_bot.admin.queue_routes import install_queue_routes
 from agent_bot.admin.settings import SettingsService
 from agent_bot.admin.streaming import ManagedStreamingResponse
+from agent_bot.admin.validation import describe_validation_error
 from agent_bot.admin.workflow_routes import install_workflow_routes
 from agent_bot.ai.call_records import CallRecordStore
 from agent_bot.ai.chat_errors import ChatAiError, ChatAiUnavailableError
@@ -234,7 +235,8 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         elif isinstance(error, SettingsNotInitializedError):
             status_code, code, message = 503, "SETTINGS_NOT_INITIALIZED", "配置数据库尚未初始化"
         elif isinstance(error, (ValidationError, RequestValidationError, SettingsValidationError)):
-            status_code, code, message = 422, "INVALID_REQUEST", "配置或输入不符合要求"
+            status_code, code = 422, "INVALID_REQUEST"
+            message = describe_validation_error(error, request)
         elif isinstance(error, SettingsError):
             status_code, code, message = 503, "SETTINGS_UNAVAILABLE", "配置数据库暂时不可用"
         elif isinstance(error, (ChatAiUnavailableError, ModelGuardUnavailableError)):

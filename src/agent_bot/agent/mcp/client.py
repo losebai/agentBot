@@ -1,6 +1,7 @@
 """MCP 工作任务拥有 SDK 生命周期，取消时由同一任务完成资源释放。"""
 
 import asyncio
+import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 
 import anyio
@@ -15,11 +16,15 @@ from agent_bot.agent.mcp.discovery import convert_result, discover
 from agent_bot.agent.mcp.http import MAX_MCP_RESPONSE_BYTES, client_factory
 from agent_bot.agent.tools.schema import ToolSchema
 
+logger = logging.getLogger(__name__)
 
-def classify(error):
+
+def _error_leaves(error):
+    """展开 SDK 异常组，供错误分类和只记录类型的诊断共用。"""
     leaves = []
 
     def visit(item):
+        """保持原异常顺序，不读取可能含凭据或响应正文的异常字符串。"""
         nested = getattr(item, "exceptions", ())
         if nested:
             for child in nested:
@@ -28,6 +33,12 @@ def classify(error):
             leaves.append(item)
 
     visit(error)
+    return leaves
+
+
+def classify(error):
+    """保留业务拒绝与临时连接错误，其余 SDK 失败统一归为协议错误。"""
+    leaves = _error_leaves(error)
     for leaf in leaves:
         if isinstance(leaf, AgentError):
             return leaf
@@ -58,6 +69,7 @@ class McpWorker:
     async def _serve(self):
         """在同一任务进入和退出 SDK，转换结果时不丢弃决策的结构化契约。"""
         current = None
+        stage = "connect"
         try:
 
             def report_failure(error):
@@ -96,13 +108,17 @@ class McpWorker:
                 session = await stack.enter_async_context(
                     ClientSession(*streams[:2], read_timeout_seconds=self.server.timeout_seconds)
                 )
+                stage = "initialize"
                 await asyncio.wait_for(session.initialize(), min(10, self.remaining()))
+                stage = "discover"
                 self.tools = await discover(
                     session, self.server, self.remaining, catalog=self.catalog,
                 )
                 self.ready.set_result(None)
                 while True:
+                    stage = "idle"
                     call, current = await self.queue.get()
+                    stage = "call"
                     definition = next((t for t in self.tools if t.name == call.name), None)
                     if definition is None:
                         raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
@@ -120,6 +136,11 @@ class McpWorker:
             raise
         except Exception as error:
             failure = self.failure or classify(error)
+            logger.warning(
+                "MCP 交互失败：service=%s stage=%s code=%s causes=%s",
+                self.server.code, stage, failure.code,
+                ",".join(dict.fromkeys(type(leaf).__name__ for leaf in _error_leaves(error))),
+            )
             if not self.ready.done():
                 self.ready.set_result(failure)
             if current is not None and not current.done():

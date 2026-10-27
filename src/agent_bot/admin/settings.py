@@ -65,12 +65,18 @@ class SettingsService:
         submitted = request.values.model_fields_set
         # 托管进程的选择属于原生窗口，不能靠手工 HTTP 草稿绕过只读界面。
         if submitted & NATIVE_ONLY_STARTUP_SETTING_NAMES:
-            raise SettingsValidationError("NapCat startup settings are native only")
+            raise SettingsValidationError(
+                "NapCat startup settings are native only",
+                fields=tuple(sorted(submitted & NATIVE_ONLY_STARTUP_SETTING_NAMES)),
+            )
         startup_names = submitted & STARTUP_SETTING_NAMES
         if startup_names and (
             self.startup is None or not startup_names.issubset(self.startup.editable_names)
         ):
-            raise SettingsValidationError("startup settings are read only for this source")
+            raise SettingsValidationError(
+                "startup settings are read only for this source",
+                fields=tuple(sorted(startup_names)),
+            )
         startup = self.startup.read() if self.startup is not None else None
         baseline = self._configured_runtime(stored.config, startup)
         merged = runtime_config_to_plain_values(baseline)

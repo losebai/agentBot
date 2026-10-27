@@ -11,3 +11,8 @@ class SettingsRevisionConflictError(SettingsError):
 
 class SettingsValidationError(SettingsError):
     """配置快照内容不符合当前受控模型。"""
+
+    def __init__(self, message: str, *, fields: tuple[str, ...] = ()) -> None:
+        """携带服务端确定的字段名；错误原文与字段值不能直接用于公开提示。"""
+        super().__init__(message)
+        self.fields = fields

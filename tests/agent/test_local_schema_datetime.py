@@ -1,11 +1,10 @@
-"""本地记忆时间字段投影保留真实格式校验，不扩大远程工具schema能力。"""
+"""本地记忆保留真实日期校验，远程工具格式注解按原定义传递。"""
 
 import json
 
 import pytest
 
 from agent_bot.agent.contracts import ToolCall, ToolDefinition
-from agent_bot.agent.errors import AgentError
 from agent_bot.agent.tools.langchain import LangChainTools
 from agent_bot.agent.tools.local_media import project_local_schema
 from agent_bot.agent.tools.runtime import BoundTools
@@ -59,13 +58,13 @@ def test_projected_memory_still_rejects_naive_datetime():
     assert any("timezone" in issue["message"] for issue in feedback["issues"])
 
 
-def test_local_projection_does_not_allow_remote_datetime_formats():
-    """远程工具不能借本地记忆兼容性获得未经批准的schema关键字。"""
+def test_local_projection_preserves_remote_datetime_annotation():
+    """远端格式注解不经过本地投影清除，也不套用本地记忆的业务模型。"""
     schema = {"type": "object", "properties": {
         "when": {"type": "string", "format": "date-time"},
     }}
     remote = ToolDefinition(name="remote-calendar", source="mcp", input_schema=project_local_schema(
         "remote-calendar", schema,
     ))
-    with pytest.raises(AgentError, match="AGENT_TOOL_SCHEMA_UNSUPPORTED"):
-        ToolSchema.validate_definition(remote)
+    ToolSchema.validate_definition(remote)
+    assert remote.input_schema["properties"]["when"]["format"] == "date-time"

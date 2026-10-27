@@ -1,4 +1,4 @@
-"""Bounded JSON Schema subset without remote retrieval or regular expressions."""
+"""校验有界 JSON Schema 子集，保留格式注解，禁止远端引用及正则执行。"""
 
 import json
 
@@ -11,6 +11,8 @@ _KEYWORDS = {
     "type",
     "title",
     "description",
+    # format 按 JSON Schema 默认语义仅作为注解，不注册额外格式检查器。
+    "format",
     "default",
     "enum",
     "const",
@@ -62,8 +64,11 @@ def bounded_json(value, *, maximum=65536, depth=16):
 
 
 class ToolSchema:
+    """工具定义与参数共用边界，元数据保留给模型及远端服务解释。"""
+
     @staticmethod
     def validate_definition(tool):
+        """验证结构、关键字和本地引用，格式注解须合法且不执行额外校验。"""
         root = tool.input_schema
         bounded_json(root)
         if root.get("type") != "object":
@@ -111,6 +116,7 @@ class ToolSchema:
 
     @staticmethod
     def validate_arguments(tool, arguments):
+        """保持类型及字段约束，默认注解不会替代远端或本地业务模型校验。"""
         ToolSchema.validate_definition(tool)
         bounded_json(arguments)
         try:

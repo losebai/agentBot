@@ -10,7 +10,7 @@ resolution-markers = [
 
 [[package]]
 name = "agent-bot"
-version = "0.5.7"
+version = "0.5.8"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },

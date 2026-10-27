@@ -263,7 +263,7 @@ class RoutingAiClient:
                 names = (
                     ()
                     if vision_only
-                    else tuple(chat_tools) + (("web_search", "read_url") if use_web_search else ())
+                    else tuple(chat_tools) + (("read_url",) if use_web_search else ())
                 )
                 services = tuple(self.mcp_services) if use_agent and not vision_only else ()
                 # 共享知识仍与命名 Agent 的显式工具配置取交集，不改变普通对话路径。

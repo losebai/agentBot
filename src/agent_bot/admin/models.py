@@ -19,8 +19,8 @@ STARTUP_SETTING_NAMES = STATIC_SETTING_NAMES | BOOTSTRAP_SETTING_NAMES
 NATIVE_ONLY_STARTUP_SETTING_NAMES = frozenset({
     "agent_bot_napcat_mode", "agent_bot_napcat_webui_port",
 })
-# 仅移除管理设置入口；底层保留已有搜索绑定，编辑其他设置时不能将其清空。
-HIDDEN_SETTING_NAMES = frozenset({"chat_python_search_mcp_code", "chat_web_search_max_steps"})
+# 旧联网轮次仅保留兼容读取，执行预算已经统一到 Agent 配置。
+HIDDEN_SETTING_NAMES = frozenset({"chat_web_search_max_steps"})
 
 
 class ApiModel(BaseModel):

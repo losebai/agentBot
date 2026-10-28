@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from agent_bot.models import ChatToolName
+from agent_bot.plugins.bilibili.contracts import BILIBILI_TOOLS
 
 _NARAKA_REQUEST = re.compile(r"永劫|战绩|段位|角色\s*ID|玩家|naraka", re.IGNORECASE)
 
@@ -30,7 +31,7 @@ class ChatRouteSelector:
         available_tools: Sequence[ChatToolName] = (),
         web_search_enabled: bool = True,
     ) -> ChatRoute:
-        """联网开关启用时始终提供搜索能力，是否调用由模型决定。"""
+        """搜索和插件工具交由模型选择；仅保留入口已经授予的能力，不新增授权。"""
 
         text = unicodedata.normalize("NFKC", prompt).strip()[:20_000]
         selected: set[ChatToolName] = set()
@@ -49,5 +50,7 @@ class ChatRouteSelector:
                 "tts_generate",
             )
         )
+        # B站工具由插件生命周期和会话授权提供，不能被旧的固定工具名单提前过滤。
+        selected.update(BILIBILI_TOOLS)
         tools = tuple(tool for tool in dict.fromkeys(available_tools) if tool in selected)
         return ChatRoute(chat_tools=tools, web_search=web_search_enabled)

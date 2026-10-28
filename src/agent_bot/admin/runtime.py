@@ -42,8 +42,8 @@ class PluginRuntimeProvider:
         return self.plugin.get_runtime_state().ai_client.python_service
 
     def lease(self):
-        """Coordinate management probes with the existing hot-refresh gate."""
-        return self.plugin.acquire_runtime()
+        """旧插件入口同样快速报告正在刷新，保留原有快照保护。"""
+        return self.plugin.acquire_runtime(wait=False)
 
     @property
     def queue_stores(self):

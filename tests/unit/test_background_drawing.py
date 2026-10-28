@@ -516,8 +516,13 @@ async def test_foreground_group_image_notifies_creator_after_delivery(
         assert messages[1].extract_plain_text().strip() == "图片画好了。"
 
 
+@pytest.mark.parametrize(("completion_text", "expected"), [
+    ("你的猫画好啦。", "你的猫画好啦。"),
+    ('["给你，画好啦\uff5e"]', "给你，画好啦\uff5e"),
+    ('["给你，", "画好啦\uff5e"]', "给你，画好啦\uff5e"),
+])
 async def test_completion_delivery_restart_reuses_llm_text_without_resending_image(
-    monkeypatch, chat_plugin, image_stores,
+    monkeypatch, chat_plugin, image_stores, completion_text, expected,
 ) -> None:
     """完成文案发送失败后重启，只重发已保存的 LLM 文字，不重画、不重发图片。"""
 
@@ -528,7 +533,7 @@ async def test_completion_delivery_restart_reuses_llm_text_without_resending_ima
         media_type="image/png", data=b"\x89PNG\r\n\x1a\nimage",
     )))
     monkeypatch.setattr(chat_plugin, "workflow_service", workflow)
-    completion = AsyncMock(return_value="你的猫画好啦。")
+    completion = AsyncMock(return_value=completion_text)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", completion)
     bot = onebot_mock()
     bot.call_api.side_effect = [{"message_id": 1}, ConnectionError("offline"), {"message_id": 2}]
@@ -560,7 +565,7 @@ async def test_completion_delivery_restart_reuses_llm_text_without_resending_ima
         ["image"], ["at", "text"], ["at", "text"],
     ]
     assert messages[1] == messages[2]
-    assert messages[2].extract_plain_text().strip() == "你的猫画好啦。"
+    assert messages[2].extract_plain_text().strip() == expected
     completion.assert_awaited_once()
     workflow.generate.assert_awaited_once()
 

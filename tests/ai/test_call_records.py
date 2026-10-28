@@ -204,6 +204,45 @@ async def test_chronological_pages_include_null_times(ai_params, unified_db):
     assert ids == ["1", "2", "4", "3"]
 
 
+async def test_numbered_pages_and_totals_use_the_same_filters(ai_params, unified_db):
+    """直接跳页保持时间和 ID 排序，计数先筛选，且末页、空页不混入其他分类。"""
+    store = CallRecordStore(ai_params, connect=unified_db.connect)
+    rows = [legacy_record({
+        "id": number, "session_Id": "group-a", "status": "completed",
+        "data": {"choices": [], "status": "completed"},
+        "create_time": None if number < 3 else "2026-10-27 12:00:00",
+    }, "numbered") for number in range(1, 6)]
+    rows.extend([
+        legacy_record({"id": 6, "session_Id": "group-b"}, "numbered"),
+        legacy_record({"id": 7, "session_Id": "group-a", "request_id": "qq-summary-old"},
+                      "numbered"),
+    ])
+    await store.import_batch(rows)
+    filters = {"category": "conversation", "session_id": "group-a", "status": "completed"}
+    assert (await store.count_calls(**filters)).total == 5
+    assert (await store.count_calls(category="system")).total == 1
+    assert (await store.count_calls(session_id="absent")).total == 0
+    second = await store.list_calls(**filters, page=2, limit=2)
+    assert [row.source_id for row in second.items] == ["3", "2"]
+    assert second.next_cursor is not None
+    last = await store.list_calls(**filters, page=3, limit=2)
+    assert [row.source_id for row in last.items] == ["1"]
+    assert last.next_cursor is None
+    assert not (await store.list_calls(**filters, page=4, limit=2)).items
+    assert "content" not in second.items[0].model_dump()
+
+
+@pytest.mark.parametrize("options", [
+    {"page": 0}, {"page": -1}, {"page": True}, {"page": 1.5},
+    {"page": 1, "cursor": "cursor"},
+])
+async def test_numbered_pages_reject_invalid_or_mixed_pagination(ai_params, unified_db, options):
+    """拒绝非法页码及页码与游标混用，不能把失败查询悄悄退回首页。"""
+    store = CallRecordStore(ai_params, connect=unified_db.connect)
+    with pytest.raises(AiError, match="AI_INVALID_PAGE"):
+        await store.list_calls(**options)
+
+
 async def test_jsonl_repeated_import_and_redaction(ai_params, unified_db, tmp_path):
     """导出文件分批导入后可重跑，凭据摘要及结构化脱敏都实际落库。"""
     import json

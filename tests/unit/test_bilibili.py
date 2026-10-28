@@ -83,6 +83,34 @@ async def test_qr_platform_states(platform_code, state):
         assert await BilibiliClient(http).poll_qr('offline') == (state, None)
 
 
+@pytest.mark.parametrize('url', [
+    'https://account.bilibili.com/h5/account-h5/auth/scan-web?qrcode_key=offline',
+    'https://passport.bilibili.com/h5-app/passport/login/scan?qrcode_key=offline',
+    'https://passport.biligame.com/qrcode/scan?qrcode_key=offline',
+])
+async def test_generate_qr_accepts_current_and_existing_official_login_hosts(url):
+    """平台已将新二维码迁至 account 域名，不能把成功响应误判成协议错误。"""
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(
+        200, json={'code': 0, 'data': {'url': url, 'qrcode_key': 'offline-key'}}
+    ))) as http:
+        result = await BilibiliClient(http).generate_qr()
+    assert result == {'url': url, 'qrcode_key': 'offline-key'}
+
+
+@pytest.mark.parametrize('url', [
+    'http://account.bilibili.com/h5/account-h5/auth/scan-web',
+    'https://account.bilibili.com.example.org/scan',
+    'https://example.org/scan',
+])
+async def test_generate_qr_rejects_insecure_or_untrusted_login_hosts(url):
+    """兼容官方新域名时仍只接受 HTTPS 与明确登记的完整主机名。"""
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(
+        200, json={'code': 0, 'data': {'url': url, 'qrcode_key': 'offline-key'}}
+    ))) as http:
+        with pytest.raises(AgentError, match='BILIBILI_INVALID_RESPONSE'):
+            await BilibiliClient(http).generate_qr()
+
+
 async def test_confirmed_qr_extracts_server_only_cookies():
     """凭据从回调中解析，不需要跟随带 Cookie 的重定向。"""
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(

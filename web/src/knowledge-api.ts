@@ -10,11 +10,19 @@ function queryString(filters: MemoryFilters = {}, cursor?: string) {
   return params.toString();
 }
 
-/** 知识保持原有行为；记忆写入携带版本，批量操作必须先预览。 */
+/** 知识允许独立统计与直接跳页；记忆写入携带版本，批量操作必须先预览。 */
 export class KnowledgeApi extends ApiClient {
-  /** 列表查询允许页面离开或变更筛选时取消。 */
-  listKnowledge(filters: KnowledgeFilters = {}, cursor?: string, signal?: AbortSignal) {
-    return this.request<Page<KnowledgeEntry>>(`knowledge?${queryString(filters, cursor)}`, 'GET', undefined, signal);
+  /** 页码参数只用于知识管理，保留原有 cursor 调用协议。 */
+  listKnowledge(filters: KnowledgeFilters = {}, cursor?: string, signal?: AbortSignal,
+    pagination?: {page: number; limit: number}) {
+    const params = new URLSearchParams(queryString(filters, cursor));
+    if (pagination) { params.set('page', String(pagination.page)); params.set('limit', String(pagination.limit)); }
+    return this.request<Page<KnowledgeEntry>>(`knowledge?${params}`, 'GET', undefined, signal);
+  }
+  /** 统计不依赖当前页或目录，翻页时可复用相同筛选的总数。 */
+  countKnowledge(filters: KnowledgeFilters = {}, signal?: AbortSignal) {
+    const params = new URLSearchParams(queryString(filters)); params.delete('limit');
+    return this.request<{total: number}>(`knowledge/count?${params}`, 'GET', undefined, signal);
   }
   /** 详情取消不会改变持久化数据。 */
   getKnowledge(id: number, signal?: AbortSignal) { return this.request<KnowledgeEntry>(`knowledge/${id}`, 'GET', undefined, signal); }

@@ -8,6 +8,31 @@ from .test_agent_routes import agent_api as agent_api
 from .test_ai_routes import HEADERS
 
 
+async def test_refresh_between_agent_preflight_and_stream_returns_json_error(agent_api):
+    """预检后开始刷新时仍应在响应头之前返回 503，不能留下一个意外断开的 200 流。"""
+    from agent_bot.core.lifecycle import RuntimeRefreshInProgressError
+
+    api, _, runtime = agent_api
+    entered = 0
+
+    @asynccontextmanager
+    async def lease():
+        """第一次租约用于预检，第二次模拟刷新已关闭实际推理入口。"""
+        nonlocal entered
+        entered += 1
+        if entered == 2:
+            raise RuntimeRefreshInProgressError()
+        yield
+
+    runtime.lease = lease
+    response = await api.post(
+        "/api/v1/agent-runs/stream", headers=HEADERS,
+        json={"agent_code": "helper", "prompt": "离线测试", "session_id": "refresh"},
+    )
+    assert response.status_code == 503
+    assert response.json()["code"] == "RUNTIME_REFRESHING"
+
+
 async def test_disconnect_after_tool_side_effect_does_not_retry(agent_api):
     _, app, runtime = agent_api
     leases = 0

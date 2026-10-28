@@ -35,9 +35,33 @@ async def knowledge_api(tmp_path, admin_store, admin_runtime):
 async def test_knowledge_and_memory_routes_require_admin_auth(knowledge_api):
     """所有目录和详情都安装到同一认证路由，不因新增页面而开放原文。"""
     api, _ = knowledge_api
-    for path in ("knowledge", "knowledge-tags", "memories", "memory-tags", "memory-scopes"):
+    for path in (
+        "knowledge", "knowledge/count", "knowledge-tags",
+        "memories", "memory-tags", "memory-scopes",
+    ):
         assert (await api.get("/api/v1/" + path)).status_code == 401
         assert (await api.get("/api/v1/" + path, headers=HEADERS)).status_code == 200
+
+
+async def test_knowledge_direct_page_and_independent_filtered_count(knowledge_api):
+    """统计路由先于整数详情路由匹配，筛选规范化与旧游标保持一致。"""
+    api, _ = knowledge_api
+    for title in ("部署一", "部署二", "部署三"):
+        response = await api.post("/api/v1/knowledge", headers=HEADERS, json={
+            "title": title, "content": "正文", "tags": ["部署"],
+        })
+        assert response.status_code == 201
+    response = await api.get("/api/v1/knowledge?limit=1&page=2&tag=部署", headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json()["items"][0]["title"] == "部署二"
+    response = await api.get(
+        "/api/v1/knowledge/count?query=%20部署%20&tag=%20部署%20", headers=HEADERS,
+    )
+    assert response.status_code == 200 and response.json() == {"total": 3}
+    cursor = (await api.get("/api/v1/knowledge?limit=1", headers=HEADERS)).json()["next_cursor"]
+    for params in ({"page": 0}, {"page": 1, "cursor": cursor}):
+        response = await api.get("/api/v1/knowledge", headers=HEADERS, params=params)
+        assert response.status_code == 422
 
 
 async def test_knowledge_stays_read_only_and_memory_patch_requires_revision(knowledge_api):

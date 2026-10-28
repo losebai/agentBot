@@ -2,17 +2,18 @@ import { Alert, Button, Empty, Spin, Switch, Tag } from 'antd';
 import { ReloadOutlined, SaveOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
-import { NapCatPlugin } from '../components/NapCatPlugin';
-import { BilibiliPlugin } from '../components/BilibiliPlugin';
-import { isPluginRunning } from '../plugin-runtime';
+import { hasPluginConfiguration, isPluginRunning } from '../plugin-runtime';
 import type { PluginInfo, SettingsSnapshot } from '../types';
 
 const statusLabels: Record<PluginInfo['status'], string> = {
   disabled: '未启用', prepared: '已准备', running: '运行中', stopped: '已停止', failed: '启动失败',
 };
 
-/** 插件选择始终可编辑；只有已启动插件挂载专属设置，避免提前读取插件服务。 */
-export function Plugins({ token }: { token: string }) {
+/** 目录与启停列表共享草稿；内置代码已随程序安装，启用选择不冒充安装状态。 */
+export function Plugins({ token, view = 'installed', onConfigure, onInstalled }: {
+  token: string; view?: 'center' | 'installed';
+  onConfigure?: (id: string) => void; onInstalled?: () => void;
+}) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [snapshot, setSnapshot] = useState<SettingsSnapshot | null>(null);
@@ -70,19 +71,28 @@ export function Plugins({ token }: { token: string }) {
   }
 
   return <div className="page-content">
-    <div className="page-heading"><div><p className="eyebrow">PLUGINS</p><h1>插件管理</h1>
-      <p>选择启动时加载的内置插件，保存后手动重启后端生效。</p></div>
+    <div className="page-heading"><div><p className="eyebrow">PLUGINS</p><h1>{view === 'center' ? '插件中心' : '已安装插件'}</h1>
+      <p>{view === 'center' ? '查看随程序安装的内置插件及其能力，在已安装插件中管理启停。'
+        : '管理已安装插件的启用状态，保存后手动重启后端生效。'}</p></div>
       <div className="heading-actions">
         <Button icon={<ReloadOutlined />} disabled={saving} loading={loading} onClick={() => void load()}>
           {changed ? '放弃修改并重新加载' : '重新加载'}</Button>
-        <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={loading || !changed}
-          onClick={() => void save()}>保存</Button>
+        {view === 'installed' && <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={loading || !changed}
+          onClick={() => void save()}>保存</Button>}
       </div></div>
     {error && <Alert message={error} type="error" showIcon className="notice" />}
     {saved && <Alert message="插件选择已保存；当前进程保持原状态，请手动重启后端。" type="success" showIcon className="notice" />}
     {pendingRestart && <Alert message="重启后生效" description="使用已有的“服务 → 重启后端”，或手动重启服务。" type="warning" showIcon className="notice" />}
-    {loading ? <div className="loading"><Spin /></div> : <div className="settings-card">
-      {!plugins.length && <Empty description="没有内置插件" />}
+    {loading ? <div className="loading"><Spin /></div> : view === 'center' ? <div className="plugin-catalog">
+      {!plugins.length && <Empty description="没有可用插件" />}
+      {plugins.map(plugin => <article className="plugin-catalog-card" key={plugin.id}>
+        <div className="plugin-card-heading"><h2>{plugin.name}</h2><Tag color="green">已安装</Tag></div>
+        <p>{plugin.description}</p>
+        <div className="plugin-card-meta"><Tag>内置插件</Tag><code>{plugin.id} · {plugin.version}</code></div>
+        <Button aria-label={`管理 ${plugin.name}`} onClick={onInstalled}>管理已安装插件</Button>
+      </article>)}
+    </div> : <div className="settings-card">
+      {!plugins.length && <Empty description="没有已安装插件" />}
       {plugins.map(plugin => <div key={plugin.id}><div className="setting-row">
         <div className="setting-description"><label htmlFor={`plugin-${plugin.id}`}>{plugin.name}</label>
           <Tag>{statusLabels[plugin.status]}</Tag><code>{plugin.id} · {plugin.version}</code>
@@ -93,9 +103,9 @@ export function Plugins({ token }: { token: string }) {
             setSelected(previous => enabled ? [...previous, plugin.id] : previous.filter(id => id !== plugin.id));
           }} />
           <small>当前进程：{plugin.enabled ? '已启用' : '未启用'}；已保存：{plugin.saved_enabled ? '启用' : '停用'}</small>
+          {onConfigure && isPluginRunning(plugin) && hasPluginConfiguration(plugin.id)
+            && <Button aria-label={`配置 ${plugin.name}`} onClick={() => onConfigure(plugin.id)}>插件配置</Button>}
         </div></div>
-        {isPluginRunning(plugin) && plugin.id === 'qqbot' && <NapCatPlugin api={api} />}
-        {isPluginRunning(plugin) && plugin.id === 'bilibili' && <BilibiliPlugin api={api} enabled />}
       </div>)}
     </div>}
   </div>;

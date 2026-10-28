@@ -28,6 +28,13 @@ class StatusArguments(Arguments):
     """检测工具没有可由模型指定的账号参数。"""
 
 
+class MyVideosArguments(Arguments):
+    """分页读取当前登录账号的已发布投稿，不能指定其他账号或私有稿件状态。"""
+
+    page: int = Field(default=1, ge=1, le=10000, description='页码，从 1 开始')
+    page_size: int = Field(default=10, ge=1, le=20, description='每页最多 20 个视频')
+
+
 class VideoArguments(Arguments):
     """仅接受 BV 或 AV 标识，不接受任意网络地址。"""
 
@@ -80,6 +87,7 @@ class PublishArguments(Arguments):
 
 TOOL_MODELS = {
     'bilibili_login_status': StatusArguments,
+    'bilibili_get_my_videos': MyVideosArguments,
     'bilibili_get_comments': CommentsArguments,
     'bilibili_reply_comment': ReplyArguments,
     'bilibili_publish_video': PublishArguments,

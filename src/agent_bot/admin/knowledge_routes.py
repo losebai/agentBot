@@ -12,6 +12,7 @@ from agent_bot.integrations.tagged_memory_store import (
     TaggedMemoryStoreError,
 )
 from agent_bot.knowledge.contracts import (
+    KnowledgeCount,
     KnowledgeCreate,
     KnowledgeView,
     MemoryCreate,
@@ -105,11 +106,20 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
         cursor: str | None = Query(None, max_length=4096),
         query: str = Query("", max_length=200),
         tag: str = Query("", max_length=64),
+        page: int | None = Query(None, ge=1),
     ):
-        """筛选先于分页，规范化标签后再绑定游标。"""
+        """筛选先于分页，旧游标与直接页码互斥且保持相同标签规范。"""
         return await knowledge(
-            "list", limit=limit, cursor=cursor, query=query.strip(), tag=normalized_tag(tag)
+            "list", limit=limit, cursor=cursor, query=query.strip(), tag=normalized_tag(tag),
+            page=page,
         )
+
+    @router.get("/knowledge/count", response_model=KnowledgeCount)
+    async def count_knowledge(
+        query: str = Query("", max_length=200), tag: str = Query("", max_length=64),
+    ):
+        """独立统计与列表并发，统计慢时仍可先展示知识正文摘要。"""
+        return await knowledge("count", query=query.strip(), tag=normalized_tag(tag))
 
     @router.post("/knowledge", response_model=KnowledgeView, status_code=201)
     async def create_knowledge(body: KnowledgeCreate):

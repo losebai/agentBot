@@ -73,6 +73,28 @@ async def test_search_literal_keywords_and_truncation(knowledge_store):
     assert await knowledge_store.search(KnowledgeSearchArguments(query="不存在")) == ()
 
 
+async def test_numbered_pages_and_count_share_filters_without_counting_deleted(knowledge_store):
+    """直接跳页和独立统计共用字面量筛选，旧游标仍可继续读取。"""
+    for title, tags in (("部署 %_! 一", ["部署"]), ("无关", ["部署"]),
+                        ("部署 %_! 二", ["部署", "启动"]), ("部署 %_! 三", ["其他"])):
+        await knowledge_store.create(KnowledgeCreate(title=title, content="正文", tags=tags))
+    await knowledge_store.delete(1)
+    assert (await knowledge_store.count(query="%_!", tag="部署")).total == 1
+    assert (await knowledge_store.count()).total == 3
+    first = await knowledge_store.list(limit=1, tag="部署", page=1)
+    second = await knowledge_store.list(limit=1, tag="部署", page=2)
+    assert [item.id for item in first.items] == [3]
+    assert [item.id for item in second.items] == [2]
+    assert second.next_cursor is None
+    assert (await knowledge_store.list(limit=1, tag="部署", cursor=first.next_cursor)) == second
+    assert not (await knowledge_store.list(limit=1, page=99)).items
+    for page in (0, -1, True, 1.5):
+        with pytest.raises(KnowledgeError, match="KNOWLEDGE_INVALID_PAGE"):
+            await knowledge_store.list(page=page)
+    with pytest.raises(KnowledgeError, match="KNOWLEDGE_INVALID_PAGE"):
+        await knowledge_store.list(page=1, cursor=first.next_cursor)
+
+
 def test_incremental_schema_matches_initialization_and_preserves_data(knowledge_database, tmp_path):
     """增量只补两张表，旧记忆不会被删除，新旧知识结构一致。"""
     root = Path(__file__).resolve().parents[2]

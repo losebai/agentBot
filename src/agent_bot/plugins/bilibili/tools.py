@@ -25,6 +25,9 @@ if TYPE_CHECKING:
 
 DESCRIPTIONS = {
     'bilibili_login_status': '实际检测 B 站当前账号登录状态；不返回 Cookie。',
+    'bilibili_get_my_videos': '查看我的B站视频列表、我的投稿：分页读取当前登录账号已发布的视频，'
+                              '返回 BV/AV 标识、标题、发布时间和状态；不是收藏或浏览历史。'
+                              '可先列出视频，再调用 bilibili_get_comments 读取所选视频评论。',
     'bilibili_get_comments': '按视频 BV/AV 号读取一页评论；root 用于读取楼中楼。'
                               '没有后台监听；评论过长时可减小 page_size。',
     'bilibili_reply_comment': '以当前 B 站账号回复指定视频评论；root 是根楼层，parent 是目标评论。'
@@ -96,6 +99,8 @@ class BilibiliToolSession:
             raise AgentError('BILIBILI_DISABLED', status_code=503)
         if call.name == 'bilibili_login_status':
             value = await service.status()
+        elif call.name == 'bilibili_get_my_videos':
+            value = await service.my_videos(args)
         elif call.name == 'bilibili_get_comments':
             value = await service.comments(args)
         else:

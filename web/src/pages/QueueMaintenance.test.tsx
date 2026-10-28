@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { Settings } from './Settings';
 import { QueueMaintenance } from './QueueMaintenance';
+import { useRunningPluginFixture } from '../test-plugins';
+
+useRunningPluginFixture();
 
 const settings = {
   database_revision: 1, applied_revision: 1, startup_revision: null, restart_required_fields: [],

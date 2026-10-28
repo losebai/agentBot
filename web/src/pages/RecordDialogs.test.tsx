@@ -20,6 +20,7 @@ it.each([
   let resolve!: (response: Response) => void;
   let signal: AbortSignal | undefined;
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+    if (String(url).includes('/count?')) return Response.json({ total: 1 });
     if (String(url).includes('?')) return Response.json({ items: [record], next_cursor: null });
     signal = init.signal;
     return new Promise<Response>(done => { resolve = done; });
@@ -40,8 +41,8 @@ it.each([
   ['调用详情 #1', CallRecords], ['媒体执行详情', MediaRuns],
 ] as const)('%s 的读取错误显示在弹窗内，关闭后可重新查看', async (title, Page) => {
   let failed = true;
-  vi.stubGlobal('fetch', vi.fn(async url => String(url).includes('?')
-    ? Response.json({ items: [record], next_cursor: null })
+  vi.stubGlobal('fetch', vi.fn(async url => String(url).includes('/count?')
+    ? Response.json({ total: 1 }) : String(url).includes('?') ? Response.json({ items: [record], next_cursor: null })
     : failed ? Response.json({ message: '记录读取失败' }, { status: 503 }) : Response.json(record)));
   render(<Page token="offline" />);
   fireEvent.click(await screen.findByRole('button', { name: '查看详情' }));
@@ -57,6 +58,7 @@ it.each([
 
 it('调用详情中的执行步骤打开独立弹窗，关闭后保留调用正文', async () => {
   vi.stubGlobal('fetch', vi.fn(async url => {
+    if (String(url).includes('/count?')) return Response.json({ total: 1 });
     if (String(url).includes('/steps')) return Response.json({ items: [], next_cursor: null });
     return Response.json(String(url).includes('?') ? { items: [record], next_cursor: null } : record);
   }));
@@ -75,8 +77,8 @@ it('调用详情中的执行步骤打开独立弹窗，关闭后保留调用正�
 });
 
 it('调用详情直接显示工具入参和返回值，无需重新执行或打开另一个弹窗', async () => {
-  vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).includes('?')
-    ? { items: [record], next_cursor: null }
+  vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).includes('/count?')
+    ? { total: 1 } : String(url).includes('?') ? { items: [record], next_cursor: null }
     : { ...record, tool_steps: [
       { execution_id: record.execution_id, sequence: 2, turn: 1, kind: 'tool_start', tool: 'lookup',
         call_id: 'weather-1', status: 'started', duration_ms: 0, summary: '', arguments: { city: '上海' }, result: null },

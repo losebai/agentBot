@@ -22,6 +22,22 @@ class ChatServiceError(RuntimeError):
     """Represent a fake chat-service failure for composer tests."""
 
 
+@pytest.mark.parametrize("context", [None, {"preserve_format": True}, {"file_reply": True}])
+def test_generated_reply_removes_internal_at_markers_without_touching_plain_ids(context) -> None:
+    """所有模型文字出口清除历史内部 @ 标记，不删除正文中的普通 QQ 号。"""
+    reply = GeneratedReply.model_validate(
+        {"text": "[AT 3616076808] 说得对，量卡而行。QQ 3616076808", "requestId": "auto-at"},
+        context=context,
+    )
+    assert reply.text == "说得对，量卡而行。QQ 3616076808"
+
+
+def test_generated_reply_rejects_internal_at_marker_without_visible_body() -> None:
+    """模型只输出内部标记时不能投递空消息。"""
+    with pytest.raises(ValidationError):
+        GeneratedReply(text="[AT 3616076808]", requestId="auto-at-only")
+
+
 @dataclass(frozen=True)
 class ReplyCall:
     """Capture one fake reply-generation call without exposing a generic mapping."""
@@ -117,6 +133,23 @@ async def test_composer_returns_generated_reply_from_llm() -> None:
     )
     assert chat.calls[0].instruction.startswith("业务结论已经确定")
     assert "/画图 <提示词>" in chat.calls[0].instruction
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("result", "expected"), [
+    ('["给你，画好啦\uff5e"]', "给你，画好啦\uff5e"),
+    ('["给你，", "画好啦\uff5e"]', "给你，画好啦\uff5e"),
+    ('"给你，画好啦\uff5e"', "给你，画好啦\uff5e"),
+    ('[]', None),
+    ('["  "]', None),
+])
+async def test_notification_composer_normalizes_json_model_text(result, expected) -> None:
+    """通知生成也恢复实际正文，避免独立于聊天队列的路径发送 JSON 包装。"""
+    composer = LlmReplyComposer(
+        lambda: FakeReplyChatService(result=result), timeout_seconds_provider=lambda: 300,
+    )
+    reply = await composer.compose(valid_usage_intent())
+    assert (reply.text if reply is not None else None) == expected
 
 
 @pytest.mark.asyncio

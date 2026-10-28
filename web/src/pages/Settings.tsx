@@ -102,8 +102,11 @@ function patchValue(field: SettingField, value: DraftValue): JsonValue {
   return String(value);
 }
 
-/** 按用途管理机器人配置，跨分类保留草稿并共用版本校验与保存操作。 */
-export function Settings({ token, onPlugins }: { token: string; onPlugins?: () => void }) {
+/** 按页面指定的分类编辑配置，跨分类保留草稿，提交时排除所属范围以外的字段。 */
+export function Settings({ token, onPlugins, categoryKeys, embedded = false, title = '机器人配置', description }: {
+  token: string; onPlugins?: () => void; categoryKeys?: readonly Category[];
+  embedded?: boolean; title?: string; description?: string;
+}) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [snapshot, setSnapshot] = useState<SettingsSnapshot>();
   const [draft, setDraft] = useState<Record<string, DraftValue>>({});
@@ -112,13 +115,15 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState('');
-  const [category, setCategory] = useState<Category>('basic');
+  const [category, setCategory] = useState<Category>(categoryKeys?.[0] || 'basic');
   const [pluginsRevision, setPluginsRevision] = useState(0);
   const { runningPlugins, pluginsError } = useRunningPlugins(token, pluginsRevision);
   const qqRunning = runningPlugins.has('qqbot');
-  // QQ 的接入、自动回复和游戏查询均属于插件；共享模型和工作流仍由公共核心提供。
-  const visibleCategories = categories.filter(item => qqRunning || !['qq', 'reply', 'games'].includes(item.key));
-  const currentCategory = visibleCategories.some(item => item.key === category) ? category : 'basic';
+  // 仅 QQ 接入与游戏查询依赖插件；通用自动回复设置不受 QQ 运行状态限制。
+  const visibleCategories = categories.filter(item => (!categoryKeys || categoryKeys.includes(item.key))
+    && (qqRunning || !['qq', 'games'].includes(item.key)));
+  const currentCategory = visibleCategories.some(item => item.key === category) ? category : visibleCategories[0]?.key;
+  const Heading = embedded ? 'h2' : 'h1';
   const [comfyTab, setComfyTab] = useState('connection');
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [settingsRefreshing, setSettingsRefreshing] = useState(false);
@@ -157,7 +162,8 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
       const values: Record<string, JsonValue> = {};
       let startupChanged = false;
       for (const field of snapshot.fields) {
-        if (!hiddenSettingNames.has(field.name) && !isReadOnly(field) && Object.hasOwn(draft, field.name)) {
+        if ((!categoryKeys || categoryKeys.includes(fieldCategory(field)))
+          && !hiddenSettingNames.has(field.name) && !isReadOnly(field) && Object.hasOwn(draft, field.name)) {
           values[field.name] = patchValue(field, draft[field.name]);
           if (field.scope === 'static') startupChanged = true;
         }
@@ -174,10 +180,10 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
     && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase()))
     // 名称是群聊触发入口，在 QQ 分类中优先展示。
     .sort((left, right) => Number(right.name === 'nickname') - Number(left.name === 'nickname')) || [];
-  return <div className="page-content">
+  return <div className={embedded ? 'plugin-settings' : 'page-content'}>
     <div className="page-heading"><div><p className="eyebrow">CONFIGURATION</p>
-      <h1>机器人配置</h1>
-      <p>按用途调整配置，切换分类保留草稿，保存时统一提交所有修改。</p></div>
+      <Heading>{title}</Heading>
+      <p>{description || '按用途调整配置，切换分类保留草稿，保存时统一提交所有修改。'}</p></div>
       <div className="heading-actions"><Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading} disabled={saving || workflowBusy || settingsRefreshing}>
         {Object.keys(draft).length ? '放弃修改并重新加载' : '重新加载'}</Button>
         <Button type="primary" icon={<SaveOutlined aria-hidden />} loading={saving} disabled={!Object.keys(draft).length || loading || workflowBusy || settingsRefreshing} onClick={() => void save()}>保存修改</Button></div>
@@ -210,7 +216,8 @@ export function Settings({ token, onPlugins }: { token: string; onPlugins?: () =
             onSettingsChanged={workflowSettingsChanged} onBusyChange={setWorkflowBusy} />
           : <>
     {currentCategory === 'basic' && onPlugins && <Button type="link" onClick={onPlugins}>管理内置插件</Button>}
-    {currentCategory === 'basic' && qqRunning && <QueueMaintenance token={token} />}
+    {qqRunning && (categoryKeys ? categoryKeys.includes('qq') && currentCategory === 'qq'
+      : currentCategory === 'basic') && <QueueMaintenance token={token} />}
     {fields.some(field => field.scope === 'static') && <Alert message="启动配置保存后需手动“服务→重启后端”生效；环境变量覆盖或缺少启动文件的字段只读。" type="info" showIcon className="notice" />}
     {currentCategory === 'reply' && fields.some(field => field.name === 'chat_multi_reply_enabled') && <Alert
       message="自动多条回复开启后，由模型按语义决定消息边界，短回答可只发送一条；最多条数、发送间隔和分条提示词可在下方调整。"

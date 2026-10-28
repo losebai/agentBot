@@ -60,8 +60,8 @@ class ApplicationRuntimeProvider:
         return self.runtime.workflow_store
 
     def lease(self):
-        """管理请求和插件消息共用热刷新门闩。"""
-        return self.runtime.lease()
+        """管理读取共享快照保护，但刷新期间明确拒绝，不能等在途模型结束才响应。"""
+        return self.runtime.lease(wait=False)
 
     @property
     def knowledge_store(self):

@@ -173,9 +173,9 @@ class ApplicationRuntime:
         """已处理版本与需重启字段分别报告。"""
         return self._reloader.revision
 
-    def lease(self) -> AbstractAsyncContextManager[None]:
-        """管理请求和插件消息共享同一门闩。"""
-        return self.gate.lease()
+    def lease(self, *, wait: bool = True) -> AbstractAsyncContextManager[None]:
+        """共享同一快照保护；管理读取可拒绝排队，避免刷新等待长推理时页面卡住。"""
+        return self.gate.lease(wait=wait)
 
     def bind_chat_bridge(self, bridge: ChatToolBridge) -> None:
         """平台工具通过显式能力注入，构造新快照时继续使用同一桥。"""

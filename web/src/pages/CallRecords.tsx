@@ -1,6 +1,6 @@
 import { ChoiceSelect } from '../components/ChoiceSelect';
-import { Alert, Button, Tag } from 'antd';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Button, Spin, Tag } from 'antd';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentApi } from '../agent-api';
 import { errorMessage } from '../api';
 import { CallRecordsApi } from '../call-records-api';
@@ -10,6 +10,8 @@ import { AgentRunDetail } from '../components/AgentRunDetail';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { DetailDialog } from '../components/DetailDialog';
 import { AgentToolSteps } from '../components/AgentToolSteps';
+import { RecordPagination } from '../components/RecordPagination';
+import { RecordJson } from '../components/RecordJson';
 
 const types = {ordinary: '普通调用', agent: 'Agent 调用', auto_speak: '自动发言决策', unknown: '历史未知类型'};
 const systemTypes = {auto_speak: '自动发言决策', command: '指令调用'};
@@ -21,7 +23,7 @@ function tokenCount(value: number | null | undefined): string {
 }
 
 /** 列表与详情共用用量展示；多轮 Agent 只对上报缓存的输入计算命中率。 */
-function CallTokenUsage({ usage, compact = false }: { usage?: TokenUsage; compact?: boolean }) {
+const CallTokenUsage = memo(function CallTokenUsage({ usage, compact = false }: { usage?: TokenUsage; compact?: boolean }) {
   const denominator = usage?.cache_prompt_tokens ?? usage?.prompt_tokens;
   const hitRate = usage?.cached_tokens != null && denominator != null && denominator > 0
     ? `${(usage.cached_tokens / denominator * 100).toFixed(1)}%` : '—';
@@ -39,7 +41,7 @@ function CallTokenUsage({ usage, compact = false }: { usage?: TokenUsage; compac
         && <> 缓存统计覆盖的输入：{tokenCount(denominator)} Token。</>}
     </p>}
   </div>;
-}
+});
 
 /** 普通和系统调用复用列表、用量与详情，分组筛选在后端分页前完成。 */
 export function CallRecords({token, category = 'conversation'}: {token: string; category?: CallCategory}) {
@@ -49,23 +51,49 @@ export function CallRecords({token, category = 'conversation'}: {token: string; 
   const agent = useMemo(() => new AgentApi(token), [token]);
   const [draft, setDraft] = useState(initial), [filters, setFilters] = useState(initial);
   const [page, setPage] = useState<Page<CallSummary>>({items: [], next_cursor: null});
-  const [cursor, setCursor] = useState<string>(), [previous, setPrevious] = useState<(string | undefined)[]>([]);
+  const [pageNumber, setPageNumber] = useState(1), [pageSize, setPageSize] = useState(20);
+  const [total, setTotal] = useState<number | null>(null), [countError, setCountError] = useState('');
   const [detail, setDetail] = useState<CallDetail>(), [steps, setSteps] = useState<string>();
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
   const detailRequest = useRef<AbortController>();
   const [selected, setSelected] = useState<number>();
   const [detailLoading, setDetailLoading] = useState(false), [detailError, setDetailError] = useState('');
+  // 缓存只属于当前认证、筛选、页大小和刷新代际，翻回已读页无需再次查询。
+  const pageCache = useMemo(() => new Map<number, Page<CallSummary>>(),
+    [api, filters, category, pageSize, refresh]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setTotal(null); setCountError('');
+    api.count({ ...filters, category }, controller.signal).then(result => {
+      if (!controller.signal.aborted) {
+        setTotal(result.total);
+      }
+    }).catch(error => { if (!controller.signal.aborted) setCountError(errorMessage(error)); });
+    return () => controller.abort();
+  }, [api, filters, category, refresh]);
+
+  useEffect(() => {
+    if (total !== null) setPageNumber(page => Math.min(page, Math.max(1, Math.ceil(total / pageSize))));
+  }, [total, pageSize]);
 
   useEffect(() => {
     const controller = new AbortController();
     detailRequest.current?.abort(); setSelected(undefined); setDetail(undefined); setSteps(undefined); setBusy(true);
-    // 切换筛选时丢弃迟到的列表响应，避免页码与内容不一致。
-    api.list({...filters, category}, cursor, controller.signal).then(result => {
-      if (!controller.signal.aborted) { setPage(result); setError(''); }
-    }).catch(e => { if (!controller.signal.aborted) setError(errorMessage(e)); })
-      .finally(() => { if (!controller.signal.aborted) setBusy(false); });
+    const cached = pageCache.get(pageNumber);
+    if (cached) { setPage(cached); setError(''); setBusy(false); }
+    else {
+      setPage({ items: [], next_cursor: null });
+      // 切换筛选时丢弃迟到的列表响应，避免页码与内容不一致。
+      api.list({...filters, category}, pageNumber, pageSize, controller.signal).then(result => {
+        if (!controller.signal.aborted) {
+          pageCache.set(pageNumber, result); setPage(result); setError('');
+        }
+      }).catch(e => { if (!controller.signal.aborted) setError(errorMessage(e)); })
+        .finally(() => { if (!controller.signal.aborted) setBusy(false); });
+    }
     return () => { controller.abort(); detailRequest.current?.abort(); };
-  }, [api, filters, cursor, refresh, category]);
+  }, [api, filters, pageNumber, pageSize, refresh, category, pageCache]);
 
   /** 关闭时立即取消请求，迟到的响应不能重新打开详情或覆盖列表。 */
   function close() {
@@ -83,19 +111,23 @@ export function CallRecords({token, category = 'conversation'}: {token: string; 
     } catch (e) { if (!controller.signal.aborted) setDetailError(errorMessage(e)); }
     finally { if (!controller.signal.aborted) setDetailLoading(false); }
   }
-  return <div className="page-content">
-    <div className="page-heading"><div><p className="eyebrow">{system ? 'SYSTEM CALLS' : 'CALL HISTORY'}</p><h1>{system ? '系统调用' : '调用记录'}</h1><p>{system ? '查看自动发言决策和机器人显式指令触发的调用。' : '查看普通对话、Agent 对话和迁入的历史记录。'}</p></div><Button loading={busy} onClick={() => setRefresh(value => value + 1)}>刷新记录</Button></div>
+  return <div className="page-content call-records">
+    <div className="page-heading"><div><p className="eyebrow">{system ? 'SYSTEM CALLS' : 'CALL HISTORY'}</p><h1>{system ? '系统调用' : '调用记录'}</h1><p>{system ? '查看自动发言决策和机器人显式指令触发的调用。' : '查看普通对话、Agent 对话和迁入的历史记录。'}</p></div><Button loading={busy} onClick={() => { setPageNumber(1); setRefresh(value => value + 1); }}>刷新记录</Button></div>
     {error && <Alert className="notice" type="error" message={error} />}
-    <form className="record-filter" onSubmit={e => { e.preventDefault(); setPrevious([]); setCursor(undefined); setFilters({...draft}); }}>
+    {countError && <Alert className="notice" type="warning" message={`总条数统计失败：${countError}`} />}
+    <form className="record-filter" onSubmit={e => { e.preventDefault(); setPageNumber(1); setFilters({...draft}); }}>
       <label>类型 <ChoiceSelect aria-label="类型" value={system ? draft.system_kind : draft.type} onChange={e => setDraft({...draft, [system ? 'system_kind' : 'type']: e})}><option value="">全部类型</option>{Object.entries(system ? systemTypes : types).filter(([key]) => system || key !== 'auto_speak').map(([key, name]) => <option key={key} value={key}>{name}</option>)}</ChoiceSelect></label>
       <label>会话 ID <input value={draft.session_id} maxLength={255} onChange={e => setDraft({...draft, session_id: e.target.value})} /></label>
       <label>状态 <ChoiceSelect aria-label="状态" value={draft.status} onChange={e => setDraft({...draft, status: e})}><option value="">全部状态</option>{Object.entries(statuses).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</ChoiceSelect></label>
       <Button htmlType="submit" disabled={busy}>筛选</Button>
     </form>
-    <div className="panel table-wrap"><table className="data-table"><thead><tr><th>ID / 时间</th><th>类型 / 会话</th><th>模型</th><th>Token 用量</th><th>状态 / 耗时</th><th>操作</th></tr></thead><tbody>
+    {busy && <div role="status" aria-label="正在加载记录"><Spin size="small" /> 正在加载记录…</div>}
+    <div className="panel table-wrap" aria-busy={busy}><table className="data-table"><thead><tr><th>ID / 时间</th><th>类型 / 会话</th><th>模型</th><th>Token 用量</th><th>状态 / 耗时</th><th>操作</th></tr></thead><tbody>
       {page.items.map(item => <tr key={item.id}><td>#{item.id}<small>{item.create_time?.replace('T', ' ') ?? '时间未知'}</small></td><td><Tag>{item.system_kind ? systemTypes[item.system_kind] : types[item.type]}</Tag><small>{item.session_Id ?? '—'}</small></td><td>{item.model ?? '—'}</td><td><CallTokenUsage usage={item.usage} compact /></td><td>{statuses[item.status] ?? item.status}<small>{item.duration === null ? '耗时未知' : `${item.duration} ms`}</small></td><td><Button disabled={busy} onClick={() => void open(item.id)}>查看详情</Button></td></tr>)}
-    </tbody></table>{!page.items.length && <p className="empty-list">暂无符合条件的调用记录。</p>}</div>
-    <div className="catalog-pagination"><Button disabled={busy || !previous.length} onClick={() => {setCursor(previous.at(-1)); setPrevious(previous.slice(0, -1));}}>上一页</Button><Button disabled={busy || !page.next_cursor} onClick={() => {setPrevious([...previous, cursor]); setCursor(page.next_cursor!);}}>下一页</Button></div>
+    </tbody></table>{!busy && !page.items.length && <p className="empty-list">暂无符合条件的调用记录。</p>}</div>
+    <RecordPagination current={pageNumber} pageSize={pageSize} total={total} loading={busy}
+      countFailed={Boolean(countError)}
+      hasNext={Boolean(page.next_cursor)} onChange={(number, size) => { setPageSize(size); setPageNumber(number); }} />
     {selected !== undefined && <DetailDialog title={`调用详情 #${selected}`} loading={detailLoading} error={detailError} onClose={close}>
       {detail && <>
       <p>类型：{detail.system_kind ? systemTypes[detail.system_kind] : types[detail.type]} · 状态：{statuses[detail.status] ?? detail.status}</p>
@@ -103,8 +135,8 @@ export function CallRecords({token, category = 'conversation'}: {token: string; 
       <p>来源：{detail.source} · 原始 ID：{detail.source_id}</p>
       <h3>Token 用量</h3><CallTokenUsage usage={detail.usage} />
       <h3>用户输入</h3><pre>{detail.content ?? '未记录'}</pre><h3>模型回复</h3><MarkdownRenderer content={detail.replay_context || '没有回复正文。'} />
-      <h3>请求上下文</h3><pre>{detail.request_context === null ? '历史记录未保存请求上下文。' : JSON.stringify(detail.request_context, null, 2)}</pre>
-      <h3>响应数据</h3><pre>{JSON.stringify(detail.data, null, 2) ?? '未记录'}</pre>
+      <RecordJson key={`context-${detail.id}`} title="请求上下文" value={detail.request_context} empty="历史记录未保存请求上下文。" />
+      <RecordJson key={`data-${detail.id}`} title="响应数据" value={detail.data} empty="未记录" />
       {detail.type === 'agent' && <><h3>工具调用</h3><AgentToolSteps steps={detail.tool_steps ?? []} /></>}
       {detail.type === 'agent' && detail.execution_id && <Button onClick={() => setSteps(detail.execution_id!)}>查看执行步骤与附件</Button>}
       </>}

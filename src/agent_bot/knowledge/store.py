@@ -9,6 +9,7 @@ from agent_bot.ai.database import AiDatabase, page_limit
 from agent_bot.ai.database import query as db_query
 from agent_bot.ai.errors import AiError
 from agent_bot.knowledge.contracts import (
+    KnowledgeCount,
     KnowledgeCreate,
     KnowledgeMatch,
     KnowledgeSearchArguments,
@@ -19,6 +20,20 @@ from agent_bot.knowledge.errors import KnowledgeError
 from agent_bot.knowledge.pagination import decode_cursor, encode_cursor, literal_like
 
 T = TypeVar("T")
+
+
+def _knowledge_conditions(query: str, tag: str) -> tuple[list[str], list[Any]]:
+    """列表与独立统计共用筛选，避免总数与页内容采用不同的删除或标签边界。"""
+    conditions, args = ["k.is_deleted=0"], []
+    if query:
+        conditions.append("(k.title LIKE %s ESCAPE '!' OR k.content LIKE %s ESCAPE '!')")
+        args.extend((literal_like(query), literal_like(query)))
+    if tag:
+        conditions.append(
+            "EXISTS (SELECT 1 FROM chat_knowledge_tag t WHERE t.knowledge_id=k.id AND t.tag=%s)"
+        )
+        args.append(tag)
+    return conditions, args
 
 
 class KnowledgeStore(AiDatabase):
@@ -103,24 +118,22 @@ class KnowledgeStore(AiDatabase):
         return await self.run(read)
 
     async def list(
-        self, *, limit: int = 20, cursor: str | None = None, query: str = "", tag: str = ""
+        self, *, limit: int = 20, cursor: str | None = None, query: str = "", tag: str = "",
+        page: int | None = None,
     ) -> Page[KnowledgeView]:
-        """绑定筛选后按 ID 分页，删除或并发新增不改变已经翻过的边界。"""
+        """兼容筛选绑定的旧游标与直接页码；分页请求不重复统计总数。"""
         page_limit(limit)
+        if page is not None and (
+            type(page) is not int or page < 1 or cursor is not None
+        ):
+            raise KnowledgeError("KNOWLEDGE_INVALID_PAGE", status_code=422)
         filters = {"query": query, "tag": tag}
         last_id = decode_cursor(cursor, filters)
-        conditions, args = ["k.is_deleted=0"], []
-        if query:
-            conditions.append("(k.title LIKE %s ESCAPE '!' OR k.content LIKE %s ESCAPE '!')")
-            args.extend((literal_like(query), literal_like(query)))
-        if tag:
-            conditions.append(
-                "EXISTS (SELECT 1 FROM chat_knowledge_tag t WHERE t.knowledge_id=k.id AND t.tag=%s)"
-            )
-            args.append(tag)
+        conditions, args = _knowledge_conditions(query, tag)
         if last_id is not None:
             conditions.append("k.id<%s")
             args.append(last_id)
+        paging = (limit + 1, (page - 1) * limit) if page is not None else (limit + 1,)
 
         def read(connection: Any) -> Page[KnowledgeView]:
             """多读一条判断下一页，标签不改变正文分页结果。"""
@@ -128,8 +141,9 @@ class KnowledgeStore(AiDatabase):
                 connection,
                 "SELECT k.* FROM chat_knowledge k WHERE "
                 + " AND ".join(conditions)
-                + " ORDER BY k.id DESC LIMIT %s",
-                (*args, limit + 1),
+                + " ORDER BY k.id DESC LIMIT %s"
+                + (" OFFSET %s" if page is not None else ""),
+                (*args, *paging),
             )
             items = self._views(connection, rows[:limit])
             return Page(
@@ -138,6 +152,15 @@ class KnowledgeStore(AiDatabase):
             )
 
         return await self.run(read)
+
+    async def count(self, *, query: str = "", tag: str = "") -> KnowledgeCount:
+        """按当前筛选独立计数，不加载正文或全量标签目录。"""
+        conditions, args = _knowledge_conditions(query, tag)
+        row = await self.run(lambda connection: db_query(
+            connection, "SELECT COUNT(*) AS total FROM chat_knowledge k WHERE "
+            + " AND ".join(conditions), tuple(args), one=True,
+        ))
+        return KnowledgeCount.model_validate(row)
 
     async def tags(self) -> tuple[TagCount, ...]:
         """目录仅统计未删除知识，避免展示已不再可用的主题。"""

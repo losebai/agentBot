@@ -513,11 +513,11 @@ def _log_pending_restart_fields(
 
 
 @asynccontextmanager
-async def _runtime_lease():
-    """登记一次运行时使用，避免与热更新交叉。"""
+async def _runtime_lease(*, wait: bool = True):
+    """业务等待快照切换，管理读取可快速拒绝；两者都不能与资源关闭交叉。"""
 
     await wait_channel_ready()
-    async with _runtime_gate.lease():
+    async with _runtime_gate.lease(wait=wait):
         yield
 
 
@@ -754,9 +754,9 @@ def get_settings_store() -> SettingsStore:
     return _settings_store
 
 
-def acquire_runtime():
-    """供管理对话测试与机器人共享热更新租约。"""
-    return _runtime_lease()
+def acquire_runtime(*, wait: bool = True):
+    """返回受保护的当前快照租约，管理请求可在热更新时快速失败。"""
+    return _runtime_lease(wait=wait)
 
 
 async def check_management_readiness() -> bool:

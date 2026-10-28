@@ -29,6 +29,7 @@ async function findVisibleDialog(title: string) {
 
 /** 使用离线响应验证登录流程，避免连接真实后端或机器人。 */
 function managementResponse(url: string) {
+  if (url.endsWith('/plugins')) return Response.json([]);
   return url.endsWith('/bots')
     ? Response.json([{ id: '123456', adapter: 'OneBot V11' }])
     : Response.json({ service: 'agentBot', ready: true, bot_count: 1,

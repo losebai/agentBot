@@ -57,6 +57,7 @@ from agent_bot.services.replies import (
     TaskFailedFacts,
     WorkflowStatusFacts,
 )
+from agent_bot.services.reply_text import clean_internal_reply_text
 from agent_bot.services.tool_images import capture_tool_images, current_tool_images
 from agent_bot.services.tool_operations import (
     ImageEffect,
@@ -366,7 +367,7 @@ class ConversationQueueProcessor:
                 return self._multi_reply_result(job, answer, reply_config, tools, reply_collector)
             if answer is not None:
                 # 单条 JSON 字符串与数组均先解码，再按实际正文决定长度、文件和工具发送。
-                answer = join_reply_array(answer)
+                answer = clean_internal_reply_text(join_reply_array(answer))
             # 普通聊天超过文字上限改为完整文件；自动发言继续遵循专用长度上限。
             if (
                 answer is not None and job.auto_speak_max_reply_chars is None
@@ -595,6 +596,7 @@ class ConversationQueueProcessor:
                 user=job.user, user_name=job.user_name, chat_context=job.chat_context,
             )
         config = self._config_provider()
+        answer = clean_internal_reply_text(join_reply_array(answer))
         reply = generated_reply_from_model(
             answer[:min(config.chat_max_reply_chars, 4000)], job.request_id,
         )

@@ -24,6 +24,15 @@ def test_multi_reply_decodes_only_nonempty_string_messages():
     )
 
 
+def test_multi_reply_cleans_internal_at_markers_before_building_delivery_parts() -> None:
+    """分条正文与持久化正文必须使用相同的清理结果，不能在实际发送时才改写。"""
+    from agent_bot.services.multi_reply import parse_multi_reply
+
+    assert parse_multi_reply('["[AT 3616076808] 第一条", "第二条"]', 3) == ("第一条", "第二条")
+    with pytest.raises(ChatAiProtocolError):
+        parse_multi_reply('["[AT 3616076808]"]', 3)
+
+
 @pytest.mark.parametrize(("text", "expected"), [
     ('["你好", "呀"]', "你好呀"),
     ('["第一行\\n", "第二行"]', "第一行\n第二行"),

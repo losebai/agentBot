@@ -9,6 +9,9 @@ import { Providers } from './pages/Providers';
 import { Sessions } from './pages/Sessions';
 import { AgentManagement } from './pages/AgentManagement';
 import { Plugins } from './pages/Plugins';
+import { PluginConfiguration } from './pages/PluginConfiguration';
+import { PluginMenu } from './components/PluginMenu';
+import { hasPluginConfiguration } from './plugin-runtime';
 import { Knowledge } from './pages/Knowledge';
 
 // 组件库与页面共享白粉蓝主题，统一控件尺寸、可读性和状态反馈。
@@ -33,9 +36,11 @@ const workspaceTheme = {
   },
 };
 
-const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', plugins:'插件管理', chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理', knowledge:'标签与知识库'};
+const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', plugins:'已安装插件',
+  'plugin-center':'插件中心', 'plugin-qqbot':'QQ 配置', 'plugin-bilibili':'B站配置',
+  chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理', knowledge:'标签与知识库'};
 
-/** 按服务端登录模式进入工作台；知识与记忆使用独立入口，离开时取消页面请求。 */
+/** 按服务端登录模式进入工作台；QQ 表单保留草稿，离开配置页撤销账号读取和扫码。 */
 export function App() {
   // null 表示尚未登录，空字符串表示后端明确启用了免登录。
   const [token, setToken] = useState<string | null>(null);
@@ -94,11 +99,21 @@ export function App() {
         { key: 'sessions', label: '会话记录', icon: <HistoryOutlined /> },
         { key: 'knowledge', label: '标签与知识库', icon: <TagsOutlined /> },
         { key: 'agents', label: 'Agent 管理', icon: <RobotOutlined /> },
-      ].map(item => <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
+      ].map(item => item.key === 'plugins' ? <PluginMenu key={item.key} token={token} page={page} onNavigate={navigate} />
+        : <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
         <main className="main-area"><header className="topbar"><span className="topbar-title">{titles[page]}</span><span className="workspace-label">AgentBot</span></header>
           <section hidden={page !== 'overview'}>{visited.includes('overview') && <Overview token={token} />}</section>
-          <section hidden={page !== 'settings'}>{visited.includes('settings') && <Settings token={token} onPlugins={() => navigate('plugins')} />}</section>
-          <section hidden={page !== 'plugins'}>{visited.includes('plugins') && <Plugins token={token} />}</section>
+          <section hidden={page !== 'settings'}>{visited.includes('settings') && <Settings token={token}
+            categoryKeys={['basic', 'llm', 'reply', 'comfy']} onPlugins={() => navigate('plugin-center')} />}</section>
+          <section hidden={page !== 'plugins' && page !== 'plugin-center'}>
+            {(visited.includes('plugins') || visited.includes('plugin-center')) && <Plugins token={token}
+              view={page === 'plugin-center' ? 'center' : 'installed'} onInstalled={() => navigate('plugins')}
+              onConfigure={id => { if (hasPluginConfiguration(id)) navigate(`plugin-${id}`); }} />}
+          </section>
+          {visited.includes('plugin-qqbot') && <PluginConfiguration token={token} pluginId="qqbot"
+            active={page === 'plugin-qqbot'} onInstalled={() => navigate('plugins')} />}
+          {page === 'plugin-bilibili' && <PluginConfiguration token={token} pluginId="bilibili"
+            onInstalled={() => navigate('plugins')} />}
           <section hidden={page !== 'chat'}>{page === 'chat' && <Chat token={token} />}</section>
           <section hidden={page !== 'providers'}>{visited.includes('providers') && <Providers token={token} />}</section>
           <section hidden={page !== 'sessions'}>{page === 'sessions' && <Sessions token={token} />}</section>

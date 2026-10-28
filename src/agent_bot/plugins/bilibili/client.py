@@ -7,7 +7,13 @@ import httpx
 from pydantic import SecretStr
 
 from agent_bot.agent.errors import AgentError
-from agent_bot.plugins.bilibili.contracts import Account, CommentsArguments, ReplyArguments
+from agent_bot.plugins.bilibili.contracts import (
+    Account,
+    CommentsArguments,
+    MyVideosArguments,
+    ReplyArguments,
+    VideoArguments,
+)
 from agent_bot.services.request_deadline import remaining_timeout
 
 API = 'https://api.bilibili.com'
@@ -78,11 +84,11 @@ class BilibiliClient:
             raise AgentError('BILIBILI_NETWORK_ERROR') from None
 
     async def generate_qr(self) -> dict:
-        """二维码 URL 仅由管理页绘制，不使用外部图片服务。"""
+        """仅接受官方 HTTPS 扫码地址，兼容新版 account 登录页与既有 passport 页。"""
         data = await self.request('GET', PASSPORT + '/x/passport-login/web/qrcode/generate')
         url = urlsplit(str(data.get('url', '')))
         if url.scheme != 'https' or url.hostname not in {
-            'passport.bilibili.com', 'passport.biligame.com',
+            'account.bilibili.com', 'passport.bilibili.com', 'passport.biligame.com',
         } or not isinstance(data.get('qrcode_key'), str):
             raise AgentError('BILIBILI_INVALID_RESPONSE')
         return {'url': data['url'], 'qrcode_key': data['qrcode_key']}
@@ -134,6 +140,41 @@ class BilibiliClient:
         except (KeyError, ValueError, TypeError):
             raise AgentError('BILIBILI_INVALID_RESPONSE') from None
         return {'logged_in': True, 'status': 'logged_in', 'uid': uid, 'name': name}
+
+    async def my_videos(self, account: Account, args: MyVideosArguments) -> dict:
+        """只读取当前账号已发布投稿；私有稿件与平台内部字段不进入模型结果。"""
+        data = await self.request('GET', MEMBER + '/x/web/archives', account=account,
+                                  params={'status': 'pubed', 'pn': args.page, 'ps': args.page_size})
+        try:
+            total = int(data['page']['count'])
+            page_size = int(data['page']['ps'])
+            if total < 0 or not 1 <= page_size <= args.page_size:
+                raise ValueError('invalid pagination')
+            audits = data.get('arc_audits')
+            # 平台对从未投稿的账号可能省略列表；非空总数不能静默当作空列表。
+            if audits is None and total == 0:
+                audits = []
+            if not isinstance(audits, list) or len(audits) > page_size:
+                raise ValueError('invalid archive rows')
+            videos = []
+            for item in audits:
+                archive = item['Archive']
+                aid = int(archive['aid'])
+                bvid = VideoArguments(video_id=archive['bvid']).video_id
+                title, state_description = archive['title'], archive['state_desc']
+                if (aid < 1 or not isinstance(title, str) or not 1 <= len(title) <= 80
+                        or not isinstance(state_description, str)):
+                    raise ValueError('invalid archive')
+                videos.append({
+                    'aid': aid, 'bvid': bvid, 'title': title,
+                    'state': int(archive['state']), 'state_description': state_description[:200],
+                    'published_at': int(archive['ptime']),
+                    'url': 'https://www.bilibili.com/video/' + bvid,
+                })
+            return {'uid': account.uid, 'page': args.page, 'page_size': page_size,
+                    'total': total, 'has_more': args.page * page_size < total, 'videos': videos}
+        except (KeyError, TypeError, ValueError):
+            raise AgentError('BILIBILI_INVALID_RESPONSE') from None
 
     async def aid(self, account: Account, video_id: str) -> int:
         """BV 通过公开视频信息解析，AV 不需要额外查询。"""

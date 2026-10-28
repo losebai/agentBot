@@ -8,28 +8,45 @@ function pluginResponse(saved: boolean) {
     saved_enabled: saved, enabled: true, status: 'running', restart_required: !saved }];
 }
 
-it('QQ 插件卡片提供启动与登录入口，启动后显示所属状态', async () => {
-  let started = false;
-  const status = () => ({ mode: 'managed', state: started ? 'running' : 'not_started', webui_ready: started, error_code: null });
-  const fetcher = vi.fn(async (url, options) => {
-    const path = String(url);
-    if (path.endsWith('/napcat/start')) { started = true; return Response.json(status()); }
-    if (path.endsWith('/napcat/login')) return Response.json({ accepted: true });
-    if (path.endsWith('/napcat/plugin')) return Response.json({ available: true, plugin_enabled: true, status: status() });
-    if (path.endsWith('/plugins')) return Response.json(pluginResponse(true));
-    return Response.json({ database_revision: 3, applied_revision: 3, fields: [] });
-  });
+it('已安装列表只管理启停并跳转独立配置，不提前挂载账号设置', async () => {
+  const configure = vi.fn();
+  const fetcher = vi.fn(async url => String(url).endsWith('/plugins')
+    ? Response.json(pluginResponse(true))
+    : Response.json({ database_revision: 3, applied_revision: 3, fields: [] }));
   vi.stubGlobal('fetch', fetcher);
-  render(<Plugins token="offline" />);
-  const start = await screen.findByRole('button', { name: '启动 NapCat' });
-  await waitFor(() => expect(start).toBeEnabled());
-  expect(screen.getByRole('button', { name: '打开登录页' })).toBeDisabled();
-  fireEvent.click(start);
-  const login = await screen.findByRole('button', { name: '打开登录页' });
-  await waitFor(() => expect(login).toBeEnabled());
-  fireEvent.click(login);
-  await waitFor(() => expect(fetcher.mock.calls.some(([url, options]) => String(url).endsWith('/napcat/login') && options?.method === 'POST')).toBe(true));
-  expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/napcat/start'))).toHaveLength(1);
+  render(<Plugins token="offline" onConfigure={configure} />);
+  fireEvent.click(await screen.findByRole('button', { name: '配置 QQBot' }));
+  expect(configure).toHaveBeenCalledWith('qqbot');
+  expect(screen.queryByRole('button', { name: '启动 NapCat' })).not.toBeInTheDocument();
+  expect(fetcher.mock.calls.some(([url]) => String(url).includes('/napcat/'))).toBe(false);
+});
+
+it('插件中心展示随程序安装的目录，停用不误标为未安装', async () => {
+  const installed = vi.fn();
+  vi.stubGlobal('fetch', vi.fn(async url => String(url).endsWith('/plugins')
+    ? Response.json([{ ...pluginResponse(false)[0], enabled: false, status: 'disabled' }])
+    : Response.json({ database_revision: 3, applied_revision: 3, fields: [] })));
+  render(<Plugins token="offline" view="center" onInstalled={installed} />);
+  expect(await screen.findByRole('heading', { name: '插件中心' })).toBeVisible();
+  expect(await screen.findByText('QQBot')).toBeVisible();
+  expect(screen.getByText('内置插件')).toBeVisible();
+  expect(screen.getByText('已安装')).toBeVisible();
+  expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '管理 QQBot' }));
+  expect(installed).toHaveBeenCalledOnce();
+});
+
+it('中心与已安装列表切换保留未保存的启停草稿', async () => {
+  vi.stubGlobal('fetch', vi.fn(async url => String(url).endsWith('/plugins')
+    ? Response.json(pluginResponse(true))
+    : Response.json({ database_revision: 3, applied_revision: 3, fields: [] })));
+  const view = render(<Plugins token="offline" />);
+  fireEvent.click(await screen.findByRole('switch', { name: '启用 QQBot' }));
+  view.rerender(<Plugins token="offline" view="center" />);
+  expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+  view.rerender(<Plugins token="offline" view="installed" />);
+  expect(screen.getByRole('switch', { name: '启用 QQBot' })).not.toBeChecked();
+  expect(screen.getByRole('button', { name: /保\s*存/ })).toBeEnabled();
 });
 
 it('修改开关不立即启停，保存使用数据库版本并提示重启', async () => {

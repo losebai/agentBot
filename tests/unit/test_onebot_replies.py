@@ -159,6 +159,22 @@ async def test_gateway_preserves_real_at_before_llm_text() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("native_mention", [False, True])
+async def test_gateway_never_turns_internal_at_text_into_platform_mentions(native_mention) -> None:
+    """照抄的历史标记应移除，原生 @ 只能来自程序已授权的目标。"""
+    matcher = FakeMatcher()
+    reply = GeneratedReply(text="[AT 3616076808] 说得对。", requestId="auto-at")
+    await gateway().send_matcher(
+        matcher, reply, prefix=MessageSegment.at("123456") if native_mention else None,
+    )
+    message = matcher.sent[0]
+    assert message.extract_plain_text().strip() == "说得对。"
+    assert [segment.data["qq"] for segment in message if segment.type == "at"] == (
+        ["123456"] if native_mention else []
+    )
+
+
+@pytest.mark.asyncio
 async def test_mention_gateway_builds_at_in_transport_and_preserves_response() -> None:
     """Business tools provide a QQ target, while the transport owns native segments."""
 

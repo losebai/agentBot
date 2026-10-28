@@ -7,7 +7,8 @@ import { useRunningPlugins } from '../plugin-runtime';
 
 // 内置名称对应服务端工具策略；选择只保存配置，不授予当前 QQ 会话执行权限。
 const builtinTools = [
-  ['bilibili_login_status', 'B站登录检测'], ['bilibili_get_comments', 'B站评论读取'],
+  ['bilibili_login_status', 'B站登录检测'], ['bilibili_get_my_videos', 'B站我的视频'],
+  ['bilibili_get_comments', 'B站评论读取'],
   ['bilibili_reply_comment', 'B站回复评论'], ['bilibili_publish_video', 'B站视频投稿'],
   ['read_url', '网页读取'],
   ['knowledge_search', '知识库检索'],
@@ -22,7 +23,7 @@ const builtinTools = [
 
 // 共享媒体与知识工具由公共核心提供；平台专属工具须等所属插件启动。
 const pluginTools: Record<string, string> = {
-  bilibili_login_status: 'bilibili', bilibili_get_comments: 'bilibili',
+  bilibili_login_status: 'bilibili', bilibili_get_my_videos: 'bilibili', bilibili_get_comments: 'bilibili',
   bilibili_reply_comment: 'bilibili', bilibili_publish_video: 'bilibili',
   memory: 'qqbot', naraka_query: 'qqbot', naraka_search: 'qqbot', mention_member: 'qqbot',
   local_workflow_tasks: 'qqbot', local_workflow_cancel: 'qqbot', job: 'qqbot',

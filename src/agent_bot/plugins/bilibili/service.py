@@ -17,6 +17,7 @@ from agent_bot.plugins.bilibili.client import BilibiliClient
 from agent_bot.plugins.bilibili.contracts import (
     Account,
     CommentsArguments,
+    MyVideosArguments,
     PublishArguments,
     ReplyArguments,
 )
@@ -91,6 +92,10 @@ class BilibiliService:
         async with self._write_lock, self._state_lock:
             self._qr = None
             await self.store.clear_account()
+
+    async def my_videos(self, args: MyVideosArguments) -> dict:
+        """视频列表属于当前已保存账号，只查询已发布稿件，不接受模型覆盖 UID。"""
+        return await self.client.my_videos(await self.require_account(), args)
 
     async def comments(self, args: CommentsArguments) -> dict:
         """读取工具必须先有已保存账号，平台仍验证凭据是否有效。"""

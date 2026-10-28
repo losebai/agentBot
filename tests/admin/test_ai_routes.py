@@ -304,6 +304,59 @@ async def test_system_records_api_filters_and_validates_category(python_api):
     assert (await api.get("/api/v1/ai/records?category=system")).status_code == 401
 
 
+async def test_numbered_record_api_and_independent_count_keep_authentication(python_api):
+    """页码查询和独立统计沿用管理认证，相同筛选得到一致总数，不返回归档正文。"""
+    from agent_bot.ai.call_records import CallRecordStore, legacy_record
+
+    api, _, runtime = python_api
+    sessions = runtime.ai_service.sessions
+    store = CallRecordStore(sessions.params, connect=sessions.connect)
+    await store.import_batch([
+        legacy_record({"id": i, "session_Id": "paged", "data": {"choices": []}}, "offline")
+        for i in range(1, 4)
+    ])
+    assert (await api.get("/api/v1/ai/records/count?session_id=paged")).status_code == 401
+    count = await api.get("/api/v1/ai/records/count?session_id=paged", headers=HEADERS)
+    assert count.status_code == 200 and count.json() == {"total": 3}
+    page = await api.get("/api/v1/ai/records?session_id=paged&page=2&limit=2", headers=HEADERS)
+    assert page.status_code == 200
+    assert [row["source_id"] for row in page.json()["items"]] == ["1"]
+    assert "content" not in page.json()["items"][0]
+    for query in ("page=0", "page=1&cursor=bad"):
+        assert (await api.get(f"/api/v1/ai/records?{query}", headers=HEADERS)).status_code == 422
+    invalid = await api.get("/api/v1/ai/records/count?category=bad", headers=HEADERS)
+    assert invalid.status_code == 422
+
+
+async def test_management_refresh_returns_public_error_without_waiting(python_api, monkeypatch):
+    """运行时刷新时记录请求返回明确 503，不暴露内部异常或持续等待模型完成。"""
+    from contextlib import asynccontextmanager
+
+    from agent_bot.core.lifecycle import RuntimeRefreshInProgressError
+
+    api, _, runtime = python_api
+
+    @asynccontextmanager
+    async def refreshing():
+        """模拟已关闭新租约入口的刷新状态，不修改数据库或运行快照。"""
+        raise RuntimeRefreshInProgressError()
+        yield
+
+    monkeypatch.setattr(runtime, "lease", refreshing)
+    for path in ("ai/records?limit=20&page=1", "ai/records/count", "status"):
+        response = await api.get("/api/v1/" + path, headers=HEADERS)
+        assert response.status_code == 503
+        assert response.json()["code"] == "RUNTIME_REFRESHING"
+        assert "配置正在更新" in response.json()["message"]
+        assert response.json()["request_id"]
+    response = await api.post(
+        "/api/v1/chat/stream", headers=HEADERS,
+        json={"prompt": "离线测试", "session_id": "refresh", "messages": []},
+    )
+    assert response.status_code == 503
+    assert response.json()["code"] == "RUNTIME_REFRESHING"
+
+
 async def test_status_statistics_use_live_counts_and_authenticated_archive(python_api):
     """真实认证接口汇总归档，历史 running 状态与模型发现不增加实时对话数。"""
     from types import SimpleNamespace

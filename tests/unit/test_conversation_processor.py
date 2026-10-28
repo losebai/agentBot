@@ -236,6 +236,29 @@ async def test_disabled_multi_reply_sends_decoded_messages_without_json_wrapping
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("multi_reply", [False, True])
+async def test_auto_reply_removes_internal_at_before_length_limit_and_delivery(
+    monkeypatch, chat_plugin, multi_reply,
+) -> None:
+    """自动发言不能照抄内部 @ 标记，正文预算也不能被这种历史元数据占用。"""
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", multi_reply)
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
+        return_value='["[AT 3616076808] 说得对。"]',
+    ))
+    bot = onebot_mock()
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
+    processor = chat_plugin._ConversationProcessor()
+    job = queued_job(chatTools=(), autoSpeakMaxReplyChars=4)
+    result = await processor.generate(job)
+    assert result.reply.text == "说得对。"
+    assert result.delivery_parts == ("说得对。",)
+    await processor.deliver_part(job, result, 0)
+    message = bot.call_api.await_args.kwargs["message"]
+    assert message.extract_plain_text() == "说得对。"
+    assert all(segment.type == "text" for segment in message)
+
+
+@pytest.mark.asyncio
 async def test_disabled_multi_reply_applies_auto_speak_limit_after_join(monkeypatch, chat_plugin):
     """主动发言的专用上限按合并后正文计算，不先截断数组包装。"""
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)

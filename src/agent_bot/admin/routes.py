@@ -41,6 +41,7 @@ from agent_bot.admin.workflow_routes import install_workflow_routes
 from agent_bot.ai.call_records import CallRecordStore
 from agent_bot.ai.chat_errors import ChatAiError, ChatAiUnavailableError
 from agent_bot.ai.errors import AiError
+from agent_bot.core.lifecycle import RuntimeRefreshInProgressError
 from agent_bot.integrations.workflow_store import (
     WorkflowNotFoundError,
     WorkflowRevisionConflictError,
@@ -232,6 +233,10 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
             status_code, code, message = (
                 503, "WORKFLOW_UNAVAILABLE", "工作流数据库不可用，请检查连接及初始化结构",
             )
+        elif isinstance(error, RuntimeRefreshInProgressError):
+            status_code, code, message = (
+                503, "RUNTIME_REFRESHING", "配置正在更新，请稍后刷新页面",
+            )
         elif isinstance(error, SettingsNotInitializedError):
             status_code, code, message = 503, "SETTINGS_NOT_INITIALIZED", "配置数据库尚未初始化"
         elif isinstance(error, (ValidationError, RequestValidationError, SettingsValidationError)):
@@ -258,6 +263,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         ChatAiError,
         ModelNotAvailableError,
         AiError,
+        RuntimeRefreshInProgressError,
         WorkflowStoreError,
         WorkflowValidationError,
     ):

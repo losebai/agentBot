@@ -2,15 +2,64 @@
 
 import gzip
 import json
+import logging
 from contextlib import aclosing
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from agent.test_model_protocols import body, model_call, streamed
 from agent_bot.ai.errors import AiError
 from agent_bot.ai.providers.langchain import LangChainProvider
 from ai.test_providers import ByteStream
+
+
+@pytest.mark.parametrize("failure,event", [
+    ("missing_terminal", "other"),
+    ("upstream_failed", "response.failed"),
+    ("invalid_json", "none"),
+])
+async def test_invalid_response_logs_location_without_upstream_content(
+    caplog: pytest.LogCaptureFixture, failure: str, event: str,
+) -> None:
+    """不同协议失败应能定位校验位置，诊断不得记录响应正文、请求内容或凭据。"""
+    protocol = "openai-responses"
+    secret = "PRIVATE_UPSTREAM_TEXT_AND_CREDENTIAL"
+    if failure == "missing_terminal":
+        raw = streamed(protocol, body(protocol)).split(b'data: {"type": "response.completed"')[0]
+    elif failure == "upstream_failed":
+        raw = ("data: " + json.dumps({
+            "type": "response.failed", "response": {"error": {"message": secret}},
+        }) + "\n\n").encode()
+    else:
+        raw = ('data: {"private": "' + secret + '\n\n').encode()
+    upstream = ByteStream(raw)
+    provider = LangChainProvider(protocol, transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, stream=upstream),
+    ))
+    caplog.set_level(logging.WARNING, logger="agent_bot.ai.providers.langchain")
+    try:
+        with pytest.raises(AiError, match="AI_RESPONSE_INVALID"):
+            call = model_call(protocol).model_copy(update={"credential": SecretStr(secret)})
+            _ = [item async for item in provider.stream_turn(call)]
+        assert upstream.closed
+        diagnostics = [
+            record.getMessage() for record in caplog.records
+            if record.name == "agent_bot.ai.providers.langchain"
+        ]
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert "protocol=openai-responses" in diagnostic
+        assert "stage=model_execute" in diagnostic
+        assert "code=AI_RESPONSE_INVALID" in diagnostic
+        assert "upstream_status=200" in diagnostic
+        assert "terminal=False" in diagnostic
+        assert f"last_event={event}" in diagnostic
+        assert "source=" in diagnostic and "source=none" not in diagnostic
+        assert secret not in caplog.text
+    finally:
+        await provider.aclose()
 
 
 @pytest.mark.parametrize("protocol", ["openai-chat", "openai-responses", "ollama"])

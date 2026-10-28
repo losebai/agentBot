@@ -4,6 +4,7 @@ import json
 from typing import TYPE_CHECKING
 
 from agent_bot.ai.chat_errors import ChatAiProtocolError
+from agent_bot.services.reply_text import clean_internal_reply_text
 
 if TYPE_CHECKING:
     from agent_bot.config import RuntimeConfig
@@ -35,16 +36,16 @@ def parse_multi_reply(text: str, maximum: int) -> tuple[str, ...]:
         raise ChatAiProtocolError(
             "多条回复必须是完整的 JSON 字符串数组", error_code="CHAT_MULTI_REPLY_INVALID",
         ) from error
-    if (
-        not isinstance(messages, list)
-        or not 1 <= len(messages) <= maximum
-        or any(not isinstance(item, str) or not item.strip() for item in messages)
-    ):
-        raise ChatAiProtocolError(
-            f"多条回复须包含 1 至 {maximum} 条非空字符串消息",
-            error_code="CHAT_MULTI_REPLY_INVALID",
-        )
-    return tuple(messages)
+    if (isinstance(messages, list) and 1 <= len(messages) <= maximum
+            and all(isinstance(item, str) for item in messages)):
+        # 在生成持久化正文和分段之前使用同一结果，避免投递时改写造成来源不一致。
+        cleaned = tuple(clean_internal_reply_text(item) for item in messages)
+        if all(item.strip() for item in cleaned):
+            return cleaned
+    raise ChatAiProtocolError(
+        f"多条回复须包含 1 至 {maximum} 条非空字符串消息",
+        error_code="CHAT_MULTI_REPLY_INVALID",
+    )
 
 
 def join_reply_array(text: str) -> str:

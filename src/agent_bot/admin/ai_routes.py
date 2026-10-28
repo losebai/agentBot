@@ -4,6 +4,7 @@ from fastapi import APIRouter, Query
 
 from agent_bot.ai.call_records import (
     CallCategory,
+    CallCount,
     CallDetail,
     CallRecordStore,
     CallSummary,
@@ -41,6 +42,20 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
             store = CallRecordStore(sessions.params, connect=sessions.connect)
             return await getattr(store, action)(**kwargs)
 
+    @router.get("/ai/records/count", response_model=CallCount)
+    async def unified_count(
+        type: CallType | None = None,
+        category: CallCategory = "conversation",
+        system_kind: SystemKind | None = None,
+        session_id: str | None = Query(None, max_length=255),
+        status: str | None = Query(None, max_length=16),
+    ):
+        """统计接口与列表采用相同认证和筛选，独立加载避免阻塞当前页。"""
+        return await call_records(
+            "count_calls", type=type, category=category, system_kind=system_kind,
+            session_id=session_id, status=status,
+        )
+
     @router.get("/ai/records", response_model=Page[CallSummary])
     async def unified_records(
         type: CallType | None = None,
@@ -50,6 +65,7 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
         status: str | None = Query(None, max_length=16),
         limit: int = Query(50, ge=1, le=100),
         cursor: str | None = Query(None, max_length=2048),
+        page: int | None = Query(None, ge=1),
     ):
         """默认排除系统调用；系统页显式选择分组，类型、会话和游标一起约束。"""
         return await call_records(
@@ -61,6 +77,7 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
             status=status,
             limit=limit,
             cursor=cursor,
+            page=page,
         )
 
     @router.get("/ai/records/{id}", response_model=CallDetail)

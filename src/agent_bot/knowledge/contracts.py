@@ -47,6 +47,12 @@ class KnowledgeView(KnowledgeCreate):
     created_at: datetime
 
 
+class KnowledgeCount(AiModel):
+    """独立知识统计只返回筛选后的有效条目数。"""
+
+    total: int = Field(ge=0)
+
+
 class MemoryCreate(TaggedText):
     """已有匿名作用域与新 QQ 身份互斥，不能推测原始身份。"""
 

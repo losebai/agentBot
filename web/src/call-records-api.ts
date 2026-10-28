@@ -20,13 +20,23 @@ export interface CallDetail extends CallSummary {
 }
 export interface CallFilters { type: string; session_id: string; status: string; category?: CallCategory; system_kind?: string }
 
-/** 统一调用记录沿用管理员认证，筛选条件与游标一起提交。 */
+/** 统一调用记录沿用管理员认证，列表和独立计数使用同一组筛选条件。 */
 export class CallRecordsApi extends ApiClient {
-  list(filters: CallFilters, cursor?: string, signal?: AbortSignal) {
-    const query = new URLSearchParams({limit: '50'});
-    Object.entries(filters).forEach(([key, value]) => { if (value) query.set(key, value); });
-    if (cursor) query.set('cursor', cursor);
+  /** 页码直接传给后端，不能先拉完前面的所有页再在浏览器切片。 */
+  list(filters: CallFilters, page = 1, pageSize = 20, signal?: AbortSignal) {
+    const query = this.filters(filters);
+    query.set('limit', String(pageSize)); query.set('page', String(page));
     return this.request<Page<CallSummary>>(`ai/records?${query}`, 'GET', undefined, signal);
+  }
+  /** 总数独立于列表读取，翻页只复用同一筛选的总数，不重复扫描全部归档。 */
+  count(filters: CallFilters, signal?: AbortSignal) {
+    return this.request<{ total: number }>(`ai/records/count?${this.filters(filters)}`, 'GET', undefined, signal);
+  }
+  /** 列表与计数共同忽略空筛选值，避免两次请求条件不一致。 */
+  private filters(filters: CallFilters) {
+    const query = new URLSearchParams();
+    Object.entries(filters).forEach(([key, value]) => { if (value) query.set(key, value); });
+    return query;
   }
   detail(id: number, signal?: AbortSignal) {
     return this.request<CallDetail>(`ai/records/${id}`, 'GET', undefined, signal);

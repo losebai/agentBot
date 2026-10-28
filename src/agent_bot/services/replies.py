@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 
 from agent_bot.models import ChatContext
 from agent_bot.services.chat import ChatService
+from agent_bot.services.multi_reply import join_reply_array
+from agent_bot.services.reply_text import clean_internal_reply_text
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +153,7 @@ class ReplyIntent(BaseModel):
 
 
 class GeneratedReply(BaseModel):
-    """模型来源回复；消息去除空白行，可信文件投递上下文保留原始格式。"""
+    """模型来源正文统一清除内部 @ 标记，文件与明确分条保留原始换行格式。"""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
 
@@ -162,7 +164,10 @@ class GeneratedReply(BaseModel):
     @field_validator("text")
     @classmethod
     def normalize_line_breaks(cls, value: str, info: ValidationInfo) -> str:
-        """文件与模型明确分条的代码可能依赖空行，只有普通消息规范化换行。"""
+        """内部标记不能回显或升级为真实 @；普通消息另行规范化空白行。"""
+        value = clean_internal_reply_text(value)
+        if not value.strip():
+            raise ValueError("generated reply has no visible text")
         if info.context and (info.context.get("file_reply") or info.context.get("preserve_format")):
             return value
         normalized = value.replace("\r\n", "\n").replace("\r", "\n")
@@ -237,7 +242,7 @@ class LlmReplyComposer:
         self._semaphore = asyncio.Semaphore(4)
 
     async def compose(self, intent: ReplyIntent) -> GeneratedReply | None:
-        """完成通知交给 Agent 表达；饱和、生成失败或输出无效时保持静默。"""
+        """通知生成后先解码 JSON 正文，再交给单条投递和缓存；无效输出保持静默。"""
 
         if self._semaphore.locked():
             logger.warning(
@@ -272,7 +277,8 @@ class LlmReplyComposer:
                     timeout=self._timeout_seconds_provider(),
                 )
                 stage = "output_validation"
-                normalized = text.strip() if text is not None else ""
+                # 通知独立于普通聊天队列，必须在裁剪或持久化前移除模型的 JSON 包装。
+                normalized = join_reply_array(text).strip() if text is not None else ""
                 if not normalized:
                     return None
                 return GeneratedReply(text=normalized, requestId=intent.request_id)

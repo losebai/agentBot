@@ -24,6 +24,10 @@ AsyncAction = Callable[[], Awaitable[None]]
 StateCloser = Callable[[RuntimeState], Awaitable[None]]
 
 
+class RuntimeRefreshInProgressError(RuntimeError):
+    """管理请求不能在配置排空长推理时无限等待，公开层将其转换为可识别的 503。"""
+
+
 class RuntimeLeaseGate:
     """阻止热更新与正在处理的消息交叉使用不同运行时。"""
 
@@ -35,11 +39,13 @@ class RuntimeLeaseGate:
         self._refreshing = False
 
     @asynccontextmanager
-    async def lease(self) -> AsyncIterator[None]:
-        """等待刷新完成并登记一个运行时使用者。"""
+    async def lease(self, *, wait: bool = True) -> AsyncIterator[None]:
+        """业务等待刷新完成；管理请求可显式快速失败，不登记未获得快照的使用者。"""
 
         async with self._condition:
             while self._refreshing:
+                if not wait:
+                    raise RuntimeRefreshInProgressError()
                 await self._condition.wait()
             self._active_users += 1
         try:

@@ -178,6 +178,28 @@ async def test_transport_failure_is_not_logged_out(store):
     assert (await store.account()).uid == '12345'
 
 
+async def test_platform_request_logs_never_include_query_credentials(caplog):
+    """平台查询凭据不进入HTTP日志，同时不能改变实际请求或其他站点的日志。"""
+    import logging
+
+    caplog.set_level(logging.INFO, logger='httpx')
+    def handle(request):
+        """日志脱敏只能作用于记录副本，不能把脱敏值发给平台。"""
+        if request.url.host == 'passport.bilibili.com':
+            assert request.url.params['csrf'] == 'never-log-csrf'
+            assert request.url.params['qrcode_key'] == 'never-log-qr'
+        return httpx.Response(200, json={'code': 0, 'data': {}})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        await BilibiliClient(http).request(
+            'GET', 'https://passport.bilibili.com/x/passport-login/web/qrcode/poll',
+            params={'csrf': 'never-log-csrf', 'qrcode_key': 'never-log-qr'},
+        )
+        await http.get('https://example.invalid/status?visible=value')
+    assert 'never-log-csrf' not in caplog.text and 'never-log-qr' not in caplog.text
+    assert '/x/passport-login/web/qrcode/poll' in caplog.text
+    assert 'visible=value' in caplog.text
+
+
 async def test_replaced_qr_cannot_save_late_login(store):
     """旧轮询即使成功，也不能覆盖重新生成后的二维码会话。"""
     entered, release = asyncio.Event(), asyncio.Event()

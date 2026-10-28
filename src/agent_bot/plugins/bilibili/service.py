@@ -114,26 +114,31 @@ class BilibiliService:
                     args: PublishArguments | ReplyArguments | DynamicPublishArguments, *,
                     owner: MediaOwner, request_id: str,
                     media_store: MediaStore | None = None) -> dict:
-        """先验证媒体归属，再持久占位；中断后的 pending 不自动重发。"""
-        if tool == 'bilibili_publish_video':
-            if media_store is None:
-                raise AgentError('MEDIA_NOT_INITIALIZED', status_code=503)
-            video = await media_store.describe(args.video_asset_id, owner=owner)
-            cover = await media_store.describe(args.cover_asset_id, owner=owner)
-            if video.mime_type != 'video/mp4' or cover.mime_type not in {
-                'image/png', 'image/jpeg', 'image/webp',
-            }:
-                raise AgentError('BILIBILI_INVALID_MEDIA', status_code=422)
-        dynamic_images = ()
-        if tool == 'bilibili_publish_dynamic' and isinstance(args, DynamicPublishArguments):
-            if media_store is None:
-                raise AgentError('MEDIA_NOT_INITIALIZED', status_code=503)
-            dynamic_images = await prepare_dynamic_images(media_store, args.image_asset_ids, owner)
+        """先返回既有防重结果，新请求验证全部媒体后才占位并开始外部写入。"""
         async with self._write_lock:
             account = await self.require_account()
             signature = json.dumps([account.uid, owner.model_dump(), request_id, tool,
                                     args.model_dump()], sort_keys=True, ensure_ascii=False)
             key = hashlib.sha256(signature.encode()).hexdigest()
+            cached = await self.store.cached_result(key)
+            if cached is not None:
+                return cached
+            if tool == 'bilibili_publish_video':
+                if media_store is None:
+                    raise AgentError('MEDIA_NOT_INITIALIZED', status_code=503)
+                video = await media_store.describe(args.video_asset_id, owner=owner)
+                cover = await media_store.describe(args.cover_asset_id, owner=owner)
+                if video.mime_type != 'video/mp4' or cover.mime_type not in {
+                    'image/png', 'image/jpeg', 'image/webp',
+                }:
+                    raise AgentError('BILIBILI_INVALID_MEDIA', status_code=422)
+            dynamic_images = ()
+            if tool == 'bilibili_publish_dynamic' and isinstance(args, DynamicPublishArguments):
+                if media_store is None:
+                    raise AgentError('MEDIA_NOT_INITIALIZED', status_code=503)
+                dynamic_images = await prepare_dynamic_images(
+                    media_store, args.image_asset_ids, owner,
+                )
             cached = await self.store.begin(key, account.uid, tool)
             if cached is not None:
                 return cached

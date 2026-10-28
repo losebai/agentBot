@@ -1,7 +1,8 @@
 """B 站普通网页登录和视频评论协议；错误正文不得包含上游响应。"""
 
 import json
-from urllib.parse import parse_qs, quote, urlsplit
+import logging
+from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
 import httpx
 from pydantic import SecretStr
@@ -19,6 +20,31 @@ from agent_bot.services.request_deadline import remaining_timeout
 API = 'https://api.bilibili.com'
 PASSPORT = 'https://passport.bilibili.com'
 MEMBER = 'https://member.bilibili.com'
+
+
+class _PlatformRequestLogFilter(logging.Filter):
+    """只清理平台请求日志副本中的查询串，避免 CSRF 和扫码凭据进入 HTTPX 日志。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """实际请求 URL 不变，其他站点的日志参数保持原样。"""
+        if not isinstance(record.args, tuple):
+            return True
+        values = []
+        for value in record.args:
+            if isinstance(value, (str, httpx.URL)) and str(value).startswith(('https://', 'http://')):
+                target = urlsplit(str(value))
+                if target.hostname in {
+                    'api.bilibili.com', 'member.bilibili.com', 'passport.bilibili.com',
+                } and (target.query or target.fragment):
+                    value = urlunsplit((
+                        target.scheme, target.netloc, target.path, '[redacted]', '',
+                    ))
+            values.append(value)
+        record.args = tuple(values)
+        return True
+
+
+logging.getLogger('httpx').addFilter(_PlatformRequestLogFilter())
 
 
 class BilibiliClient:
@@ -41,6 +67,8 @@ class BilibiliClient:
                     raise AgentError('BILIBILI_UPSTREAM_REJECTED')
                 return body
             code = body.get('code')
+            if not isinstance(code, int) or isinstance(code, bool):
+                raise ValueError('missing or invalid platform code')
             if code in {-101, -111}:
                 raise AgentError('BILIBILI_LOGIN_EXPIRED', status_code=409)
             if code in {-352, -412, 86095}:

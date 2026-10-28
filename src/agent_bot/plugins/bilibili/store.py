@@ -11,6 +11,15 @@ from agent_bot.ai.errors import AiError
 from agent_bot.plugins.bilibili.contracts import Account
 
 
+def _operation_result(row: dict | None) -> dict | None:
+    """既有操作结果与媒体有效期无关，pending 不允许重新触发外部写入。"""
+    if row is None:
+        return None
+    if row['status'] == 'completed':
+        return json.loads(row['result'])
+    raise AgentError('BILIBILI_OPERATION_PENDING', status_code=409)
+
+
 class BilibiliStore(AiDatabase):
     """事务只覆盖本地状态，禁止在数据库锁中等待平台网络。"""
 
@@ -55,6 +64,14 @@ class BilibiliStore(AiDatabase):
         await self.run(lambda c: query(c, 'DELETE FROM agent_bot_bilibili_account WHERE id=1'),
                        write=True)
 
+    async def cached_result(self, key: str) -> dict | None:
+        """先读取已绑定账号、会话与参数的记录，不能因原图片到期而丢失防重结果。"""
+        row = await self.run(lambda c: query(
+            c, 'SELECT status,result FROM agent_bot_bilibili_operation WHERE operation_key=%s',
+            (key,), one=True,
+        ))
+        return _operation_result(row)
+
     async def begin(self, key: str, uid: str, tool: str) -> dict | None:
         """唯一键仲裁并发请求；未完成记录绝不能自动再次发送。"""
         def begin(c):
@@ -62,9 +79,7 @@ class BilibiliStore(AiDatabase):
             row = query(c, 'SELECT status,result FROM agent_bot_bilibili_operation '
                            'WHERE operation_key=%s FOR UPDATE', (key,), one=True)
             if row:
-                if row['status'] == 'completed':
-                    return json.loads(row['result'])
-                raise AgentError('BILIBILI_OPERATION_PENDING', status_code=409)
+                return _operation_result(row)
             query(c, 'INSERT INTO agent_bot_bilibili_operation '
                      '(operation_key,uid,tool,status,result,created_at) '
                      'VALUES (%s,%s,%s,%s,%s,%s)',

@@ -89,6 +89,9 @@ async def test_dynamic_uploads_images_in_order_and_reuses_success(
             params = {'owner': OWNER, 'request_id': 'one-publish', 'media_store': media}
             result = await service.write('bilibili_publish_dynamic', args, **params)
             assert await service.write('bilibili_publish_dynamic', args, **params) == result
+            media_clock.advance(86401)
+            await media.cleanup(media_clock())
+            assert await service.write('bilibili_publish_dynamic', args, **params) == result
     assert len(requests) == 3
     assert result == {'dynamic_id': '1234567890123456789',
                       'url': 'https://t.bilibili.com/1234567890123456789', 'status': 'submitted'}
@@ -121,7 +124,9 @@ async def test_all_dynamic_assets_are_checked_before_first_external_upload(
     client.request.assert_not_awaited()
 
 
-@pytest.mark.parametrize('failure', ['network', 'invalid_response', 'http_500', 'cancel'])
+@pytest.mark.parametrize('failure', [
+    'network', 'invalid_response', 'invalid_envelope', 'http_500', 'cancel',
+])
 async def test_uncertain_dynamic_submission_stays_pending_without_resending(
     store, media_database, agent_params, tmp_path, media_clock, failure,  # noqa: F811
 ):
@@ -144,6 +149,8 @@ async def test_uncertain_dynamic_submission_stays_pending_without_resending(
             raise asyncio.CancelledError()
         if failure == 'http_500':
             return httpx.Response(500, json={'message': 'offline failure'})
+        if failure == 'invalid_envelope':
+            return httpx.Response(200, json={})
         return httpx.Response(200, json={'code': 0, 'data': {}})
     async with storage(media_database, agent_params, tmp_path, media_clock) as media:
         asset = await media.put(owner=OWNER, purpose='input', data=picture(), mime_type='image/png')

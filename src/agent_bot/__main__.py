@@ -1,4 +1,4 @@
-"""统一启动 agentBot 管理服务并分发离线配置和工作流命令。"""
+"""统一启动管理服务，分发独立插件进程和离线管理命令。"""
 
 import sys
 from collections.abc import Sequence
@@ -11,7 +11,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments[:1] in (["--help"], ["-h"]):
         print(
             "usage: agent-bot [database init/upgrade | records migrate | "
-            "settings ... | workflows ... | --help]\n"
+            "settings ... | workflows ... | plugin list/run ... | --help]\n"
             "Without a subcommand, start the bot and browser management service."
         )
         return 0
@@ -31,8 +31,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         from agent_bot.workflow_cli import run
 
         return run(arguments[1:])
+    if arguments[:1] == ['plugin']:
+        from agent_bot.plugin_cli import run
+
+        return run(arguments[1:])
     if arguments:
-        raise SystemExit("usage: agent-bot [settings ... | workflows ... | --help]")
+        raise SystemExit("usage: agent-bot [settings ... | workflows ... | plugin ... | --help]")
+    return start_service()
+
+
+def start_service(*, standalone_plugin: str | None = None) -> int:
+    """公共入口与插件进程复用同一安全初始化、配置升级和退出编排。"""
     from agent_bot.admin.config import AdminConfig
     from agent_bot.bootstrap import load_startup_settings
     from agent_bot.cli_errors import describe_config_error
@@ -40,7 +49,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     from agent_bot.settings import SettingsError
 
     try:
-        prepare_first_run(Path.cwd())
+        if standalone_plugin is None:
+            prepare_first_run(Path.cwd())
+        else:
+            prepare_first_run(Path.cwd(), enabled_plugins=[standalone_plugin])
         admin = AdminConfig.from_environment()
     except FirstRunError as exc:
         print(f"启动失败：{exc}")
@@ -56,7 +68,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     from agent_bot.application import create_application
 
-    create_application(stored, admin)
+    if standalone_plugin is None:
+        create_application(stored, admin)
+    else:
+        create_application(stored, admin, standalone_plugin=standalone_plugin)
     import nonebot
 
     nonebot.run()

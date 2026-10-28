@@ -3,9 +3,19 @@
 from typing import Any
 
 from fastapi import APIRouter, Response
+from pydantic import Field
 
 from agent_bot.agent.errors import AgentError
+from agent_bot.media.contracts import MediaOwner
+from agent_bot.plugins.bilibili.contracts import DynamicPublishArguments
 from agent_bot.plugins.bilibili.service import BilibiliService
+
+
+class PublishDynamicRequest(DynamicPublishArguments):
+    """HTTP 管理端显式提供上传会话和防重请求号；二者不进入模型参数。"""
+
+    session_id: str = Field(min_length=1, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
+    request_id: str = Field(min_length=1, max_length=128)
 
 
 def install_bilibili_routes(router: APIRouter, runtime: Any) -> None:
@@ -46,3 +56,22 @@ def install_bilibili_routes(router: APIRouter, runtime: Any) -> None:
         async with runtime.lease():
             await service().clear()
             return {'cleared': True}
+
+    @router.post('/bilibili/dynamics', status_code=201)
+    async def publish(body: PublishDynamicRequest, response: Response) -> dict:
+        """认证管理员发布图文，复用图片上传归属和同一持久化防重业务路径。"""
+        response.headers['Cache-Control'] = 'no-store'
+        async with runtime.lease():
+            current = service()
+            resources = getattr(runtime, 'media_resources', None)
+            if resources is None:
+                raise AgentError('MEDIA_NOT_INITIALIZED', status_code=503)
+            resources.require_ready()
+            args = DynamicPublishArguments.model_validate(body.model_dump(
+                exclude={'session_id', 'request_id'},
+            ))
+            return await current.write(
+                'bilibili_publish_dynamic', args,
+                owner=MediaOwner(entry='admin', session_id='admin_' + body.session_id),
+                request_id=body.request_id, media_store=resources.store,
+            )

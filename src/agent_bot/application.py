@@ -23,8 +23,17 @@ from agent_bot.startup_settings import StartupSettingsStore
 
 def create_application(
     stored: VersionedSettings, admin: AdminConfig, *, napcat: NapCatSupervisor | None = None,
+    standalone_plugin: str | None = None,
 ) -> FastAPI:
-    """装配公共服务；桌面注入所属托管上下文，QQ 插件可显式请求启动。"""
+    """独立进程只在内存固定插件选择；桌面可注入所属托管上下文。"""
+    if standalone_plugin is not None:
+        from agent_bot.plugins.catalog import BUILTIN_PLUGIN_IDS
+
+        if standalone_plugin not in BUILTIN_PLUGIN_IDS:
+            raise ValueError('unknown standalone plugin ID')
+        stored = VersionedSettings(stored.config.model_copy(update={
+            'app_enabled_plugins': [standalone_plugin],
+        }), stored.revision)
     if "fastapi" not in stored.config.driver:
         raise ValueError("agentBot management requires the FastAPI driver")
     # 环境字段随后为 NoneBot 安全清理，文件编辑能力须先捕获覆盖关系，防止虚假开放编辑。
@@ -38,7 +47,12 @@ def create_application(
     if not isinstance(app, FastAPI):
         raise ValueError("agentBot management requires a FastAPI application")
     app.state.napcat = napcat
-    runtime, plugins = assemble_runtime(stored, driver, app)
+    if standalone_plugin is None:
+        runtime, plugins = assemble_runtime(stored, driver, app)
+    else:
+        runtime, plugins = assemble_runtime(
+            stored, driver, app, standalone_plugin=standalone_plugin,
+        )
     app.state.runtime, app.state.plugins = runtime, plugins
     install_admin(
         app, runtime.settings_store,

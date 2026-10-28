@@ -59,6 +59,11 @@ class SettingsService:
 
     def update(self, request: SettingsUpdate) -> SettingsSnapshot:
         """先验证完整候选，再在启动文件锁内提交动态值，文件失败不切换活动进程。"""
+        if ('app_enabled_plugins' in request.values.model_fields_set
+                and getattr(self.runtime, 'plugin_selection_locked', False)):
+            raise SettingsValidationError(
+                '独立进程的插件由启动命令固定，不能在网页修改', fields=('app_enabled_plugins',),
+            )
         stored = self.store.load()
         if stored.revision != request.expected_revision:
             raise SettingsRevisionConflictError("settings revision conflict")
@@ -139,6 +144,10 @@ class SettingsService:
         }
         pending.update(name for name in STATIC_SETTING_NAMES
                        if getattr(configured, name) != getattr(running, name))
+        selection_locked = getattr(self.runtime, 'plugin_selection_locked', False)
+        if selection_locked:
+            # 数据库的全局选择不控制此进程，不能误报成重启该进程就能改变的字段。
+            pending.discard('app_enabled_plugins')
         visible = configured.model_dump(mode="json", exclude=SECRET_SETTING_NAMES)
         fields = []
         for name, definition in RuntimeConfig.model_fields.items():
@@ -185,7 +194,8 @@ class SettingsService:
                     restart_required=(
                         name in RESTART_REQUIRED_FIELDS or name in STATIC_SETTING_NAMES
                     ),
-                    read_only=name in STATIC_SETTING_NAMES and name not in editable,
+                    read_only=(name in STATIC_SETTING_NAMES and name not in editable)
+                    or (name == 'app_enabled_plugins' and selection_locked),
                     scope="static" if name in STATIC_SETTING_NAMES else "runtime",
                 )
             )

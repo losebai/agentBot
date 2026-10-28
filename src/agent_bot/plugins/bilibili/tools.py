@@ -35,6 +35,10 @@ DESCRIPTIONS = {
     'bilibili_publish_video': '投稿当前会话的 MP4 视频和封面图片资产，必须提供 asset_id，'
                               '不可传文件路径或 URL。返回已提交审核，不表示已公开。'
                               '转载 copyright=2 时必须提供 source。',
+    'bilibili_publish_dynamic': '发布B站图文动态：提供正文 text 和按顺序排列的 image_asset_ids。'
+                                '只接受当前会话的 PNG/JPEG 图片资产，1到9张、正文最多2000字；'
+                                '可使用本次上传或工具生成的图片ID，不接受路径或远程URL。'
+                                '仅管理员或QQ超级用户可用，返回已提交不保证立即公开。',
 }
 
 
@@ -72,8 +76,9 @@ class BilibiliToolSession:
         self.media_store, self.bridge = media_store, bridge
         self.definitions = tuple(ToolDefinition(
             name=name, source='builtin', description=DESCRIPTIONS[name] + (
-                '\n本次上传可作为封面的图片资产 ID：' + ', '.join(request.attachment_ids)
-                if name == 'bilibili_publish_video' and request.attachment_ids else ''),
+                '\n本次上传的图片资产 ID：' + ', '.join(request.attachment_ids)
+                if name in {'bilibili_publish_video', 'bilibili_publish_dynamic'}
+                and request.attachment_ids else ''),
             input_schema=project_local_schema(name, model.model_json_schema()),
         ) for name, model in TOOL_MODELS.items() if name in tools.allowed_tools)
 

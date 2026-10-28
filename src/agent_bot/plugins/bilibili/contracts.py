@@ -1,7 +1,7 @@
 """B 站内部凭据和模型可见参数的严格边界。"""
 
 import json
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
@@ -57,6 +57,23 @@ class ReplyArguments(VideoArguments):
     message: str = Field(min_length=1, max_length=1000)
 
 
+class DynamicPublishArguments(Arguments):
+    """图文动态只接受本会话的 PNG/JPEG 资产，图片顺序与传入顺序一致。"""
+
+    text: str = Field(min_length=1, max_length=2000, description='动态正文，最多 2000 字')
+    image_asset_ids: list[Annotated[str, Field(pattern=r'^[a-f0-9]{32}$')]] = Field(
+        min_length=1, max_length=9, description='按发布顺序排列的图片资产 ID，最多 9 张',
+    )
+
+    @field_validator('image_asset_ids')
+    @classmethod
+    def unique_images(cls, value: list[str]) -> list[str]:
+        """拒绝重复资产，防止同一图片被意外多次插入动态。"""
+        if len(set(value)) != len(value):
+            raise ValueError('duplicate image assets')
+        return value
+
+
 class PublishArguments(Arguments):
     """投稿使用当前会话资产，原创与转载不允许静默替换。"""
 
@@ -91,6 +108,9 @@ TOOL_MODELS = {
     'bilibili_get_comments': CommentsArguments,
     'bilibili_reply_comment': ReplyArguments,
     'bilibili_publish_video': PublishArguments,
+    'bilibili_publish_dynamic': DynamicPublishArguments,
 }
-WRITE_TOOLS = frozenset({'bilibili_reply_comment', 'bilibili_publish_video'})
+WRITE_TOOLS = frozenset({
+    'bilibili_reply_comment', 'bilibili_publish_video', 'bilibili_publish_dynamic',
+})
 BILIBILI_TOOLS = frozenset(TOOL_MODELS)

@@ -16,6 +16,7 @@ function Editor({ initialTools = [] as string[], initialMcps = [] as number[] })
 it.each([
   ['知识库检索', 'knowledge_search'], ['素材读取', 'material_get'],
   ['B站我的视频', 'bilibili_get_my_videos'],
+  ['B站发布图文动态', 'bilibili_publish_dynamic'],
 ])('%s 不会自动勾选，用户明确选择后写入工具草稿', async (label, name) => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({items: [], next_cursor: null})));
   render(<Editor />);

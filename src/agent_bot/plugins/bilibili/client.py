@@ -57,8 +57,8 @@ class BilibiliClient:
             raise AgentError('BILIBILI_INVALID_RESPONSE') from None
 
     async def response(self, method: str, url: str, *, account: Account | None = None,
-                       **kwargs) -> httpx.Response:
-        """Cookie 只发送到固定平台源站，上传 CDN 只接收临时上传令牌。"""
+                       uncertain_write: bool = False, **kwargs) -> httpx.Response:
+        """Cookie 只发送到固定源站；最终发布的 HTTP 5xx 不能推定没有产生副作用。"""
         try:
             headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.bilibili.com/'}
             headers.update(kwargs.pop('headers', {}))
@@ -72,6 +72,8 @@ class BilibiliClient:
                     raise AgentError('BILIBILI_INVALID_RESPONSE')
                 httpx.Cookies(account.cookie_values()).set_cookie_header(request)
             response = await self.http.send(request, follow_redirects=False)
+            if uncertain_write and response.status_code >= 500:
+                raise AgentError('BILIBILI_RESULT_UNKNOWN', status_code=409)
             if response.status_code == 429:
                 raise AgentError('BILIBILI_RATE_LIMITED', status_code=429)
             if response.status_code in {403, 412}:

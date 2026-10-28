@@ -62,6 +62,7 @@ it('未运行插件的工具不出现在候选和选中标签，修改通用工�
   expect(screen.queryAllByText(/B站回复评论|bilibili_reply_comment/)).toHaveLength(0);
   expect(screen.queryAllByText(/标签记忆|memory/)).toHaveLength(0);
   expect(screen.queryByText('B站我的视频 · bilibili_get_my_videos')).not.toBeInTheDocument();
+  expect(screen.queryByText('B站发布图文动态 · bilibili_publish_dynamic')).not.toBeInTheDocument();
   fireEvent.click(await screen.findByText('网页读取 · read_url'));
   expect(change).toHaveBeenCalledWith(['bilibili_reply_comment', 'memory', 'read_url']);
 });

@@ -35,7 +35,8 @@ export function Plugins({ token, view = 'installed', onConfigure, onInstalled }:
       const [items, settings] = await Promise.all([api.plugins(current.signal), api.settings(current.signal)]);
       if (current.signal.aborted || !active.current) return;
       setPlugins(items); setSnapshot(settings);
-      setSelected(items.filter(item => item.saved_enabled).map(item => item.id));
+      const fixed = settings.fields.some(field => field.name === 'app_enabled_plugins' && field.read_only);
+      setSelected(items.filter(item => fixed ? item.enabled : item.saved_enabled).map(item => item.id));
     } catch (failure) {
       if (!current.signal.aborted && active.current) setError(errorMessage(failure));
     } finally {
@@ -50,12 +51,14 @@ export function Plugins({ token, view = 'installed', onConfigure, onInstalled }:
     return () => { active.current = false; controller.current?.abort(); };
   }, [api]);
 
-  const changed = plugins.some(item => selected.includes(item.id) !== item.saved_enabled);
+  // 独立进程的选择由启动命令确定，数据库全局选择仅保留供普通宿主使用。
+  const selectionLocked = !!snapshot?.fields.some(field => field.name === 'app_enabled_plugins' && field.read_only);
+  const changed = !selectionLocked && plugins.some(item => selected.includes(item.id) !== item.saved_enabled);
   const pendingRestart = plugins.some(item => item.restart_required);
 
   /** 保存只提交列表和数据库版本，失败保留草稿，不修改当前插件状态。 */
   async function save() {
-    if (!snapshot || saving || !changed) return;
+    if (!snapshot || selectionLocked || saving || !changed) return;
     setSaving(true); setError(''); setSaved(false);
     try {
       const settings = await api.updateSettings(snapshot.database_revision, { app_enabled_plugins: selected });
@@ -81,6 +84,8 @@ export function Plugins({ token, view = 'installed', onConfigure, onInstalled }:
           onClick={() => void save()}>保存</Button>}
       </div></div>
     {error && <Alert message={error} type="error" showIcon className="notice" />}
+    {selectionLocked && <Alert type="info" showIcon className="notice"
+      message="当前为插件独立进程，启用插件由启动命令固定，此页面仅查看运行状态。" />}
     {saved && <Alert message="插件选择已保存；当前进程保持原状态，请手动重启后端。" type="success" showIcon className="notice" />}
     {pendingRestart && <Alert message="重启后生效" description="使用已有的“服务 → 重启后端”，或手动重启服务。" type="warning" showIcon className="notice" />}
     {loading ? <div className="loading"><Spin /></div> : view === 'center' ? <div className="plugin-catalog">
@@ -98,7 +103,7 @@ export function Plugins({ token, view = 'installed', onConfigure, onInstalled }:
           <Tag>{statusLabels[plugin.status]}</Tag><code>{plugin.id} · {plugin.version}</code>
           <p>{plugin.description}</p></div>
         <div className="setting-control"><Switch id={`plugin-${plugin.id}`} aria-label={`启用 ${plugin.name}`}
-          disabled={saving} checked={selected.includes(plugin.id)} onChange={enabled => {
+          disabled={saving || selectionLocked} checked={selected.includes(plugin.id)} onChange={enabled => {
             setSaved(false);
             setSelected(previous => enabled ? [...previous, plugin.id] : previous.filter(id => id !== plugin.id));
           }} />

@@ -81,3 +81,19 @@ async def test_invalid_plugin_selection_does_not_change_revision(plugin_client):
     assert response.status_code == 422
     settings = (await plugin_client.get("/api/v1/settings", headers=headers)).json()
     assert settings["database_revision"] == 1
+
+
+async def test_standalone_plugin_selection_is_readonly_and_cannot_be_saved(
+    plugin_client, admin_runtime, admin_store,
+):
+    """独立进程的命令选择固定，HTTP 不能影响其他进程的数据库启停选择。"""
+    admin_runtime.plugin_selection_locked = True
+    headers = {"Authorization": "Bearer test-admin"}
+    snapshot = (await plugin_client.get('/api/v1/settings', headers=headers)).json()
+    field = next(item for item in snapshot['fields'] if item['name'] == 'app_enabled_plugins')
+    assert field['read_only'] is True
+    result = await plugin_client.patch('/api/v1/settings', headers=headers, json={
+        'expected_revision': 1, 'values': {'app_enabled_plugins': []},
+    })
+    assert result.status_code == 422
+    assert admin_store.load_revision() == 1

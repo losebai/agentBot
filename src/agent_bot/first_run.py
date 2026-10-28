@@ -13,8 +13,11 @@ class FirstRunError(RuntimeError):
     """首次初始化失败，只向启动入口提供不含底层凭据的修复提示。"""
 
 
-def prepare_first_run(directory: Path, *, enable_managed_napcat: bool = False) -> None:
-    """桌面可显式选择托管，载荷随后校验；已有配置及数据库始终由用户所有。"""
+def prepare_first_run(
+    directory: Path, *, enable_managed_napcat: bool = False,
+    enabled_plugins: list[str] | None = None,
+) -> None:
+    """仅全新目录可指定初始插件；已有配置、数据库和密钥始终由用户所有。"""
     directory = directory.resolve()
     if any((directory / name).exists() for name in (".env", ".env.prod")):
         return
@@ -51,6 +54,7 @@ def prepare_first_run(directory: Path, *, enable_managed_napcat: bool = False) -
 
         staging = Path(tempfile.mkdtemp(prefix=".agent-bot-first-run-", dir=directory))
         config = RuntimeConfig(
+            app_enabled_plugins=['qqbot'] if enabled_plugins is None else enabled_plugins,
             driver="~fastapi+~websockets",
             host="127.0.0.1",
             port=8080,

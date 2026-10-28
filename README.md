@@ -54,6 +54,30 @@
 
 ## 内置插件
 
+### 独立进程运行
+
+每个内置插件均可通过独立命令启动为一个服务进程，提供自己的管理页面、端口和运行资源。
+从项目根目录执行（安装包部署可直接使用 `agent-bot`）：
+
+```powershell
+uv run agent-bot plugin list
+uv run agent-bot plugin run qqbot --workdir runtime/qqbot --port 8081
+uv run agent-bot plugin run comfy --workdir runtime/comfy --port 8082
+uv run agent-bot plugin run bilibili --workdir runtime/bilibili --port 8083
+```
+
+分别在终端运行上述命令，可同时启动多个进程。`--workdir` 必须明确指定，静态配置 `.env`、
+默认 SQLite 数据库、QQ 队列和媒体目录均相对此目录解析；全新目录会按现有首次初始化规则生成独立配置和密钥。
+已有目录保留原配置与数据，环境变量仍优先于启动文件；部署时为每个进程分别配置目录、端口与队列连接。
+`--port` 只覆盖本次进程，不改 `.env`，网页将该覆盖字段设为只读；端口占用时启动失败，不自动换端口。
+
+独立进程只加载命令指定的插件；该选择不写回既有数据库中的全局启停列表，也不会启停其他进程。
+网页插件中心可查看目录和当前状态，启停开关只读；插件所属配置和工作流管理仍可正常保存。
+QQBot、ComfyUI、B站进程各自拥有管理 API 及所需公共 Agent 服务，关闭其中一个不会退出其他进程。
+Comfy 本地执行仍需在其配置页开启业务开关并满足原有模型与 Chat MCP 配置校验。
+
+### 宿主统一加载
+
 应用支持启动加载的内置插件，QQ 接入作为 `qqbot` 插件默认启用。“插件管理”下的“插件中心”展示内置目录，“已安装插件”管理启停；QQ、B站和 ComfyUI（`comfy`）都已随程序安装，停用不代表卸载。保存启停选择后，使用已有的“服务 → 重启后端”或手动重启服务生效。选择保存在所选运行配置数据库的 `app_enabled_plugins`，不通过环境变量覆盖。
 
 插件成功启动后才开放所属工具并显示专属设置；未启用、准备中、启动失败或已停止时，只保留插件启用入口。停用插件不会删除 Agent 已保存的工具选择，重新启用并启动后恢复显示。
@@ -70,13 +94,28 @@ ComfyUI 新安装默认停用。升级时，原已启用本地工作流的部署
 
 每次启动会按[自动升级说明](sql/UPGRADE-AUTOMATIC.md)检查所选数据库版本，自动执行适用的 MySQL / SQLite 增量；已完成历史迁移的既有库会自动补齐 B站表，新库完整初始化脚本已包含所需表。随后在“插件管理 → 已安装插件”启用“B站”，保存并手动重启后端，在“插件管理 → B站配置”扫码、用手机客户端确认登录。账号 Cookie 只保存在当前选择的数据库中，不回填页面和模型。可检查登录、重新扫码或清除本地登录；清除不代表其他设备已退出。
 
-在 Agent 的“允许工具”中按需选择 `bilibili_login_status`（实际检测登录）、`bilibili_get_my_videos`（我的已发布视频列表）、`bilibili_get_comments`（读取视频评论及楼中楼）、`bilibili_reply_comment`（回复指定评论）、`bilibili_publish_video`（视频投稿）。视频列表读取当前登录账号，支持 `page`、`page_size`，每页最多 20 项，返回 BV/AV 标识、标题、发布时间和状态；不查询任意 UID，也不公开审核中或未发布稿件。评论仅由 Agent 按需调用，不运行自动监听任务。投稿和回复仅限管理端或已有 QQ 超级用户，且仍需入口、会话和 Agent 工具授权。
+在 Agent 的“允许工具”中按需选择 `bilibili_login_status`（实际检测登录）、`bilibili_get_my_videos`（我的已发布视频列表）、`bilibili_get_comments`（读取视频评论及楼中楼）、`bilibili_reply_comment`（回复指定评论）、`bilibili_publish_video`（视频投稿）、`bilibili_publish_dynamic`（发布图文动态）。视频列表读取当前登录账号，支持 `page`、`page_size`，每页最多 20 项，返回 BV/AV 标识、标题、发布时间和状态；不查询任意 UID，也不公开审核中或未发布稿件。评论仅由 Agent 按需调用，不运行自动监听任务。投稿、图文发布和回复仅限管理端或已有 QQ 超级用户，且仍需入口、会话和 Agent 工具授权。
 
 QQ 对话会把当前插件已授予的 B站工具传入 Agent，不再被聊天路由的旧名单过滤。QQ 工具会话依赖 `chat_mcp_enabled`，需在“机器人配置 → 基础设置”启用 Chat MCP 工具服务并手动重启后端；B站插件也须处于运行状态。使用命名 Agent 时，仍须在该预设的“允许工具”中勾选所需 B站工具；启动插件不会自动扩大既有预设的权限。视频列表使用创作中心已发布稿件接口，协议结构参考 [biliup 的稿件列表实现](https://github.com/biliup/biliup/blob/master/crates/biliup/src/uploader/bilibili.rs)。
 
 管理 Agent 对话可通过“添加投稿视频”上传不超过 100 MB 的 MP4，用“添加图片”提供封面，并说明标题、简介、分区 ID、标签及原创/转载信息。视频只交给投稿工具，不作为图片输入；工具仅接受当前会话资产，不接受任意本地文件路径或下载 URL。转载必须提供来源。投稿返回“已提交审核”，不表示已公开。
 
-同一请求相同参数的成功写操作会返回已保存结果；结果未知时请先去 B站投稿管理或评论区核对，不能自动重复发送。平台额外验证、限流和权限错误会直接报告。本功能自动验证使用离线 HTTP / 数据库替身，真实扫码及账号投稿需要在用户自己的账号验收。
+图文动态工具 `bilibili_publish_dynamic` 接受 `text` 和按发布顺序排列的 `image_asset_ids`。正文最多 2000 字，图片 1–9 张，仅支持当前会话的 PNG/JPEG 资产，每张最多 10 MiB、合计最多 20 MiB；可引用本会话上传或工具生成的图片 ID，不接受远程 URL、本地路径或其他账号身份。所有图片授权和解码完成后才开始平台上传。
+
+管理 HTTP 接口为 `POST /api/v1/bilibili/dynamics`，继承管理认证。先使用 `POST /api/v1/media/uploads?session_id=example-session` 上传图片，使用响应的 `id`（不是 `material_id`）作为图片资产 ID，再提交：
+
+```json
+{
+  "session_id": "example-session",
+  "request_id": "dynamic_001",
+  "text": "今天的照片",
+  "image_asset_ids": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+}
+```
+
+`session_id` 必须与上传图片时一致；`request_id` 为一次发布的稳定请求号，重试时保持相同会话、请求号和参数。成功返回 `dynamic_id`、`url` 和 `status: submitted`，不承诺立即公开。上传与发布协议参考[图文动态接口说明](https://github.com/realysy/bili-apis/blob/master/docs/dynamic/publish.md)。
+
+同一请求相同参数的成功写操作会返回已保存结果；最终发布响应丢失、无效或 HTTP 5xx 时保留待核对记录，不自动重发。结果未知时请先去 B站动态、投稿管理或评论区核对。平台额外验证、限流和权限错误会直接报告。本功能自动验证使用离线 HTTP / 数据库替身，真实扫码及账号发布需要在用户自己的账号验收。
 
 ## 知识与记忆
 

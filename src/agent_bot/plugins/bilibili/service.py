@@ -17,10 +17,12 @@ from agent_bot.plugins.bilibili.client import BilibiliClient
 from agent_bot.plugins.bilibili.contracts import (
     Account,
     CommentsArguments,
+    DynamicPublishArguments,
     MyVideosArguments,
     PublishArguments,
     ReplyArguments,
 )
+from agent_bot.plugins.bilibili.dynamic import prepare_dynamic_images, publish_dynamic
 from agent_bot.plugins.bilibili.store import BilibiliStore
 from agent_bot.plugins.bilibili.upload import publish_video
 
@@ -108,7 +110,8 @@ class BilibiliService:
             raise AgentError('BILIBILI_NOT_LOGGED_IN', status_code=409)
         return account
 
-    async def write(self, tool: str, args: PublishArguments | ReplyArguments, *,
+    async def write(self, tool: str,
+                    args: PublishArguments | ReplyArguments | DynamicPublishArguments, *,
                     owner: MediaOwner, request_id: str,
                     media_store: MediaStore | None = None) -> dict:
         """先验证媒体归属，再持久占位；中断后的 pending 不自动重发。"""
@@ -121,6 +124,11 @@ class BilibiliService:
                 'image/png', 'image/jpeg', 'image/webp',
             }:
                 raise AgentError('BILIBILI_INVALID_MEDIA', status_code=422)
+        dynamic_images = ()
+        if tool == 'bilibili_publish_dynamic' and isinstance(args, DynamicPublishArguments):
+            if media_store is None:
+                raise AgentError('MEDIA_NOT_INITIALIZED', status_code=503)
+            dynamic_images = await prepare_dynamic_images(media_store, args.image_asset_ids, owner)
         async with self._write_lock:
             account = await self.require_account()
             signature = json.dumps([account.uid, owner.model_dump(), request_id, tool,
@@ -143,6 +151,8 @@ class BilibiliService:
                         cover_data = await finish_database_write(image.read)
                     result = await publish_video(self.client, account, args, stream,
                                                  video.size_bytes, cover_data, cover.mime_type)
+            elif tool == 'bilibili_publish_dynamic' and isinstance(args, DynamicPublishArguments):
+                result = await publish_dynamic(self.client, account, args, dynamic_images)
             else:
                 raise AgentError('AGENT_TOOL_UNAUTHORIZED', status_code=403)
             try:

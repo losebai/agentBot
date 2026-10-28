@@ -23,7 +23,8 @@ def install_plugin_routes(router: APIRouter, runtime, settings) -> None:
                 saved_enabled=item.saved_enabled,
                 enabled=item.enabled,
                 status=item.status,
-                restart_required=item.restart_required,
+                restart_required=item.restart_required
+                and not getattr(runtime, 'plugin_selection_locked', False),
             )
             for item in runtime.plugins.snapshots(stored.config.app_enabled_plugins)
         ]

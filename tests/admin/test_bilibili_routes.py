@@ -41,3 +41,44 @@ async def test_bilibili_routes_require_auth_and_running_plugin(admin_store, admi
         assert response.status_code == 200
         assert response.headers['cache-control'] == 'no-store'
         assert 'qrcode_key' not in response.json()
+
+
+async def test_dynamic_http_route_requires_auth_runtime_and_scoped_assets(
+    admin_store, admin_runtime,
+):
+    """HTTP 发布继承管理认证，显式请求 ID 与上传会话用于防重和媒体授权。"""
+    app = FastAPI()
+    install_admin(app, admin_store, admin_runtime, AdminConfig(token='offline-admin'))
+    body = {'text': '今天的照片', 'image_asset_ids': ['a' * 32],
+            'session_id': 'dynamic-test', 'request_id': 'stable-dynamic-request'}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url='http://offline.test') as client:
+        path = '/api/v1/bilibili/dynamics'
+        assert (await client.post(path, json=body)).status_code == 401
+        headers = {'Authorization': 'Bearer offline-admin'}
+        assert (await client.post(path, json=body, headers=headers)).status_code == 503
+        service = SimpleNamespace(write=AsyncMock(return_value={
+            'dynamic_id': '123', 'url': 'https://t.bilibili.com/123', 'status': 'submitted',
+        }))
+        admin_runtime.plugins = SimpleNamespace(running_plugin=lambda id: SimpleNamespace(
+            service=service))
+        media_store = object()
+        admin_runtime.media_resources = SimpleNamespace(
+            store=media_store, require_ready=lambda: None,
+        )
+        response = await client.post(path, json=body, headers=headers)
+        assert response.status_code == 201, response.text
+        assert response.headers['cache-control'] == 'no-store'
+        args, kwargs = service.write.call_args
+        assert args[0] == 'bilibili_publish_dynamic'
+        assert args[1].image_asset_ids == ['a' * 32]
+        assert kwargs['owner'].entry == 'admin'
+        assert kwargs['owner'].session_id == 'admin_dynamic-test'
+        assert kwargs['request_id'] == 'stable-dynamic-request'
+        assert kwargs['media_store'] is media_store
+        service.write.reset_mock()
+        invalid = await client.post(path, json={**body, 'uid': '999'}, headers=headers)
+        assert invalid.status_code == 422
+        missing_id = {key: value for key, value in body.items() if key != 'request_id'}
+        assert (await client.post(path, json=missing_id, headers=headers)).status_code == 422
+        service.write.assert_not_awaited()

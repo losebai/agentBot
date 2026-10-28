@@ -141,6 +141,7 @@ class ApplicationRuntime:
         # 插件独立持有此服务，工具提供者在每次调用读取当前值。
         self.bilibili_service = None
         self.comfy_plugin = None
+        self.standalone_plugin_id: str | None = None
         self._participant: RuntimeRefreshParticipant | None = None
         self._started = False
         self._closed = False
@@ -351,6 +352,7 @@ def assemble_runtime(
     stored: VersionedSettings,
     driver: Driver,
     app: FastAPI | None = None,
+    *, standalone_plugin: str | None = None,
 ) -> tuple[ApplicationRuntime, PluginManager]:
     """两个入口共享装配，统一回调负责启动失败回收和正常退出。"""
     from agent_bot.bootstrap import validate_onebot_driver
@@ -361,6 +363,7 @@ def assemble_runtime(
     if "qqbot" in stored.config.app_enabled_plugins:
         validate_onebot_driver(driver, stored.config)
     runtime = ApplicationRuntime(stored)
+    runtime.standalone_plugin_id = standalone_plugin
     plugins = PluginManager(BUILTIN_PLUGINS, stored.config.app_enabled_plugins)
     plugins.prepare(PluginContext(driver, app, runtime))
 

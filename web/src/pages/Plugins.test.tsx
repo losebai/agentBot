@@ -8,6 +8,22 @@ function pluginResponse(saved: boolean) {
     saved_enabled: saved, enabled: true, status: 'running', restart_required: !saved }];
 }
 
+it('独立插件进程的启停只读，使用当前命令选择且不发送保存', async () => {
+  const fetcher = vi.fn(async (url, _options?: RequestInit) => String(url).endsWith('/plugins')
+    ? Response.json(pluginResponse(false).map(item => ({ ...item, restart_required: false })))
+    : Response.json({ database_revision: 3, applied_revision: 3, fields: [
+      { name: 'app_enabled_plugins', value: [], read_only: true, kind: 'json', scope: 'runtime' },
+    ] }));
+  vi.stubGlobal('fetch', fetcher);
+  render(<Plugins token="offline" />);
+  const toggle = await screen.findByRole('switch', { name: '启用 QQBot' });
+  expect(toggle).toBeChecked();
+  expect(toggle).toBeDisabled();
+  expect(screen.getByText(/独立进程/)).toBeVisible();
+  expect(screen.getByRole('button', { name: /保\s*存/ })).toBeDisabled();
+  expect(fetcher.mock.calls.every(([, options]) => options?.method !== 'PATCH')).toBe(true);
+});
+
 it('已安装列表只管理启停并跳转独立配置，不提前挂载账号设置', async () => {
   const configure = vi.fn();
   const fetcher = vi.fn(async url => String(url).endsWith('/plugins')

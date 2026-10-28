@@ -20,6 +20,11 @@ class ApplicationRuntimeProvider:
         return self.runtime.revision
 
     @property
+    def plugin_selection_locked(self) -> bool:
+        """独立进程的插件由命令行固定，网页不能修改全局数据库选择。"""
+        return self.runtime.standalone_plugin_id is not None
+
+    @property
     def client(self):
         """客户端随快照发布替换。"""
         return self.runtime.state.ai_client

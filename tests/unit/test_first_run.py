@@ -26,6 +26,25 @@ def test_desktop_first_run_can_explicitly_enable_managed_napcat(tmp_path):
     assert env.read_bytes() == original
 
 
+def test_plugin_first_run_initializes_only_target_and_preserves_existing_choice(tmp_path):
+    """首次创建独立数据库选择目标插件，再次运行不覆盖用户已保存的选择。"""
+    from agent_bot.first_run import prepare_first_run
+
+    prepare_first_run(tmp_path, enabled_plugins=['comfy'])
+    store = SettingsStore(
+        DatabaseParams(backend='sqlite', sqlite_path=str(tmp_path / 'data/agent_bot.sqlite3')),
+        static_config=load_static_config(env_file=str(tmp_path / '.env')),
+    )
+    assert store.load().config.app_enabled_plugins == ['comfy']
+    current = store.load()
+    store.save(current.config.model_copy(update={'app_enabled_plugins': ['bilibili']}),
+               expected_revision=current.revision)
+    before = (tmp_path / '.env').read_bytes()
+    prepare_first_run(tmp_path, enabled_plugins=['comfy'])
+    assert store.load().config.app_enabled_plugins == ['bilibili']
+    assert (tmp_path / '.env').read_bytes() == before
+
+
 @pytest.fixture(autouse=True)
 def clean_startup_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """屏蔽开发机启动配置，保证测试只接触临时目录。"""

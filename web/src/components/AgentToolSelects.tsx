@@ -10,6 +10,7 @@ const builtinTools = [
   ['bilibili_login_status', 'B站登录检测'], ['bilibili_get_my_videos', 'B站我的视频'],
   ['bilibili_get_comments', 'B站评论读取'],
   ['bilibili_reply_comment', 'B站回复评论'], ['bilibili_publish_video', 'B站视频投稿'],
+  ['bilibili_publish_dynamic', 'B站发布图文动态'],
   ['read_url', '网页读取'],
   ['knowledge_search', '知识库检索'],
   ['material_search', '素材查询'], ['material_get', '素材读取'],
@@ -25,6 +26,7 @@ const builtinTools = [
 const pluginTools: Record<string, string> = {
   bilibili_login_status: 'bilibili', bilibili_get_my_videos: 'bilibili', bilibili_get_comments: 'bilibili',
   bilibili_reply_comment: 'bilibili', bilibili_publish_video: 'bilibili',
+  bilibili_publish_dynamic: 'bilibili',
   memory: 'qqbot', naraka_query: 'qqbot', naraka_search: 'qqbot', mention_member: 'qqbot',
   local_workflow_tasks: 'qqbot', local_workflow_cancel: 'qqbot', job: 'qqbot',
 };

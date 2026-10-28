@@ -47,7 +47,7 @@ async def test_bilibili_stopping_revokes_previously_bound_tool_session():
     session = tools.bind(request, authority, None, None, None)
     assert {item.name for item in session.definitions} == {
         'bilibili_login_status', 'bilibili_get_my_videos', 'bilibili_get_comments',
-        'bilibili_reply_comment', 'bilibili_publish_video',
+        'bilibili_reply_comment', 'bilibili_publish_video', 'bilibili_publish_dynamic',
     }
     service = None
     assert tools.bind(request, authority, None, None, None).definitions == ()

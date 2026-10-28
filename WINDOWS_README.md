@@ -10,12 +10,12 @@
 
 ## 一键安装
 
-当前发布版本为 **0.5.9**，命令始终读取下载站 `latest.json` 中的可用版本。
+当前发布版本为 **0.5.10**，命令始终读取下载站 `latest.json` 中的可用版本。
 
-0.5.9 增强 MCP 连接与 HTTP 状态诊断，配置校验错误提供字段定位及中文提示，调整工具 schema 的格式注解处理。
-从已完成数据库升级的 0.5.8 更新无需新增 SQL 迁移，保留配置和数据库，更新后手动启动后端。
-[本版升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.5.9.md) 与
-[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.9-sql.zip) 提供完整升级信息。
+0.5.10 拆分插件配置、将 Comfy 独立为插件，增加素材分类和标签、调用记录页码分页，改进回复解析及 B站凭据保护。
+从 0.5.9 更新前停服备份，启动时自动执行 Comfy 插件选择和素材分类增量。
+[本版升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.5.10.md) 与
+[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.10-sql.zip) 提供完整升级信息。
 
 0.5.5 增加长期记忆版本、来源、冲突与遗忘管理，并统一模型身份与选择界面。
 从 0.5.4 升级前须停服备份，按

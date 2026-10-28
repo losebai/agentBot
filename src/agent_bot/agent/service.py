@@ -28,6 +28,7 @@ from agent_bot.media.contracts import MediaOwner, MediaScope
 from agent_bot.media.inputs import ImagePreparer
 from agent_bot.media.store import finish_cleanup
 from agent_bot.models import LlmRequestOptions
+from agent_bot.services.llm_timing import record_timing
 from agent_bot.services.request_deadline import (
     clear_request_deadline,
     remaining_timeout,
@@ -111,12 +112,8 @@ class AgentService:
             has_images=has_images, timeout_seconds=request.timeout_seconds,
         )
         model, provider, credential = router.resolved, router.provider, router.credential
-        # 运行配置是统一预算来源，旧预设轮次不再限制请求；调用方仅可收紧预算。
+        # 全局运行配置是唯一预算来源；旧预设和请求 max_steps 仅保留兼容，不参与执行。
         maximum = self.maximum_tool_calls
-        if request.max_steps is not None:
-            if maximum is not None and request.max_steps > maximum:
-                raise AgentError("AGENT_TOOL_LIMIT", status_code=422)
-            maximum = request.max_steps
         messages = [TurnMessage(role=m.role, text=m.content) for m in request.messages]
         if not messages or messages[-1].role != "user":
             messages.append(TurnMessage(role="user", text=request.prompt))
@@ -205,23 +202,40 @@ class AgentService:
             return AgentEvent(kind=kind, execution_id=execution_id, sequence=sequence, **values)
 
         async def save(method, value):
-            """记录故障只影响保存标记，不能触发重复执行。"""
+            """记录故障只影响保存标记；独立记录每次归档等待，不触发重复执行。"""
             nonlocal saved
+            record_started, record_status = time.monotonic(), "failed"
             try:
                 timeout = remaining_timeout(min(request.timeout_seconds, 10))
                 await asyncio.wait_for(method(value), timeout)
+                record_status = "completed"
                 return True
+            except asyncio.CancelledError:
+                record_status = "cancelled"
+                raise
             except Exception:
                 saved = False
                 return False
+            finally:
+                record_timing("agent_record", execution_id, record_started,
+                              status=record_status, operation=method.__name__)
 
         try:
             with request_deadline(request.timeout_seconds):
                 try:
-                    timeout = remaining_timeout(request.timeout_seconds)
-                    prepared, provider = await asyncio.wait_for(
-                        self._prepare(request, authority, execution_id, inputs), timeout
-                    )
+                    prepare_started, prepare_status = time.monotonic(), "failed"
+                    try:
+                        timeout = remaining_timeout(request.timeout_seconds)
+                        prepared, provider = await asyncio.wait_for(
+                            self._prepare(request, authority, execution_id, inputs), timeout
+                        )
+                        prepare_status = "completed"
+                    except asyncio.CancelledError:
+                        prepare_status = "cancelled"
+                        raise
+                    finally:
+                        record_timing("agent_prepare", execution_id, prepare_started,
+                                      status=prepare_status)
                     begun = await save(
                         self.records.begin,
                         RunStart(
@@ -412,6 +426,7 @@ class AgentService:
                 await finish_cleanup(inputs.aclose())
             finally:
                 self.active -= 1
+                record_timing("agent_total", execution_id, started, status=status)
 
     async def aclose(self):
         for provider in self.providers.values():

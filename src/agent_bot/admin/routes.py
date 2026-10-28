@@ -133,7 +133,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         start_time = datetime.combine(start_date, time.min)
         end_time = datetime.combine(end_date + timedelta(days=1), time.min)
         snapshot = await asyncio.to_thread(manager.read)
-        async with runtime.lease():
+        async with runtime.lease(read_only=True):
             config = runtime.config
             service = getattr(runtime, "ai_service", None)
             python_ai = (

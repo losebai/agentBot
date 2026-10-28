@@ -40,6 +40,17 @@ CATEGORY_TAGS: dict[MaterialCategory, str] = {
 }
 
 
+def _read_owner_filters(
+    owner: MediaOwner, *, allow_qq_library: bool,
+) -> tuple[list[str], list[str]]:
+    """跨会话读取只接受宿主授予的 QQ 权限，始终隔离管理端和写入归属。"""
+    conditions, args = ["entry=%s"], [owner.entry]
+    if not (allow_qq_library and owner.entry == "qq"):
+        conditions.append("session_id=%s")
+        args.append(owner.session_id)
+    return conditions, args
+
+
 def _metadata_filters(
     arguments: MaterialLibraryArguments | MaterialSearchArguments,
 ) -> tuple[list[str], list[str]]:
@@ -253,13 +264,16 @@ class MaterialStore(AiDatabase):
             (owner.entry, owner.session_id, source_key, owner.entry, owner.session_id))))
         return MaterialView.model_validate(rows[0]) if rows else None
 
-    async def describe(self, id: str, *, owner: MediaOwner) -> MaterialView:
-        """不存在与越权采用同一错误，不允许枚举其他会话素材。"""
+    async def describe(
+        self, id: str, *, owner: MediaOwner, allow_qq_library: bool = False,
+    ) -> MaterialView:
+        """读取沿用会话隔离；宿主授权的主人可读 QQ 库，不存在与越权同错。"""
         self.require_ready()
+        conditions, args = _read_owner_filters(owner, allow_qq_library=allow_qq_library)
         rows = await self.run(lambda c: _with_metadata(c, query(
             c, f"SELECT {PUBLIC_COLUMNS} FROM chat_material "
-            "WHERE id=%s AND entry=%s AND session_id=%s",
-            (id, owner.entry, owner.session_id))))
+            "WHERE id=%s AND " + " AND ".join(conditions),
+            (id, *args))))
         if not rows:
             raise MediaError("MATERIAL_NOT_FOUND", status_code=404)
         return MaterialView.model_validate(rows[0])
@@ -291,12 +305,14 @@ class MaterialStore(AiDatabase):
 
     async def search(
         self, owner: MediaOwner, arguments: MaterialSearchArguments,
+        *, allow_qq_library: bool = False,
     ) -> MaterialSearchResult:
-        """参数化过滤当前会话，按创建时间与 ID 稳定分页。"""
+        """按宿主授权过滤当前会话或 QQ 库，按创建时间与 ID 稳定分页。"""
         self.require_ready()
         conditions, args = _metadata_filters(arguments)
-        conditions.extend(("entry=%s", "session_id=%s"))
-        args.extend((owner.entry, owner.session_id))
+        owner_conditions, owner_args = _read_owner_filters(owner, allow_qq_library=allow_qq_library)
+        conditions.extend(owner_conditions)
+        args.extend(owner_args)
         if arguments.ids:
             conditions.append("id IN (" + ",".join("%s" for _ in arguments.ids) + ")")
             args.extend(arguments.ids)
@@ -323,10 +339,12 @@ class MaterialStore(AiDatabase):
         )
 
     @asynccontextmanager
-    async def open_content(self, id: str, *, owner: MediaOwner) -> AsyncIterator[BinaryIO]:
-        """读者持有同一存储锁，关闭或文件发布不会抢先释放目录。"""
+    async def open_content(
+        self, id: str, *, owner: MediaOwner, allow_qq_library: bool = False,
+    ) -> AsyncIterator[BinaryIO]:
+        """按同一读取授权复核原件，持锁直到关闭句柄以保护目录生命周期。"""
         async with self._lock:
-            asset = await self.describe(id, owner=owner)
+            asset = await self.describe(id, owner=owner, allow_qq_library=allow_qq_library)
             async with self._open_file(asset) as file:
                 yield file
 

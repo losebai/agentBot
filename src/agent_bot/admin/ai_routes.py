@@ -33,8 +33,8 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
     """绑定当前运行时服务，目录响应不公开密钥。"""
 
     async def call_records(action, **kwargs):
-        """统一查询仍持有运行时租约并沿用已认证路由。"""
-        async with runtime.lease():
+        """归档只读查询不等待长推理排空，仍计入快照使用者并沿用管理认证。"""
+        async with runtime.lease(read_only=True):
             service = getattr(runtime, "ai_service", None)
             if service is None:
                 raise AiError("AI_NOT_INITIALIZED", status_code=503)
@@ -85,9 +85,9 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
         """统一详情保留旧字段名，避免混淆输入与模型回复。"""
         return await call_records("get_call", id=id)
 
-    async def operate(action: str, *args, records: bool = False, **kwargs):
-        """读写操作持有运行时租约，返回仅序列化公开字段的快照。"""
-        async with runtime.lease():
+    async def operate(action: str, *args, records: bool = False, read_only: bool = False, **kwargs):
+        """数据库观察允许在排空期间完成，修改操作仍等待完整配置切换。"""
+        async with runtime.lease(read_only=read_only):
             service = getattr(runtime, "ai_service", None)
             if service is None:
                 raise AiError("AI_NOT_INITIALIZED", status_code=503)
@@ -99,7 +99,8 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
 
     @router.get("/ai/providers", response_model=Page[ProviderView])
     async def providers(limit: int = Query(50, ge=1, le=100), cursor: str | None = None):
-        return await operate("list_providers", limit, cursor)
+        """读取数据库目录，不借用供应商 HTTP 客户端。"""
+        return await operate("list_providers", limit, cursor, read_only=True)
 
     @router.post("/ai/providers", response_model=ProviderView, status_code=201)
     async def create_provider(body: ProviderCreate):
@@ -120,7 +121,7 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
         provider_id: int | None = Query(None, ge=1),
     ):
         """按供应商显示本地登记状态，同名上游模型分别处理。"""
-        return await operate("list_models", limit, cursor, provider_id)
+        return await operate("list_models", limit, cursor, provider_id, read_only=True)
 
     @router.get("/ai/providers/{id}/upstream-models", response_model=UpstreamModels)
     async def upstream_models(id: int, expected_revision: int = Query(..., ge=1)):
@@ -158,6 +159,7 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
         return await operate(
             "list_records",
             records=True,
+            read_only=True,
             session_id=session_id,
             status=status,
             limit=limit,
@@ -166,4 +168,5 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
 
     @router.get("/ai/sessions/{execution_id}", response_model=SessionDetail)
     async def record(execution_id: str):
-        return await operate("get_record", execution_id, records=True)
+        """只读执行归档不因配置等待长推理而不可见。"""
+        return await operate("get_record", execution_id, records=True, read_only=True)

@@ -61,14 +61,17 @@ class ToolRuntime:
 
     @asynccontextmanager
     async def open(self, snapshot, request, authority, *, media_scope=None, images=()):
-        """关联 MCP 自动开放白名单内工具，内置工具仍遵循预设与入口授权交集。"""
+        """工具遵循预设与入口授权交集，主人素材权限由真实令牌逐次验证。"""
         if request.tools == ():
             yield BoundTools((), {})
             return
         servers = snapshot.mcps
         if not {s.code for s in servers} <= set(authority.allowed_mcp_services):
             raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
-        async with self.connector.open(servers, remaining=lambda: remaining_timeout(300)) as remote:
+        async with self.connector.open(
+            servers, remaining=lambda: remaining_timeout(300),
+            request_id=media_scope.execution_id if media_scope is not None else None,
+        ) as remote:
             definitions, handlers = list(remote.tools), {t.name: remote.call for t in remote.tools}
             auth = authority.model_copy(
                 update={
@@ -81,9 +84,24 @@ class ToolRuntime:
             if self.knowledge_store is not None:
                 builtin_tools.append(KnowledgeSearchTool(self.knowledge_store))
             if self.material_store is not None and media_scope is not None:
-                builtin_tools.append(MaterialSearchTool(self.material_store, media_scope.owner))
+
+                async def material_library_access() -> bool:
+                    """只信任当前执行的 QQ 令牌，不接受模型指定身份或借用其他会话。"""
+                    if (authority.entry != "qq" or media_scope.owner.entry != "qq"
+                            or self.chat_bridge is None or authority.chat_token is None):
+                        return False
+                    context = await self.chat_bridge.context(authority)
+                    context.ensure_active()
+                    if context.session_id != media_scope.owner.session_id:
+                        raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
+                    return context.material_library_access
+
+                builtin_tools.append(MaterialSearchTool(
+                    self.material_store, media_scope.owner, library_access=material_library_access,
+                ))
                 builtin_tools.append(MaterialGetTool(
                     self.material_store, media_scope, self.media_store,
+                    library_access=material_library_access,
                 ))
             for tool in builtin_tools:
                 definitions.append(tool.definition)

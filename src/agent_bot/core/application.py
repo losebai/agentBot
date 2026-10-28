@@ -174,9 +174,11 @@ class ApplicationRuntime:
         """已处理版本与需重启字段分别报告。"""
         return self._reloader.revision
 
-    def lease(self, *, wait: bool = True) -> AbstractAsyncContextManager[None]:
-        """共享同一快照保护；管理读取可拒绝排队，避免刷新等待长推理时页面卡住。"""
-        return self.gate.lease(wait=wait)
+    def lease(
+        self, *, wait: bool = True, read_only: bool = False,
+    ) -> AbstractAsyncContextManager[None]:
+        """数据库观察可在排空时读取，执行请求必须等待完整快照切换。"""
+        return self.gate.lease(wait=wait, read_only=read_only)
 
     def bind_chat_bridge(self, bridge: ChatToolBridge) -> None:
         """平台工具通过显式能力注入，构造新快照时继续使用同一桥。"""
@@ -250,7 +252,7 @@ class ApplicationRuntime:
         return await self._reloader.refresh_once()
 
     async def _apply_settings(self, stored: VersionedSettings) -> None:
-        """在共享门闩内原子发布公共和渠道快照，失败恢复原生产者。"""
+        """排空后同步发布两组快照，先开放新快照再释放旧客户端，失败恢复生产者。"""
         config, _ = effective_runtime_config(stored.config, self.config)
         if config == self.config:
             return
@@ -261,7 +263,7 @@ class ApplicationRuntime:
         new_qq = None
         published = False
         try:
-            await self.gate.begin_refresh()
+            await self.gate.begin_refresh(allow_readers=True)
             if participant is not None:
                 await participant.pause()
             await self.gate.wait_until_idle()
@@ -272,9 +274,14 @@ class ApplicationRuntime:
             published = True
         finally:
             try:
+                if not published and participant is not None:
+                    participant.publish(old_qq)
+            finally:
+                # 排空与同步发布之间没有让出事件循环；新请求只会借用完整的新快照。
+                # 旧客户端关闭可能等待网络收尾，不应继续阻塞管理页或新模型请求。
+                await self.gate.end_refresh()
+            try:
                 if not published:
-                    if participant is not None:
-                        participant.publish(old_qq)
                     await close_actions(
                         [
                             *([lambda: participant.close(new_qq)] if new_qq is not None else []),
@@ -293,7 +300,6 @@ class ApplicationRuntime:
                         ]
                     )
             finally:
-                await self.gate.end_refresh()
                 if participant is not None:
                     await participant.resume()
 

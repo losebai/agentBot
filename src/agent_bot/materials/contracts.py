@@ -28,7 +28,7 @@ def _normalize_tag_filter(value: str) -> str:
 
 
 class MaterialView(AiModel):
-    """素材 ID 可用于记忆关联，读取原件仍需重新验证会话。"""
+    """素材 ID 可用于记忆关联，读取原件仍需重新验证宿主授予的访问权限。"""
 
     id: MaterialId
     name: str = Field(min_length=1, max_length=255)
@@ -134,7 +134,8 @@ class MaterialSearchResult(AiModel):
 
 
 MATERIAL_TOOL_DESCRIPTION = (
-    "查询当前会话已保存的图片和文件素材。可传 ids 精确读取，或 query 按文件名、说明查询，"
+    "查询当前会话的图片和文件素材；真人机器人主人可跨 QQ 会话检索 QQ 素材，"
+    "其他用户限当前会话，不能读取管理端素材。可传 ids 精确读取，或 query 按文件名、说明查询，"
     "kind 筛选 image/file，category 筛选来源类型，tag 精确筛选标签；"
     "空条件列出最近素材，offset 翻页。返回真实素材 ID、categories、tags 和元数据，"
     "不重新识图，不执行文件。保存图片记忆时将实际存在的 ID 传给 memory.material_ids。"

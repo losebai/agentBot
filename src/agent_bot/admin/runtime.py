@@ -41,9 +41,9 @@ class PluginRuntimeProvider:
         """Resolve the current Python service under the caller's runtime lease."""
         return self.plugin.get_runtime_state().ai_client.python_service
 
-    def lease(self):
-        """旧插件入口同样快速报告正在刷新，保留原有快照保护。"""
-        return self.plugin.acquire_runtime(wait=False)
+    def lease(self, *, read_only: bool = False):
+        """旧入口同样允许排空时的数据库观察，执行仍保持快照保护。"""
+        return self.plugin.acquire_runtime(wait=False, read_only=read_only)
 
     @property
     def queue_stores(self):

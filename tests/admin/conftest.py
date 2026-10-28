@@ -26,8 +26,8 @@ class FakeRuntime:
     model_guard: object = field(default_factory=lambda: AsyncMock())
 
     @asynccontextmanager
-    async def lease(self):
-        """Mirror the runtime lease boundary in an isolated test."""
+    async def lease(self, *, read_only: bool = False):
+        """隔离测试保留只读观察与执行的租约接口，不启动真实服务。"""
         yield
 
     def bots(self):

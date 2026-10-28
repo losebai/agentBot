@@ -53,8 +53,9 @@ class AgentCreate(CodedItem):
     skill_ids: tuple[int, ...] = Field(default=(), max_length=256)
     tools: tuple[str, ...] = Field(default=(), max_length=256)
     mcp_ids: tuple[int, ...] = Field(default=(), max_length=3)
-    # 历史数据库兼容字段；执行预算统一来自机器人配置，不再读取预设轮次。
-    max_steps: int = Field(default=3, ge=1)
+    # 历史数据库兼容字段已弃用；执行预算统一来自全局机器人配置。
+    max_steps: int = Field(default=3, ge=1, deprecated=True,
+                           description="已弃用且执行时忽略，工具调用预算统一使用全局配置")
     options: LlmRequestOptions = Field(default_factory=LlmRequestOptions)
 
     @field_validator("skill_ids", "tools", "mcp_ids")
@@ -175,8 +176,9 @@ class AgentRequest(AiModel):
     request_id: str = Field(min_length=1, max_length=256)
     tools: tuple[str, ...] | None = Field(default=None, max_length=256)
     mcp_services: tuple[str, ...] | None = Field(default=None, max_length=3)
-    # 旧请求字段现在按实际工具调用计数，只能收紧运行配置预算。
-    max_steps: int | None = Field(default=None, ge=1)
+    # 旧请求字段已弃用，既不收紧也不扩大全局工具调用预算。
+    max_steps: int | None = Field(default=None, ge=1, deprecated=True,
+                                  description="已弃用且执行时忽略，工具调用预算统一使用全局配置")
     options: LlmRequestOptions = Field(default_factory=LlmRequestOptions)
     timeout_seconds: float = Field(default=300, gt=0, le=3600, allow_inf_nan=False)
 

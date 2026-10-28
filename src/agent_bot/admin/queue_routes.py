@@ -11,8 +11,8 @@ def install_queue_routes(router: APIRouter, runtime) -> None:
 
     @router.get("/queues/dead-letters")
     async def counts() -> dict[str, int | bool]:
-        """读取失败数量；禁用或尚未启动的 QQ 队列明确返回不可用。"""
-        async with runtime.lease():
+        """排空期间仍可读失败数量，禁用或尚未启动的 QQ 队列明确不可用。"""
+        async with runtime.lease(read_only=True):
             stores = getattr(runtime, "queue_stores", ())
             if not stores:
                 return {"available": False, "text": 0, "images": 0, "total": 0}

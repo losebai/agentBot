@@ -22,7 +22,9 @@ class AgentProbeRequest(ApiModel):
     messages: list[ChatMessage] = Field(default_factory=list, max_length=24)
     session_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
-    max_steps: int | None = Field(default=None, ge=1)
+    # 仅兼容旧客户端，不允许管理探测请求覆盖全局预算。
+    max_steps: int | None = Field(default=None, ge=1, deprecated=True,
+                                  description="已弃用且执行时忽略，工具调用预算统一使用全局配置")
     timeout_seconds: float | None = Field(default=None, gt=0, le=3600, allow_inf_nan=False)
 
     @model_validator(mode="after")
@@ -45,7 +47,7 @@ class AgentChatProbe:
         self.runtime = runtime
 
     def request(self, body, request_id):
-        """会话与附件归属来自服务端；长视频预算只沿用管理员明确配置的超时。"""
+        """会话与附件归属来自服务端；忽略旧预算字段，仅允许收紧已配置的超时。"""
         config = self.runtime.config
         timeout = min(config.chat_timeout_seconds, 3600)
         if body.timeout_seconds is not None:
@@ -65,7 +67,6 @@ class AgentChatProbe:
             attachment_ids=body.attachment_ids,
             session_id=f"admin_{body.session_id}",
             request_id=body.request_id or request_id,
-            max_steps=body.max_steps,
             timeout_seconds=timeout,
         )
 

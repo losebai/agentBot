@@ -111,8 +111,9 @@ async def test_configured_calls_then_final_only(agent_database, agent_params, se
 
 
 @pytest.mark.parametrize("maximum", [None, 5, 50])
+@pytest.mark.parametrize("legacy_request_limit", [1, 100])
 async def test_config_controls_actual_calls_without_hidden_limits(
-    agent_database, agent_params, seeded_model, maximum,
+    agent_database, agent_params, seeded_model, maximum, legacy_request_limit,
 ):
     """超过单批八次、总计四十次及预设轮次后，仍只服从运行配置。"""
     _, _, model = seeded_model
@@ -146,32 +147,30 @@ async def test_config_controls_actual_calls_without_hidden_limits(
         maximum_tool_calls=maximum,
     )
     result = await service.complete(
-        AgentRequest(agent_code="helper", prompt="查资料", session_id="s", request_id="r"),
+        AgentRequest(agent_code="helper", prompt="查资料", session_id="s", request_id="r",
+                     max_steps=legacy_request_limit),
         ExecutionAuthority(entry="admin", allowed_tools=("lookup",)),
     )
     assert len(tools.invoked) == (63 if maximum is None else maximum)
     assert result.content == "最终回答" and result.record_saved
 
 
-async def test_request_cannot_increase_configured_call_budget(
+async def test_legacy_request_above_global_budget_still_executes_global_budget(
     agent_database, agent_params, seeded_model,
 ):
-    """公开请求只能缩小服务端预算，不能扩大管理员设置的调用次数。"""
-    from agent_bot.agent.errors import AgentError
-
+    """旧请求较大值兼容接受，实际副作用次数仍严格服从全局配置。"""
     tools = Tools()
     service = AgentService(
         AgentCatalog(agent_params, connect=agent_database.connect),
         AgentRunStore(agent_params, connect=agent_database.connect),
         CredentialResolver(), {"openai-chat": Provider()}, tools, maximum_tool_calls=5,
     )
-    with pytest.raises(AgentError, match="AGENT_TOOL_LIMIT"):
-        await service.complete(
-            AgentRequest(model="local-model", prompt="查资料", session_id="s", request_id="r",
-                         max_steps=50),
-            ExecutionAuthority(entry="admin", allowed_tools=("lookup",)),
-        )
-    assert not tools.invoked
+    result = await service.complete(
+        AgentRequest(model="local-model", prompt="查资料", session_id="s", request_id="r",
+                     max_steps=50),
+        ExecutionAuthority(entry="admin", allowed_tools=("lookup",)),
+    )
+    assert result.content == "最终回答" and len(tools.invoked) == 5
 
 
 async def test_authorization_failure_precedes_all_side_effects(

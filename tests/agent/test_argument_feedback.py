@@ -84,7 +84,7 @@ async def test_argument_preflight_records_failures_and_model_can_correct_within_
 ):
     """校验失败不终止整条会话，拒绝批次不执行，修正后仅执行新调用一次。"""
     tools, provider = CheckedTools(), CorrectingProvider()
-    service = service_for(agent_database, agent_params, tools=tools)
+    service = service_for(agent_database, agent_params, tools=tools, maximum_tool_calls=3)
     service.providers["openai-chat"] = provider
     events = [event async for event in service.stream(
         request().model_copy(update={"max_steps": 3}),
@@ -221,7 +221,7 @@ async def test_repeated_invalid_arguments_do_not_add_implicit_model_rounds(
             )))
 
     tools, provider = CheckedTools(), InvalidProvider()
-    service = service_for(agent_database, agent_params, tools=tools)
+    service = service_for(agent_database, agent_params, tools=tools, maximum_tool_calls=2)
     service.providers["openai-chat"] = provider
     result = await service.complete(request().model_copy(update={"max_steps": 2}),
                                     ExecutionAuthority(entry="qq", allowed_tools=("lookup",)))

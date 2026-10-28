@@ -286,12 +286,13 @@ def effective_runtime_config(
 
 
 async def close_runtime_state(state: RuntimeState) -> None:
-    """只释放 QQ 自持客户端；兼容独立入口才释放自行构建的公共快照。"""
+    """QQ 自持客户端独立释放；兼容入口同时归还自建公共快照的 MCP 缓存。"""
     from agent_bot.core.application import close_actions
 
     await close_actions([
         state.chat_service.aclose,
         *([state.ai_client.aclose] if state.owns_core else []),
+        *([state.core_state.mcp_connector.aclose] if state.owns_core else []),
         *([state.naraka_client.aclose] if state.naraka_client is not None else []),
         *([state.core_state.comfy_resources.aclose]
           if state.owns_core and state.core_state.comfy_resources is not None else []),

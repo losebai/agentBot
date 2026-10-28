@@ -168,12 +168,16 @@ class ChatToolSessionManager:
         *,
         image_urls: tuple[str, ...] = (),
     ) -> AsyncIterator[ChatToolSessionLease]:
-        """为同步请求绑定工具身份，所有绘图工具共享请求级额度。"""
+        """为真人请求签发工具与主人素材权限，所有绘图工具共享请求级额度。"""
 
         tools = self.available_tools(event)
         config = self._config_provider()
         store = self._store_provider()
-        if not tools or store is None:
+        material_library_access = (
+            config.chat_mcp_enabled and str(event.user_id) != str(bot.self_id)
+            and str(event.user_id) in config.superusers
+        )
+        if (not tools and not material_library_access) or store is None:
             yield ChatToolSessionLease(tools=(), token=None)
             return
 
@@ -207,6 +211,7 @@ class ChatToolSessionManager:
                 group_member_provider if isinstance(event, GroupMessageEvent) else None
             ),
             allowed_tools=frozenset(tools),
+            material_library_access=material_library_access,
             bot_config_tools=self._bot_config_tools_provider(),
             workflow_service=self._workflow_service_provider(),
             workflow_collector=collector,
@@ -250,12 +255,16 @@ class ChatToolSessionManager:
         self,
         job: ConversationJob,
     ) -> AsyncIterator[ChatToolSessionLease]:
-        """恢复回执和真实用户身份；自动任务不能借主人账号获得配置能力。"""
+        """恢复真实用户授权；自动任务不能借主人账号获得配置及跨会话素材权限。"""
 
-        if not job.chat_tools and not job.laya_decision:
+        config = self._config_provider()
+        material_library_access = (
+            config.chat_mcp_enabled and has_user_memory_source(job)
+            and job.user_id in config.superusers
+        )
+        if not job.chat_tools and not job.laya_decision and not material_library_access:
             yield ChatToolSessionLease(tools=(), token=None)
             return
-        config = self._config_provider()
         store = self._store_provider()
         if store is None or not config.chat_mcp_enabled:
             raise RuntimeError("queued chat tools are not available")
@@ -300,6 +309,7 @@ class ChatToolSessionManager:
             naraka_service=self._naraka_service_provider(),
             group_member_provider=group_member_provider if group_id is not None else None,
             allowed_tools=frozenset(job.chat_tools),
+            material_library_access=material_library_access,
             bot_config_tools=self._bot_config_tools_provider(),
             workflow_service=workflow_service,
             workflow_collector=collector,

@@ -647,7 +647,7 @@ class ChatService:
         laya_decision: bool = False,
         record_user_input: bool = True,
     ) -> str:
-        """自然聊天默认进入Agent，构建历史时计入QQ来源；专用正文生成显式关闭工具。"""
+        """自然聊天进入 Agent，保留素材专用身份令牌；专用正文生成显式关闭工具。"""
 
         normalized = self._prompt_builder.normalize(prompt)
         current_prompt = (
@@ -655,7 +655,8 @@ class ChatService:
             if chat_context is not None
             else self._prompt_builder.current_user_prompt(normalized, user_name)
         )
-        if bool(chat_tools or laya_decision) != bool(tool_session_token):
+        # 素材工具由 Agent 内置，主人可只携带身份令牌；远程聊天工具仍必须有令牌。
+        if (chat_tools or laya_decision) and not tool_session_token:
             raise ValueError("chat tools and tool session token must be provided together")
         effective_request_id = request_id or f"qq-{uuid.uuid4().hex}"
 
@@ -759,7 +760,7 @@ class ChatService:
                     context_options["allow_tools"] = False
             if laya_decision:
                 context_options["laya_decision"] = True
-            if chat_tools or laya_decision:
+            if chat_tools or laya_decision or tool_session_token:
                 answer = await self.client.complete(
                     model=model_id,
                     session_id=session_id,

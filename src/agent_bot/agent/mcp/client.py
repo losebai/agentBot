@@ -1,8 +1,12 @@
 """MCP 工作任务拥有 SDK 生命周期，取消时由同一任务完成资源释放。"""
 
 import asyncio
+import contextvars
+import hashlib
 import logging
+import time
 from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass, field
 
 import anyio
 import httpx2
@@ -15,6 +19,7 @@ from agent_bot.agent.errors import AgentError
 from agent_bot.agent.mcp.discovery import convert_result, discover
 from agent_bot.agent.mcp.http import MAX_MCP_RESPONSE_BYTES, client_factory
 from agent_bot.agent.tools.schema import ToolSchema
+from agent_bot.services.llm_timing import record_timing
 
 logger = logging.getLogger(__name__)
 
@@ -54,16 +59,20 @@ class McpWorker:
     """持有单个 MCP 服务连接和显式结果转换器。"""
     def __init__(
         self, server, secret, remaining, result_converter=convert_result, *, catalog=False,
+        reusable=False,
     ):
         """每个任务拥有 SDK 生命周期；只读管理目录不占用执行期工具预算。"""
         self.server, self.secret, self.remaining = server, secret, remaining
         self.result_converter = result_converter
         self.catalog = catalog
+        self.reusable = reusable
         self.queue = asyncio.Queue(maxsize=1)
         self.ready = asyncio.get_running_loop().create_future()
-        self.task = asyncio.create_task(self._serve())
+        # 长连接只持有服务配置；不能继承上一请求的截止时间、身份或模型上下文。
+        self.task = asyncio.create_task(self._serve(), context=contextvars.Context())
         self.tools = ()
         self.write_stream = None
+        self.http_client = None
         self.failure = None
 
     async def _serve(self):
@@ -83,12 +92,14 @@ class McpWorker:
             factory = client_factory(
                 self.server,
                 self.secret,
-                min(self.server.timeout_seconds, self.remaining()),
+                httpx2.Timeout(self.server.timeout_seconds, read=None) if self.reusable
+                else min(self.server.timeout_seconds, self.remaining()),
                 report_failure,
             )
             async with AsyncExitStack() as stack:
                 if self.server.transport == "streamable":
                     client = await stack.enter_async_context(factory())
+                    self.http_client = client
                     streams = await stack.enter_async_context(
                         streamable_http_client(
                             self.server.endpoint, http_client=client,
@@ -100,7 +111,8 @@ class McpWorker:
                         sse_client(
                             self.server.endpoint,
                             timeout=min(10, self.remaining()),
-                            sse_read_timeout=self.remaining(),
+                            # 空闲事件流由运行时关闭；初始化与每次 RPC 仍各自有界。
+                            sse_read_timeout=None if self.reusable else self.remaining(),
                             httpx_client_factory=factory,
                         )
                     )
@@ -132,6 +144,8 @@ class McpWorker:
                     if not current.done():
                         current.set_result(value)
                     current = None
+                    # 空闲连接只保留目录和认证快照，不长期引用上一请求的工具正文。
+                    call = definition = result = value = None
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -171,8 +185,12 @@ class McpWorker:
         return result
 
     async def close(self):
-        # Closing the public send stream prevents the SDK's shielded courtesy
-        # cancellation notification from waiting on an already blocked SSE POST.
+        """先收紧退出请求预算，再取消并等待 SDK；不能遗留受屏蔽的会话 DELETE。"""
+        if self.http_client is not None:
+            # 长事件流的空闲 read=None 不适用于退出时的 DELETE/取消通知。
+            # 清理 HTTP 最多一秒，为五秒的工作任务退出预算保留资源释放时间。
+            self.http_client.timeout = httpx2.Timeout(1)
+        # 先关发送流，避免 SDK 在已阻塞的 SSE POST 上等待礼貌取消通知。
         if self.write_stream is not None:
             await self.write_stream.aclose()
         self.task.cancel()
@@ -182,6 +200,16 @@ class McpWorker:
             if not self.task.done():
                 raise
         except asyncio.TimeoutError:
+            # 强制归还套接字并再次取消后必须 join，移出连接池不能视为清理完成。
+            try:
+                if self.http_client is not None:
+                    await self.http_client.aclose()
+            finally:
+                self.task.cancel()
+                try:
+                    await self.task
+                except asyncio.CancelledError:
+                    pass
             raise AgentError("AGENT_MCP_CLOSE_TIMEOUT", status_code=503) from None
 
 
@@ -197,10 +225,117 @@ class McpConnection:
         raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
 
 
+@dataclass
+class _BorrowedWorker:
+    """独占借出的连接及本次截止时间，不在多个请求间共享执行队列。"""
+
+    worker: McpWorker = field(init=False)
+    key: tuple
+    deadline: float
+    busy: bool = True
+    retired: bool = False
+    reused: bool = False
+
+    def remaining(self) -> float:
+        """使用可重新绑定的单调时钟预算，不读取后台任务继承的请求上下文。"""
+        return self.deadline - time.monotonic()
+
+
 class McpConnector:
-    """打开经过目录授权的 MCP 服务，并统一管理退出与取消。"""
-    def __init__(self, credentials):
+    """运行时可复用已授权连接；独占借用避免不同请求的工具调用互相排队。"""
+    def __init__(self, credentials, *, reuse_connections: bool = False):
+        """一次性调用默认自行关闭，长期宿主显式启用复用并负责最终释放。"""
         self.credentials = credentials
+        self.reuse_connections = reuse_connections
+        self._workers: list[_BorrowedWorker] = []
+        self._closed = False
+
+    async def _checkout(self, server, remaining, result_converter):
+        """按完整服务快照和凭据隔离目录，版本变化只淘汰空闲的旧连接。"""
+        if self._closed:
+            raise AgentError("AGENT_MCP_UNAVAILABLE", status_code=503)
+        seconds = remaining()
+        if seconds <= 0:
+            raise AgentError("AGENT_TIMEOUT", status_code=504)
+        secret = self.credentials.resolve(server)
+        snapshot = server.model_dump_json(exclude={"created_at", "updated_at"})
+        fingerprint = hashlib.sha256(
+            snapshot.encode() + b"\0"
+            + (secret.get_secret_value().encode() if secret is not None else b""),
+        ).digest()
+        key = (server.id, server.revision, fingerprint, result_converter)
+        obsolete = []
+        borrowed = None
+        for item in tuple(self._workers):
+            if item.worker.server.id == server.id and item.key != key and (
+                item.worker.server.revision <= server.revision
+            ):
+                item.retired = True
+            healthy = not item.worker.task.done() and item.worker.failure is None
+            if not item.busy and (item.retired or not healthy):
+                self._workers.remove(item)
+                obsolete.append(item.worker)
+            elif (self.reuse_connections and borrowed is None and not item.busy
+                  and item.key == key and healthy):
+                borrowed = item
+                item.busy = True
+                item.reused = True
+                item.deadline = time.monotonic() + seconds
+        if borrowed is None:
+            # 先登记借用，再等待网络准备；并发请求将建立独立连接而非等待此执行结束。
+            borrowed = _BorrowedWorker(key, time.monotonic() + seconds)
+            borrowed.worker = McpWorker(
+                server, secret, borrowed.remaining, result_converter,
+                reusable=self.reuse_connections,
+            )
+            self._workers.append(borrowed)
+            new = True
+        else:
+            new = False
+        try:
+            with anyio.CancelScope(shield=True):
+                results = await asyncio.gather(
+                    *(worker.close() for worker in obsolete), return_exceptions=True,
+                )
+            if any(isinstance(result, BaseException) for result in results):
+                raise AgentError("AGENT_MCP_CLOSE_FAILED", status_code=503)
+            if new:
+                await borrowed.worker.start()
+            return borrowed
+        except BaseException:
+            self._workers.remove(borrowed)
+            with anyio.CancelScope(shield=True):
+                await borrowed.worker.close()
+            raise
+
+    async def _release(self, item: _BorrowedWorker, *, failed: bool) -> None:
+        """成功连接最多保留一个空闲副本，失败和取消立即关闭且不重放工具。"""
+        item.busy = False
+        redundant = any(
+            other is not item and not other.busy and other.key == item.key
+            for other in self._workers
+        )
+        newer = any(
+            other.worker.server.id == item.worker.server.id
+            and other.worker.server.revision > item.worker.server.revision
+            for other in self._workers
+        )
+        if (failed or self._closed or not self.reuse_connections or item.retired or newer
+                or redundant or item.worker.task.done() or item.worker.failure is not None):
+            if item in self._workers:
+                self._workers.remove(item)
+            await item.worker.close()
+
+    async def aclose(self) -> None:
+        """宿主排空请求后关闭全部缓存任务，避免热更新或退出遗留事件流。"""
+        self._closed = True
+        workers, self._workers = self._workers, []
+        with anyio.CancelScope(shield=True):
+            results = await asyncio.gather(
+                *(item.worker.close() for item in workers), return_exceptions=True,
+            )
+        if any(isinstance(result, BaseException) for result in results):
+            raise AgentError("AGENT_MCP_CLOSE_FAILED", status_code=503)
 
     async def list_tools(self, server, *, remaining):
         """只读发现管理目录，不向调用方提供可执行连接，取消时等待所属任务退出。"""
@@ -213,47 +348,78 @@ class McpConnector:
                 await worker.close()
 
     @asynccontextmanager
-    async def open(self, servers, *, remaining, result_converter=convert_result):
-        """限定合并工具数量并单独拒绝重名，固定决策仍使用严格结构化解析。"""
+    async def open(
+        self, servers, *, remaining, result_converter=convert_result, request_id: str | None = None,
+    ):
+        """独立服务并行准备，目录仍逐次校验权限；失败只沿用明确的可选服务规则。"""
         if len(servers) > 3:
             raise AgentError("AGENT_MCP_SERVICE_LIMIT", status_code=422)
-        workers, warnings = [], []
+        borrowed, warnings = [], []
         failed = False
+        started = time.monotonic()
+        prepared = False
+        selected = [server for server in servers if server.allowed_tools]
+
+        async def checkout(server):
+            """准备一项即登记归还责任，其他服务准备时取消也不会漏掉已借出的连接。"""
+            item = await self._checkout(server, remaining, result_converter)
+            borrowed.append(item)
+            return item
+
         try:
-            for server in servers:
-                # 管理端关闭全部工具后保留服务配置，但执行不再建立无用连接。
-                if not server.allowed_tools:
-                    continue
-                if remaining() <= 0:
-                    raise AgentError("AGENT_TIMEOUT", status_code=504)
-                worker = McpWorker(
-                    server, self.credentials.resolve(server),
-                    remaining, result_converter,
+            disabled = {
+                server.id: server.revision for server in servers if not server.allowed_tools
+            }
+            obsolete = []
+            for item in tuple(self._workers):
+                if item.worker.server.revision <= disabled.get(item.worker.server.id, -1):
+                    item.retired = True
+                    if not item.busy:
+                        self._workers.remove(item)
+                        obsolete.append(item.worker)
+            with anyio.CancelScope(shield=True):
+                closed = await asyncio.gather(
+                    *(worker.close() for worker in obsolete), return_exceptions=True,
                 )
-                workers.append(worker)
-                try:
-                    await worker.start()
-                except AgentError as error:
-                    await worker.close()
-                    workers.remove(worker)
-                    if remaining() <= 0 or server.required or error.code != "AGENT_MCP_UNAVAILABLE":
-                        raise
-                    warnings.append(ServiceWarning(code=error.code, service_code=server.code))
-            connection = McpConnection(workers, warnings)
+            if any(isinstance(result, BaseException) for result in closed):
+                raise AgentError("AGENT_MCP_CLOSE_FAILED", status_code=503)
+            outcomes = await asyncio.gather(*(
+                checkout(server) for server in selected
+            ), return_exceptions=True)
+            # 成功路径按配置顺序还原目录；取消路径则由上面的即时登记负责归还。
+            borrowed = [value for value in outcomes if isinstance(value, _BorrowedWorker)]
+            for server, outcome in zip(selected, outcomes, strict=True):
+                if isinstance(outcome, BaseException):
+                    if (not isinstance(outcome, AgentError) or remaining() <= 0
+                            or server.required or outcome.code != "AGENT_MCP_UNAVAILABLE"):
+                        raise outcome
+                    warnings.append(ServiceWarning(code=outcome.code, service_code=server.code))
+            connection = McpConnection([item.worker for item in borrowed], warnings)
             names = [t.name for t in connection.tools]
             if len(set(names)) != len(names):
                 raise AgentError("AGENT_TOOL_NAME_CONFLICT", status_code=409)
             if len(names) > MAX_MCP_TOOLS:
                 raise AgentError("AGENT_MCP_TOOL_LIMIT", status_code=422)
+            prepared = True
+            record_timing(
+                "mcp_prepare", request_id, started, status="partial" if warnings else "ready",
+                reused=bool(borrowed) and all(item.reused for item in borrowed),
+            )
             yield connection
-        except BaseException:
+        except BaseException as error:
             failed = True
+            if not prepared:
+                record_timing(
+                    "mcp_prepare", request_id, started,
+                    status="cancelled" if isinstance(error, asyncio.CancelledError) else "failed",
+                )
             raise
         finally:
-            # Each worker owns SDK enter/exit; closing it from a stream task is safe.
+            # 每个工作任务独占 SDK 生命周期；取消不遗留执行中的工具给后续请求。
             with anyio.CancelScope(shield=True):
                 outcomes = await asyncio.gather(
-                    *(w.close() for w in workers), return_exceptions=True
+                    *(self._release(item, failed=failed) for item in borrowed),
+                    return_exceptions=True,
                 )
             if not failed and any(isinstance(outcome, Exception) for outcome in outcomes):
                 raise AgentError("AGENT_MCP_CLOSE_FAILED", status_code=503)

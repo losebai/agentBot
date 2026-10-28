@@ -27,6 +27,52 @@ def _private_event() -> PrivateMessageEvent:
     )
 
 
+@pytest.mark.parametrize("is_owner", [True, False])
+async def test_material_library_access_requires_human_owner_in_direct_and_queue(
+    chat_plugin, monkeypatch, is_owner,
+):
+    """主人无其他聊天工具也能获签素材权限，自动回复不继承真人身份。"""
+    from unittest.mock import Mock
+
+    from agent_bot.services.conversation_queue import ConversationJob
+    from agent_bot.services.tool_sessions import ToolSessionStore
+
+    config = chat_plugin.plugin_config.model_copy(update={
+        "chat_mcp_enabled": True, "superusers": {"10001"} if is_owner else set(),
+        "chat_job_enabled": False, "chat_tagged_memory_enabled": False,
+        "chat_image_generation_enabled": False, "chat_mention_tool_enabled": False,
+    })
+    sessions = ToolSessionStore(ttl_seconds=30, max_sessions=2)
+    bot = Mock(self_id="90001")
+    manager = ChatToolSessionManager(
+        config_provider=lambda: config, store_provider=lambda: sessions,
+        naraka_service_provider=lambda: None,
+        group_member_refresher=lambda _bot, _group: None,
+    )
+    async with manager.open_chat_session(bot, _private_event(), "destination") as lease:
+        if is_owner:
+            assert (await sessions.resolve(lease.token)).material_library_access is True
+        else:
+            assert lease.token is None
+    monkeypatch.setattr(manager, "queued_bot", lambda _: bot)
+    job = ConversationJob(job_id="material-access", request_id="qq-material-access", created_at=1,
+                          session_id="destination", bot_id="90001", scene="private",
+                          user_id="10001", prompt="发送素材", memory_source_text="发送素材")
+    async with manager.open_queued_session(job) as lease:
+        if is_owner:
+            assert (await sessions.resolve(lease.token)).material_library_access is True
+        else:
+            assert lease.token is None
+    automatic = job.model_copy(update={"request_id": "auto-material-access"})
+    async with manager.open_queued_session(automatic) as lease:
+        assert lease.token is None
+    # 即使自动任务借用主人的 user_id 并持有正常工具令牌，也不能获得跨群权限。
+    monkeypatch.setattr(manager, "_image_tasks_provider", lambda: object())
+    automatic = automatic.model_copy(update={"chat_tools": ("local_workflow_cancel",)})
+    async with manager.open_queued_session(automatic) as lease:
+        assert (await sessions.resolve(lease.token)).material_library_access is False
+
+
 @pytest.mark.parametrize("enabled,mcp,configured", [
     (True, True, True), (False, True, True), (True, False, True), (True, True, False),
 ])

@@ -33,7 +33,12 @@ def install_agent_routes(router: APIRouter, runtime):
     chat = AgentChatProbe(runtime)
 
     async def operate(action, *args, records=False, **kwargs):
-        async with runtime.lease():
+        """仅数据库目录和归档可在刷新排空时读取，发现工具及执行仍需正常租约。"""
+        read_only = action in {
+            "list_agents", "get_agent", "list_skills", "get_skill", "list_mcps", "get_mcp",
+            "list_runs", "get_run", "list_steps",
+        }
+        async with runtime.lease(read_only=read_only):
             service = chat.service()
             result = await getattr(service.records if records else service.catalog, action)(
                 *args, **kwargs

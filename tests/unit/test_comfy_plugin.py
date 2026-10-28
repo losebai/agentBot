@@ -133,6 +133,7 @@ async def test_comfy_refresh_retires_only_after_active_request(monkeypatch):
     def build(config, *, comfy_resources):
         """保留生产关闭契约，只替换无关的公共 AI 服务。"""
         return SimpleNamespace(config=config, ai_client=AsyncMock(), tts_client=None,
+                               mcp_connector=AsyncMock(),
                                comfy_client=comfy_resources.client,
                                workflow_service=comfy_resources.workflow_service,
                                comfy_resources=comfy_resources, comfy_owner=comfy)

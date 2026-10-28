@@ -127,6 +127,7 @@ async def test_failed_page_read_reaches_model_and_records_failed_step(
     service = AgentService(
         AgentCatalog(agent_params, connect=agent_database.connect), records,
         CredentialResolver(), {'openai-chat': Provider()}, ToolRuntime(),
+        maximum_tool_calls=1,
     )
     result = await service.complete(AgentRequest(
         model=seeded_model[2].alias, session_id='qq-test', request_id='qq-read-failure',

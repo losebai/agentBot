@@ -72,8 +72,8 @@ def install_workflow_routes(router: APIRouter, runtime, settings: SettingsServic
     async def list_workflows(
         after: str | None = Query(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,127}$"),
     ) -> WorkflowCatalog:
-        """读取数据库目录，不访问 Comfy 服务或扫描磁盘。"""
-        async with runtime.lease():
+        """数据库目录可在刷新排空时读取，不访问 Comfy 服务或扫描磁盘。"""
+        async with runtime.lease(read_only=True):
             return await asyncio.to_thread(catalog, after)
 
     @router.post("/workflows/import", response_model=WorkflowImportResult)
@@ -117,8 +117,8 @@ def install_workflow_routes(router: APIRouter, runtime, settings: SettingsServic
 
     @router.get("/workflows/{workflow_key}", response_model=WorkflowDetail)
     async def workflow_detail(workflow_key: str) -> WorkflowDetail:
-        """插件租约保护读取；停用的模板仍可查看，但停用插件不开放存储。"""
-        async with runtime.lease():
+        """排空期间仍可只读查看模板，停机和插件能力边界保持受保护。"""
+        async with runtime.lease(read_only=True):
             return _detail(await asyncio.to_thread(store().get, workflow_key))
 
     @router.patch("/workflows/{workflow_key}", response_model=WorkflowDetail)

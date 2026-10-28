@@ -169,3 +169,16 @@ async def test_sync_and_stream_share_engine(agent_api):
     assert len(records) == 2 and "prompt" not in records[0]
     id = records[0]["execution_id"]
     assert (await api.get(f"/api/v1/agent-runs/{id}/steps", headers=HEADERS)).json()["items"]
+
+
+@pytest.mark.parametrize("legacy_request_limit", [1, 100])
+async def test_probe_legacy_budget_cannot_override_global(agent_api, legacy_request_limit):
+    """管理入口保留旧字段兼容，低值和高值都不能改变全局工具额度。"""
+    api, _, runtime = agent_api
+    runtime.agent_service.maximum_tool_calls = 2
+    response = await api.post("/api/v1/agent-runs", headers=HEADERS, json={
+        "agent_code": "helper", "prompt": "hello", "session_id": "test",
+        "max_steps": legacy_request_limit,
+    })
+    assert response.status_code == 200
+    assert len(runtime.agent_service.tool_runtime.invoked) == 2

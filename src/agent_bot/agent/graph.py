@@ -26,6 +26,7 @@ from agent_bot.agent.tools.langchain import LangChainTools
 from agent_bot.agent.tools.schema import bounded_json
 from agent_bot.ai.contracts import TokenUsage
 from agent_bot.ai.errors import AiError
+from agent_bot.services.llm_timing import record_timing
 from agent_bot.services.request_deadline import remaining_timeout
 
 if TYPE_CHECKING:
@@ -138,28 +139,45 @@ def build_agent_graph(
         while True:
             router = prepared.model_router
             selected_provider = provider
-            # 备用重新发布 model_start，让同步和流式消费者清除失败模型的草稿。
-            await emit("model_start", turn)
             completed, text = None, ""
+            attempt_started, attempt_status = time.monotonic(), "failed"
+            first_text_ms = None
             try:
-                if router:
-                    # 工具首次返回图片时的配置校验也纳入明确配置的备用模型接管边界。
-                    call = router.bind_call(call)
-                    selected_provider = router.provider
-                    base = [message for message in call.messages if message.role != "system"]
-                async with aclosing(selected_provider.stream_turn(call)) as stream:
-                    async for event in stream:
-                        if completed is not None:
-                            raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
-                        if event.kind == "text_delta":
-                            text += event.delta or ""
-                            if len(text.encode()) > 1048576:
-                                raise AgentError("AGENT_MODEL_RESPONSE_TOO_LARGE")
-                            await emit("text_delta", turn, delta=event.delta)
-                        elif event.kind == "turn_end":
-                            completed = event.turn
-                if completed is None or text != completed.content:
-                    raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+                try:
+                    # 尝试从 model_start 前计时，包含服务保存开始记录及消费者背压。
+                    # 备用重新发布该事件，让消费者清除失败模型的草稿。
+                    await emit("model_start", turn)
+                    if router:
+                        # 工具首次返回图片时的配置校验也纳入明确备用模型的接管边界。
+                        call = router.bind_call(call)
+                        selected_provider = router.provider
+                        base = [message for message in call.messages if message.role != "system"]
+                    async with aclosing(selected_provider.stream_turn(call)) as stream:
+                        async for event in stream:
+                            if completed is not None:
+                                raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+                            if event.kind == "text_delta":
+                                if event.delta and first_text_ms is None:
+                                    first_text_ms = (time.monotonic() - attempt_started) * 1000
+                                text += event.delta or ""
+                                if len(text.encode()) > 1048576:
+                                    raise AgentError("AGENT_MODEL_RESPONSE_TOO_LARGE")
+                                await emit("text_delta", turn, delta=event.delta)
+                            elif event.kind == "turn_end":
+                                completed = event.turn
+                    if completed is None or text != completed.content:
+                        raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+                    attempt_status = "completed"
+                except (asyncio.CancelledError, GeneratorExit):
+                    attempt_status = "cancelled"
+                    raise
+                finally:
+                    # 在备用决策前结束本次计时，失败、取消和工具轮无正文均可独立定位。
+                    record_timing(
+                        "model_attempt", prepared.execution_id, attempt_started,
+                        status=attempt_status, model=call.resolved.model.reference,
+                        turn=turn, first_text_ms=first_text_ms,
+                    )
             except AiError as error:
                 # QQ 已有正文遇到模型超时直接结束；备用接管会清空这轮可投递内容。
                 if error.code == "AI_TIMEOUT" and prepared.authority.entry == "qq" and text.strip():

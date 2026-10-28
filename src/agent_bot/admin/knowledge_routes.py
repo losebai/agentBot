@@ -49,16 +49,20 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
     """知识保持只增只读，记忆修订与批量操作在宿主租约内完成事务收尾。"""
 
     async def knowledge(action: str, *args, **kwargs):
-        """不依赖 QQ 插件和机器人连接，不缓存过期配置快照。"""
-        async with runtime.lease():
+        """知识列表和目录在刷新排空时仍可读，写事务继续遵守配置切换边界。"""
+        async with runtime.lease(read_only=action in {"list", "count", "get", "tags"}):
             store = getattr(runtime, "knowledge_store", None)
             if store is None:
                 raise KnowledgeError("KNOWLEDGE_UNAVAILABLE", status_code=503)
             return await getattr(store, action)(*args, **kwargs)
 
     async def memory(action: str, *args, **kwargs):
-        """管理读取附加目录标题，取消时等全部工作线程归还连接再释放运行时租约。"""
-        async with runtime.lease():
+        """只读观察允许排空期间完成，取消仍等工作线程归还连接后才退出租约。"""
+        read_only = action in {
+            "admin_list", "admin_get", "admin_revisions", "admin_conflicts",
+            "admin_tags", "admin_scopes",
+        }
+        async with runtime.lease(read_only=read_only):
             store = getattr(runtime, "tagged_memory_store", None)
             if store is None:
                 raise KnowledgeError("MEMORY_UNAVAILABLE", status_code=503)

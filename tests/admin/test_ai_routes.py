@@ -337,7 +337,7 @@ async def test_management_refresh_returns_public_error_without_waiting(python_ap
     api, _, runtime = python_api
 
     @asynccontextmanager
-    async def refreshing():
+    async def refreshing(*, read_only: bool = False):
         """模拟已关闭新租约入口的刷新状态，不修改数据库或运行快照。"""
         raise RuntimeRefreshInProgressError()
         yield
@@ -355,6 +355,34 @@ async def test_management_refresh_returns_public_error_without_waiting(python_ap
     )
     assert response.status_code == 503
     assert response.json()["code"] == "RUNTIME_REFRESHING"
+
+
+async def test_management_reads_remain_available_during_model_drain(python_api, monkeypatch):
+    """真实门闩排空长推理时仍可读统计和目录；认证及新推理的刷新限制不变。"""
+    from types import SimpleNamespace
+
+    from agent_bot.admin.application_runtime import ApplicationRuntimeProvider
+    from agent_bot.core.lifecycle import RuntimeLeaseGate
+
+    api, _, runtime = python_api
+    gate = RuntimeLeaseGate()
+    provider = ApplicationRuntimeProvider(SimpleNamespace(lease=gate.lease), None)
+    monkeypatch.setattr(runtime, "lease", provider.lease)
+    async with gate.lease():
+        await gate.begin_refresh(allow_readers=True)
+        try:
+            for path in ("status", "ai/records", "ai/records/count", "ai/models", "ai/providers"):
+                response = await api.get("/api/v1/" + path, headers=HEADERS)
+                assert response.status_code == 200, response.text
+                assert (await api.get("/api/v1/" + path)).status_code == 401
+            response = await api.post(
+                "/api/v1/chat/stream", headers=HEADERS,
+                json={"prompt": "离线测试", "session_id": "refresh", "messages": []},
+            )
+            assert response.status_code == 503
+            assert response.json()["code"] == "RUNTIME_REFRESHING"
+        finally:
+            await gate.end_refresh()
 
 
 async def test_status_statistics_use_live_counts_and_authenticated_archive(python_api):

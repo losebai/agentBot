@@ -14,7 +14,7 @@ from agent_bot.settings import DatabaseParams, VersionedSettings
 def fake_state(config):
     """用可计数的关闭方法替代公共 HTTP 客户端。"""
     return SimpleNamespace(config=config, ai_client=AsyncMock(), comfy_client=None,
-                           comfy_resources=None, tts_client=None)
+                           comfy_resources=None, tts_client=None, mcp_connector=AsyncMock())
 
 
 def fake_runtime(monkeypatch):
@@ -46,7 +46,7 @@ async def test_disable_save_keeps_live_selection_and_applies_other_values(monkey
 
 
 async def test_refresh_waits_active_lease_and_does_not_close_used_clients(monkeypatch):
-    """尚在使用的客户端须等待最后一个租约退出后才能释放。"""
+    """旧推理未结束时保持客户端可用且允许只读观察，退出租约后才发布和关闭。"""
     runtime = fake_runtime(monkeypatch)
     old = runtime.state
     async with runtime.lease():
@@ -55,6 +55,8 @@ async def test_refresh_waits_active_lease_and_does_not_close_used_clients(monkey
         assert not refresh.done()
         old.ai_client.aclose.assert_not_awaited()
         assert runtime.state is old
+        async with runtime.lease(wait=False, read_only=True):
+            assert runtime.state is old
     await refresh
     old.ai_client.aclose.assert_awaited_once()
     await runtime.stop()
@@ -85,3 +87,29 @@ async def test_failed_channel_publish_restores_both_snapshots_and_resumes(monkey
     participant.resume.assert_awaited_once()
     participant.close.assert_awaited_once_with(participant.build.return_value)
     await runtime.stop()
+
+
+async def test_new_snapshot_is_available_before_old_clients_finish_closing(monkeypatch):
+    """旧 HTTP 客户端释放缓慢时，新快照已可处理请求，不延长刷新拒绝窗口。"""
+    runtime = fake_runtime(monkeypatch)
+    old = runtime.state
+    closing = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_close():
+        """用事件控制清理耗时，避免以真实等待或网络超时制造回归。"""
+        closing.set()
+        await release.wait()
+
+    old.ai_client.aclose.side_effect = slow_close
+    refresh = asyncio.create_task(runtime.refresh_once())
+    try:
+        await asyncio.wait_for(closing.wait(), timeout=1)
+        async with runtime.lease(wait=False):
+            assert runtime.state is not old
+            assert runtime.config.chat_system_prompt == "新的提示"
+        assert not refresh.done()
+    finally:
+        release.set()
+        await asyncio.gather(refresh, return_exceptions=True)
+        await runtime.stop()

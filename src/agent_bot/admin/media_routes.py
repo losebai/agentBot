@@ -182,8 +182,8 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         limit: int = Query(20, ge=1, le=20),
         offset: int = Query(0, ge=0, le=10000),
     ):
-        """管理素材查询仍按所属管理会话过滤，不扩大到 QQ 素材。"""
-        async with runtime.lease():
+        """排空时仍可按所属管理会话只读查询素材，不扩大到 QQ 素材。"""
+        async with runtime.lease(read_only=True):
             return await resources().materials.search(
                 MediaOwner(entry="admin", session_id=f"admin_{session_id}"),
                 MaterialSearchArguments(query=query, kind=kind, limit=limit, offset=offset),
@@ -201,8 +201,8 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         cursor: str | None = Query(None, min_length=1, max_length=1024),
         page: int | None = Query(None),
     ) -> Page[MaterialLibraryView]:
-        """管理员素材库可只读浏览全部来源，不接受伪造的会话所有者。"""
-        async with runtime.lease():
+        """刷新排空时仍可只读浏览全部来源，不接受伪造的会话所有者。"""
+        async with runtime.lease(read_only=True):
             return await resources().materials.list_library(
                 MaterialLibraryArguments(query=query, kind=kind, entry=entry,
                                          session_id=session_id, limit=limit,
@@ -219,8 +219,8 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         tag: str = Query("", max_length=128),
         session_id: str = Query("", max_length=256, pattern=r"^[^\x00]*$"),
     ) -> MaterialLibraryCount:
-        """管理认证后独立计数，筛选改变时请求而非每次翻页重复计算。"""
-        async with runtime.lease():
+        """认证后独立只读计数，排空时也可加载，筛选改变后才重新统计。"""
+        async with runtime.lease(read_only=True):
             total = await resources().materials.count_library(MaterialLibraryArguments(
                 query=query, kind=kind, entry=entry, session_id=session_id,
                 category=category, tag=tag,
@@ -229,8 +229,8 @@ def install_media_routes(router: APIRouter, runtime) -> None:
 
     @router.get("/material-library/{id}", response_model=MaterialLibraryView)
     async def library_material(id: MaterialId) -> MaterialLibraryView:
-        """继承管理认证后读取完整素材说明，不与会话工具共享跨来源权限。"""
-        async with runtime.lease():
+        """排空时仍可认证读取素材说明，不与会话工具共享跨来源权限。"""
+        async with runtime.lease(read_only=True):
             return await resources().materials.describe_for_library(id)
 
     @router.patch("/material-library/{id}/tags", response_model=MaterialLibraryView)
@@ -241,8 +241,8 @@ def install_media_routes(router: APIRouter, runtime) -> None:
 
     @router.get("/material-library/{id}/thumbnail")
     async def library_material_thumbnail(id: MaterialId) -> Response:
-        """持有运行时租约直到缩图编码结束，取消不能抢先回收文件资源。"""
-        async with runtime.lease():
+        """只读租约直到缩图编码结束，排空可读，取消仍等待文件资源释放。"""
+        async with runtime.lease(read_only=True):
             data = await resources().materials.library_thumbnail(id)
             return Response(content=data, media_type="image/png", headers={
                 "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
@@ -250,8 +250,8 @@ def install_media_routes(router: APIRouter, runtime) -> None:
 
     @router.get("/material-library/{id}/content")
     async def library_material_content(id: MaterialId) -> MediaContentResponse:
-        """原件只在管理认证后读取，磁盘位置和认证凭据不进入 URL。"""
-        async with runtime.lease():
+        """排空时仍可认证读取原件，文件租约独立保护响应期间的资源。"""
+        async with runtime.lease(read_only=True):
             store = resources().materials
             asset = await store.describe_for_library(id)
             lease = store.open_library_content(id)
@@ -273,8 +273,8 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         id: str,
         session_id: str = Query(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
     ):
-        """原件只能下载，HTML 等主动内容不在管理域内联执行。"""
-        async with runtime.lease():
+        """排空时允许读取原件；只能下载，HTML 等主动内容不在管理域内联执行。"""
+        async with runtime.lease(read_only=True):
             store = resources().materials
             owner = MediaOwner(entry="admin", session_id=f"admin_{session_id}")
             asset = await store.describe(id, owner=owner)
@@ -351,16 +351,16 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         session_id: str | None = Query(None, max_length=256),
         status: str | None = Query(None, max_length=16),
     ):
-        """仅列出管理入口记录，游标绑定入口与过滤条件。"""
-        async with runtime.lease():
+        """排空时只读管理入口记录，游标仍绑定入口与过滤条件。"""
+        async with runtime.lease(read_only=True):
             return await resources().records.list_runs(
                 limit=limit, cursor=cursor, session_id=session_id, status=status, entry="admin"
             )
 
     @router.get("/media/runs/{execution_id}", response_model=MediaRunDetail)
     async def run_detail(execution_id: str):
-        """从可信运行记录恢复附件归属，不接受请求指定 owner。"""
-        async with runtime.lease():
+        """排空时可读可信归档并恢复附件归属，不接受请求指定 owner。"""
+        async with runtime.lease(read_only=True):
             current = resources()
             detail = await current.records.get_run(execution_id)
             if detail.entry != "admin":
@@ -376,14 +376,14 @@ def install_media_routes(router: APIRouter, runtime) -> None:
 
     @router.get("/media/{id}", response_model=MediaAssetView)
     async def metadata(id: str):
-        """仅允许已认证管理员查看管理端历史附件。"""
-        async with runtime.lease():
+        """排空时仍允许已认证管理员查看管理端历史附件。"""
+        async with runtime.lease(read_only=True):
             return await resources().store.describe(id, admin_only=True)
 
     @router.get("/media/{id}/content")
     async def content(id: str):
-        """不在 URL 携带凭据，读取全程持有文件租约并禁用内容嗅探。"""
-        async with runtime.lease():
+        """排空时允许读取，独立文件租约保护响应，URL 不含凭据并禁用内容嗅探。"""
+        async with runtime.lease(read_only=True):
             store = resources().store
             asset = await store.describe(id, admin_only=True)
             lease = store.open_content(id, admin_only=True)

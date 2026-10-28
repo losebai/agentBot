@@ -37,13 +37,14 @@ class RuntimeLeaseGate:
         self._condition = asyncio.Condition()
         self._active_users = 0
         self._refreshing = False
+        self._allow_readers = False
 
     @asynccontextmanager
-    async def lease(self, *, wait: bool = True) -> AsyncIterator[None]:
-        """业务等待刷新完成；管理请求可显式快速失败，不登记未获得快照的使用者。"""
+    async def lease(self, *, wait: bool = True, read_only: bool = False) -> AsyncIterator[None]:
+        """刷新排空时允许有界只读查询；推理仍等待，停机则拒绝所有新读取。"""
 
         async with self._condition:
-            while self._refreshing:
+            while self._refreshing and not (read_only and self._allow_readers):
                 if not wait:
                     raise RuntimeRefreshInProgressError()
                 await self._condition.wait()
@@ -56,11 +57,12 @@ class RuntimeLeaseGate:
                 if self._active_users == 0:
                     self._condition.notify_all()
 
-    async def begin_refresh(self) -> None:
-        """阻止新的运行时租约进入。"""
+    async def begin_refresh(self, *, allow_readers: bool = False) -> None:
+        """热更新可保留只读观察，停机默认阻止所有新租约以安全释放资源。"""
 
         async with self._condition:
             self._refreshing = True
+            self._allow_readers = allow_readers
 
     async def wait_until_idle(self) -> None:
         """等待所有已登记的运行时使用者退出。"""
@@ -74,6 +76,7 @@ class RuntimeLeaseGate:
 
         async with self._condition:
             self._refreshing = False
+            self._allow_readers = False
             self._condition.notify_all()
 
 
@@ -155,7 +158,7 @@ async def apply_runtime_settings(
 
     replacement_state = state_builder(effective_config, current_state)
     swapped = False
-    await gate.begin_refresh()
+    await gate.begin_refresh(allow_readers=True)
     try:
         await stop_auto_speak()
         await gate.wait_until_idle()

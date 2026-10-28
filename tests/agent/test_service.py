@@ -68,13 +68,15 @@ async def test_expired_deadline_still_archives_partial_output(
     assert (await service.records.get_run(run.execution_id)).content == "未完成正文"
 
 
-def service_for(db, params, *, tools=None, records=None):
+def service_for(db, params, *, tools=None, records=None, maximum_tool_calls=1):
+    """替身模型依赖有限工具预算收尾，明确注入全局额度而非请求覆盖。"""
     return AgentService(
         AgentCatalog(params, connect=db.connect),
         records or AgentRunStore(params, connect=db.connect),
         CredentialResolver(),
         {"openai-chat": Provider()},
         tools or Tools(),
+        maximum_tool_calls=maximum_tool_calls,
     )
 
 

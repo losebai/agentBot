@@ -517,11 +517,11 @@ def _log_pending_restart_fields(
 
 
 @asynccontextmanager
-async def _runtime_lease(*, wait: bool = True):
-    """业务等待快照切换，管理读取可快速拒绝；两者都不能与资源关闭交叉。"""
+async def _runtime_lease(*, wait: bool = True, read_only: bool = False):
+    """业务等待快照切换，只读观察可在排空时进入，停机仍阻止所有新使用者。"""
 
     await wait_channel_ready()
-    async with _runtime_gate.lease(wait=wait):
+    async with _runtime_gate.lease(wait=wait, read_only=read_only):
         yield
 
 
@@ -758,9 +758,9 @@ def get_settings_store() -> SettingsStore:
     return _settings_store
 
 
-def acquire_runtime(*, wait: bool = True):
-    """返回受保护的当前快照租约，管理请求可在热更新时快速失败。"""
-    return _runtime_lease(wait=wait)
+def acquire_runtime(*, wait: bool = True, read_only: bool = False):
+    """管理观察与业务执行共用资源计数，停机和发布仍等待所有使用者退出。"""
+    return _runtime_lease(wait=wait, read_only=read_only)
 
 
 async def check_management_readiness() -> bool:

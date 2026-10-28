@@ -14,16 +14,23 @@ from starlette.routing import Route
 @asynccontextmanager
 async def peer(*, foreign=False, repeating=False, status=200, call_wait=None,
                tool_name="lookup", tool_schema=None, tool_result=None, tool_names=None,
-               response_sse=False):
-    """支持真实 SSE 工具响应、完整工具列表、结构化结果及取消测试。"""
+               response_sse=False, initialize_wait=None, session_id=False, delete_wait=None):
+    """支持真实 SSE、初始化屏障和完整工具调用，验证并发与取消而不连接公网。"""
     queue = asyncio.Queue()
     state = {
         "calls": [], "active": 0, "entered": asyncio.Event(),
         "tool_requests": [], "authorization": [],
+        "initializing": asyncio.Event(),
+        "terminating": asyncio.Event(),
     }
 
     async def endpoint(request):
         """使用真实 HTTP 收发初始化、发现及调用消息，不连接公网。"""
+        if request.method == "DELETE":
+            state["terminating"].set()
+            if delete_wait is not None:
+                await delete_wait.wait()
+            return Response(status_code=200)
         if status != 200:
             return Response(status_code=status)
         data = await request.json()
@@ -32,6 +39,9 @@ async def peer(*, foreign=False, repeating=False, status=200, call_wait=None,
             return Response(status_code=202)
         method = data["method"]
         if method == "initialize":
+            state["initializing"].set()
+            if initialize_wait is not None:
+                await initialize_wait.wait()
             result = {
                 "protocolVersion": "2025-03-26",
                 "capabilities": {"tools": {}},
@@ -73,7 +83,8 @@ async def peer(*, foreign=False, repeating=False, status=200, call_wait=None,
                 f"event: message\ndata: {json.dumps(message)}\n\n",
                 media_type="text/event-stream",
             )
-        return JSONResponse(message)
+        return JSONResponse(message, headers={"mcp-session-id": "offline-session"}
+                            if session_id else {})
 
     async def sse(request):
         async def events():
@@ -91,7 +102,7 @@ async def peer(*, foreign=False, repeating=False, status=200, call_wait=None,
 
     app = Starlette(
         routes=[
-            Route("/mcp", endpoint, methods=["POST"]),
+            Route("/mcp", endpoint, methods=["POST", "DELETE"]),
             Route("/message", endpoint, methods=["POST"]),
             Route("/sse", sse),
         ]

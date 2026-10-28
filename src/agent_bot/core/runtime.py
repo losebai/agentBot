@@ -76,7 +76,7 @@ def build_core_state(
     chat_tool_bridge = chat_bridge
     catalog = AiCatalog(database, connect=database_pool.connect)
     agent_catalog = AgentCatalog(database, connect=database_pool.connect)
-    mcp_connector = McpConnector(McpCredentials())
+    mcp_connector = McpConnector(McpCredentials(), reuse_connections=True)
     job_store = JobStore(database, connect=database_pool.connect)
     python_service = AiService(
         catalog,
@@ -188,16 +188,19 @@ def build_core_state(
 
 
 async def close_core_state(state: CoreRuntimeState) -> None:
-    """关闭各公共客户端，任一失败仍保证后续客户端释放。"""
+    """关闭公共客户端与本代 MCP 缓存，任一失败仍保证后续客户端释放。"""
     try:
         await state.ai_client.aclose()
     finally:
         try:
-            if state.comfy_resources is not None:
-                if state.comfy_owner is not None:
-                    await state.comfy_owner.release(state.comfy_resources)
-                else:
-                    await state.comfy_resources.aclose()
+            await state.mcp_connector.aclose()
         finally:
-            if state.tts_client is not None:
-                await state.tts_client.aclose()
+            try:
+                if state.comfy_resources is not None:
+                    if state.comfy_owner is not None:
+                        await state.comfy_owner.release(state.comfy_resources)
+                    else:
+                        await state.comfy_resources.aclose()
+            finally:
+                if state.tts_client is not None:
+                    await state.tts_client.aclose()

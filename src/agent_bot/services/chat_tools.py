@@ -232,6 +232,8 @@ class ChatToolContext:
     image_urls: tuple[str, ...] = field(default=(), repr=False)
     image_material_ids: tuple[str, ...] = field(default=(), repr=False)
     material_store: Any = field(default=None, repr=False)
+    # 仅真实主人入站事件签发；不从群消息、模型参数或自动任务继承。
+    material_library_access: bool = False
     workflow_request_scope: str = field(default_factory=lambda: secrets.token_hex(16))
     tts_service: _TtsService | None = None
     tts_collector: SpeechCollector | None = field(default=None, repr=False)

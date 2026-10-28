@@ -23,6 +23,7 @@ async def test_shared_services_can_be_built_without_qq_callbacks_or_queue():
         assert state.ai_client.python_service is not None
         assert state.ai_client.agent_service is not None
         assert state.ai_client.agent_service.tool_runtime.chat_bridge is None
+        assert state.mcp_connector.reuse_connections is True
     finally:
         await close_core_state(state)
 
@@ -31,10 +32,10 @@ async def test_core_close_failure_still_closes_other_clients():
     """首个客户端失败时仍释放所有其他公共资源。"""
     from agent_bot.core.runtime import close_core_state
 
-    clients = [AsyncMock(), AsyncMock(), AsyncMock()]
+    clients = [AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock()]
     clients[0].aclose.side_effect = RuntimeError("client failure")
     state = SimpleNamespace(ai_client=clients[0], comfy_resources=clients[1],
-                            comfy_owner=None, tts_client=clients[2])
+                            comfy_owner=None, tts_client=clients[2], mcp_connector=clients[3])
     with pytest.raises(RuntimeError):
         await close_core_state(state)
     for client in clients:
@@ -102,6 +103,7 @@ async def test_local_workflow_import_receives_path_and_runs_without_qq(monkeypat
             comfy_client=None,
             comfy_resources=None,
             tts_client=None,
+            mcp_connector=AsyncMock(),
         ),
     )
     scan = Mock(return_value=())
@@ -136,6 +138,7 @@ async def test_cancelled_shutdown_finishes_draining_and_releases_all_resources(m
         comfy_client=None,
         comfy_resources=None,
         tts_client=None,
+        mcp_connector=AsyncMock(),
     )
     async with runtime.lease():
         stop = asyncio.create_task(runtime.stop())

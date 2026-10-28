@@ -57,10 +57,11 @@ class CapturingClient:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("web_search_enabled", [True, False])
+@pytest.mark.parametrize("chat_tools", [("naraka_query",), ()])
 async def test_service_propagates_remote_tool_context_without_persisting_the_token(
-    web_search_enabled: bool,
+    web_search_enabled: bool, chat_tools: tuple[ChatToolName, ...],
 ) -> None:
-    """自然聊天固定使用 Agent，联网授权仍独立受开关控制。"""
+    """聊天与素材专用令牌均传给 Agent 且不写入历史，联网授权独立控制。"""
 
     client = CapturingClient()
     store = ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60)
@@ -80,12 +81,12 @@ async def test_service_propagates_remote_tool_context_without_persisting_the_tok
         "group:1",
         "查询战绩",
         delivery=_deliver,
-        chat_tools=("naraka_query",),
+        chat_tools=chat_tools,
         tool_session_token=token,
     )
 
     assert answer == "工具回复"
-    assert client.calls[0]["chat_tools"] == ("naraka_query",)
+    assert client.calls[0]["chat_tools"] == chat_tools
     assert client.calls[0]["tool_session_token"] == token
     assert [message.history_request_id for message in store.messages("group:1")] == [
         client.calls[0]["request_id"], client.calls[0]["request_id"],
@@ -122,9 +123,13 @@ async def _deliver(answer: str) -> str:
     return answer
 
 
-@pytest.mark.parametrize("entry", ["ask", "respond", "generate_queued"])
-async def test_natural_chat_always_uses_agent_without_tools(entry: str) -> None:
-    """关闭联网且没有工具时，各自然聊天入口仍使用 Agent，专用指令保持普通调用。"""
+@pytest.mark.parametrize("entry,token", [
+    ("ask", None), ("respond", None), ("generate_queued", None),
+    ("respond", "material-only-session-token"),
+    ("generate_queued", "material-only-session-token"),
+])
+async def test_natural_chat_always_uses_agent_without_tools(entry: str, token: str | None) -> None:
+    """无聊天工具时仍传递素材身份令牌，专用指令不继承令牌和 Agent 工具。"""
     client = CapturingClient()
     guard = AsyncMock()
     service = ChatService(
@@ -144,9 +149,18 @@ async def test_natural_chat_always_uses_agent_without_tools(entry: str) -> None:
         arguments = {"delivery": _deliver} if entry == "respond" else (
             {"request_id": "queued-1"} if entry == "generate_queued" else {}
         )
+        if token is not None:
+            arguments["tool_session_token"] = token
         await getattr(service, entry)("private:1", "你好", **arguments)
         assert client.calls[0]["use_agent"] is True
         assert client.calls[0]["use_web_search"] is False
+        assert client.calls[0]["tool_session_token"] == token
+        # 取消双向绑定校验后，带聊天工具但没有身份令牌仍在调用模型前拒绝。
+        if token is None:
+            with pytest.raises(ValueError, match="tool session token"):
+                await service.respond(
+                    "private:1", "查询", delivery=_deliver, chat_tools=("naraka_query",),
+                )
         await service.ask_once("private:1", "总结消息", system_prompt="只总结原文")
         assert client.calls[1]["use_agent"] is False
         assert client.calls[1]["use_web_search"] is False

@@ -64,9 +64,9 @@ class ApplicationRuntimeProvider:
         """存储跨启停保留，只有当前运行的 Comfy 插件才授予 HTTP 管理能力。"""
         return self.runtime.workflow_store if self.plugins.running_plugin("comfy") else None
 
-    def lease(self):
-        """管理读取共享快照保护，但刷新期间明确拒绝，不能等在途模型结束才响应。"""
-        return self.runtime.lease(wait=False)
+    def lease(self, *, read_only: bool = False):
+        """短暂数据库观察不等长推理；执行及停机仍快速报告不可用。"""
+        return self.runtime.lease(wait=False, read_only=read_only)
 
     @property
     def knowledge_store(self):

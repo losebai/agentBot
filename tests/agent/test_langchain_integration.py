@@ -107,6 +107,7 @@ async def test_plain_and_graph_agent_keep_snapshot_and_disable_external_tracing(
         CredentialResolver(),
         {"openai-chat": adapter},
         tools,
+        maximum_tool_calls=1,
     )
     plain = AiService(
         catalog,

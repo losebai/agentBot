@@ -93,6 +93,118 @@ async def test_other_session_cannot_query_or_read_material(materials):
         await materials.describe(asset.id, owner=other)
 
 
+async def test_explicit_qq_library_access_excludes_admin_and_keeps_original_owner(materials):
+    """主人可跨 QQ 会话读取，不能读取管理素材或改变原素材归属。"""
+    from agent_bot.materials.contracts import MaterialSearchArguments
+    from agent_bot.media.errors import MediaError
+
+    original = MediaOwner(entry="qq", session_id="other-group")
+    current = MediaOwner(entry="qq", session_id="current-group")
+    admin = MediaOwner(entry="admin", session_id="admin-chat")
+    asset = await materials.put(owner=original, name="shared.txt", mime_type="text/plain",
+                                data=b"qq-image-description", tags=("topic",))
+    private = await materials.put(owner=admin, name="shared.txt", mime_type="text/plain",
+                                  data=b"private-admin-data", tags=("topic",))
+    result = await materials.search(
+        current, MaterialSearchArguments(query="shared", tag="topic"), allow_qq_library=True,
+    )
+    assert [item.id for item in result.records] == [asset.id]
+    assert await materials.describe(asset.id, owner=current, allow_qq_library=True) == asset
+    async with materials.open_content(asset.id, owner=current, allow_qq_library=True) as file:
+        assert file.read() == b"qq-image-description"
+    with pytest.raises(MediaError, match="MATERIAL_NOT_FOUND"):
+        await materials.describe(private.id, owner=current, allow_qq_library=True)
+    assert await materials.describe(asset.id, owner=original) == asset
+    with pytest.raises(MediaError, match="MATERIAL_NOT_FOUND"):
+        await materials.describe(asset.id, owner=current)
+    # QQ 特权开关不能反过来授予管理端跨会话能力。
+    assert (await materials.search(
+        admin, MaterialSearchArguments(), allow_qq_library=True,
+    )).records == (private,)
+
+
+@pytest.mark.parametrize("privileged,entry,token_session", [
+    (True, "qq", "destination"), (False, "qq", "destination"),
+    (True, "admin", "destination"), (True, "qq", "unrelated"), (True, "qq", None),
+])
+async def test_material_runtime_cross_group_access_uses_real_token(
+    materials, privileged, entry, token_session,
+):
+    """真实令牌决定跨群检索和图片投递，普通成员、管理入口和模型参数不能提权。"""
+    import base64
+    import json
+    from contextlib import asynccontextmanager
+    from io import BytesIO
+    from types import SimpleNamespace
+
+    from PIL import Image
+    from pydantic import SecretStr
+
+    from agent_bot.agent.contracts import AgentRequest, ExecutionAuthority, ToolCall
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.agent.tools.chat import ChatToolBridge
+    from agent_bot.agent.tools.runtime import ToolRuntime
+    from agent_bot.media.contracts import MediaScope
+    from agent_bot.media.errors import MediaError
+    from agent_bot.services.chat_tools import ChatToolContext
+    from agent_bot.services.tool_images import capture_tool_images
+    from agent_bot.services.tool_sessions import ToolSessionStore
+
+    class EmptyConnector:
+        """真实授权链只省略无关远程 MCP 连接。"""
+
+        @asynccontextmanager
+        async def open(self, *_args, **_kwargs):
+            """不联网且不提供任何远程工具。"""
+            yield SimpleNamespace(tools=(), warnings=())
+
+    output = BytesIO()
+    Image.new("RGB", (2, 2), "red").save(output, "PNG")
+    raw = output.getvalue()
+    asset = await materials.put(owner=MediaOwner(entry="qq", session_id="source"),
+                                name="image.png", mime_type="image/png", data=raw)
+    names = ("material_search", "material_get")
+    scope = MediaScope(owner=MediaOwner(entry=entry, session_id="destination"),
+                       execution_id="a" * 32, execution_kind="agent")
+    sessions = ToolSessionStore(ttl_seconds=30, max_sessions=2)
+    context = ChatToolContext(session_id=token_session or "destination", user_id="10001",
+                              bot_user_id="90001", allowed_tools=frozenset(),
+                              material_library_access=privileged)
+    bridge = ChatToolBridge(SimpleNamespace(resolve_context=sessions.resolve))
+    runtime = ToolRuntime(EmptyConnector(), chat_bridge=bridge, material_store=materials)
+    request = AgentRequest(prompt="发送此素材", session_id="destination", request_id="cross-group")
+    snapshot = SimpleNamespace(mcps=(), agent=SimpleNamespace(tools=names))
+    async with sessions.open(context) as token:
+        authority = ExecutionAuthority(
+            entry=entry, allowed_tools=names,
+            chat_token=SecretStr(token) if token_session else None,
+        )
+        async with runtime.open(snapshot, request, authority, media_scope=scope) as bound:
+            search = ToolCall(call_id="find", name="material_search", arguments={"ids": [asset.id]})
+            if token_session == "unrelated":
+                with pytest.raises(AgentError, match="AGENT_TOOL_UNAUTHORIZED"):
+                    await bound.call(search)
+                return
+            result = json.loads((await bound.call(search)).content)
+            can_read = privileged and entry == "qq" and token_session is not None
+            assert bool(result["records"]) is can_read
+            read = ToolCall(call_id="read", name="material_get", arguments={"id": asset.id})
+            if can_read:
+                with capture_tool_images() as captured:
+                    await bound.call(read)
+                assert base64.b64decode(captured.items[0].data) == raw
+                await sessions.revoke(token)
+                with pytest.raises(AgentError, match="AGENT_TOOL_SESSION_EXPIRED"):
+                    await bound.call(read)
+            else:
+                with pytest.raises(MediaError, match="MATERIAL_NOT_FOUND"):
+                    await bound.call(read)
+            with pytest.raises(AgentError, match="AGENT_TOOL_ARGUMENTS_INVALID"):
+                bound.validate(read.model_copy(update={
+                    "arguments": {"id": asset.id, "allow_qq_library": True},
+                }))
+
+
 @pytest.mark.asyncio
 async def test_categories_merge_without_replacing_original_or_restoring_tags(materials):
     """同图生成后发送保留两种类型，已清除的来源标签不随重复流转恢复。"""

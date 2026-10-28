@@ -41,8 +41,9 @@ class ChatClient(Protocol):
         chat_tools: Sequence[ChatToolName] = (),
         tool_session_token: str | None = None,
         allow_knowledge: bool = True,
+        allow_tools: bool = True,
     ) -> str:
-        """生成一次文本回复，内部正文生成可显式关闭共享知识读取。"""
+        """生成一次回复；内部事实表达可关闭工具，但仍使用 Agent 主备模型。"""
 
         ...
 

@@ -6,7 +6,7 @@ import { Settings } from './Settings';
 
 useRunningPluginFixture();
 
-/** 真实设置页使用模型目录；不允许把清空字符串变成静态回填或 null。 */
+/** 独立记忆分类仍使用模型目录；清空保持字符串，不能变成静态回填或 null。 */
 it('记忆向量模型从启用目录选择，可清空为未配置字符串', async () => {
   let value = 'embed-current';
   const fetcher = vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
@@ -23,7 +23,7 @@ it('记忆向量模型从启用目录选择，可清空为未配置字符串', a
   });
   vi.stubGlobal('fetch', fetcher);
   render(<Settings token="offline" />);
-  fireEvent.click(screen.getByRole('button', {name: 'LLM设置'}));
+  fireEvent.click(screen.getByRole('button', {name: '记忆设置'}));
   const select = await screen.findByLabelText('长期记忆向量模型');
   // 固定控件只定位一次，避免每次保存都遍历整个设置页计算按钮可访问名称。
   const save = screen.getByText('保存修改', { selector: 'button > span' }).closest('button')!;

@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 from contextlib import aclosing
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, Request
@@ -48,6 +49,7 @@ from agent_bot.integrations.workflow_store import (
     WorkflowStoreError,
 )
 from agent_bot.model_guard import ModelGuardUnavailableError, ModelNotAvailableError
+from agent_bot.services.bot_config_tools import BotConfigTools
 from agent_bot.services.workflows import WorkflowValidationError
 from agent_bot.settings import (
     SettingsError,
@@ -62,6 +64,8 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
     manager = SettingsService(
         store, runtime, startup_settings_store=getattr(runtime, "startup_settings_store", None),
     )
+    # 聊天入口借用同一配置服务，不重新捕获已清理的环境变量或扩大启动文件白名单。
+    app.state.bot_config_tools = BotConfigTools(manager)
     chat = ChatProbe(runtime)
 
     async def authorize(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -117,8 +121,17 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         return runtime.bots()
 
     @router.get("/status", response_model=ServiceStatus)
-    async def status() -> ServiceStatus:
-        """在运行时租约内聚合归档并读取活动请求，保持热刷新和数据库释放边界。"""
+    async def status(start_date: date | None = None, end_date: date | None = None) -> ServiceStatus:
+        """按北京时间日期聚合归档，默认今日；实时请求和服务状态不受区间限制。"""
+        if start_date is None and end_date is None:
+            start_date = end_date = datetime.now(timezone(timedelta(hours=8))).date()
+        if start_date is None or end_date is None or start_date > end_date or end_date == date.max:
+            raise HTTPException(
+                status_code=422, detail="请选择有效的开始和结束日期，开始日期不能晚于结束日期。",
+            )
+        # 归档表以北京时间存储，结束日换算为次日零点，包含结束日所有记录。
+        start_time = datetime.combine(start_date, time.min)
+        end_time = datetime.combine(end_date + timedelta(days=1), time.min)
         snapshot = await asyncio.to_thread(manager.read)
         async with runtime.lease():
             config = runtime.config
@@ -141,7 +154,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
                 try:
                     totals = await CallRecordStore(
                         sessions.params, connect=sessions.connect
-                    ).statistics()
+                    ).statistics(start_time=start_time, end_time=end_time)
                 except AiError as error:
                     # 旧部署可能尚未升级归档表；明确报告统计失败，保留独立服务就绪信息。
                     statistics_error = error.code

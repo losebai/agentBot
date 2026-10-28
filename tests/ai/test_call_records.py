@@ -102,6 +102,51 @@ async def test_empty_or_unreported_cache_statistics_remain_unknown(ai_params, un
     assert partial.total_tokens == 100
 
 
+async def test_statistics_filter_time_and_count_only_finished_model_calls(ai_params, unified_db):
+    """区间包含起点、排除终点；取消与非模型决策不影响失败率，所有用量同区间。"""
+    store = CallRecordStore(ai_params, connect=unified_db.connect)
+    rows = []
+    for number, (stamp, status) in enumerate([
+        ("2026-10-27 23:59:59", "failed"),
+        ("2026-10-28 00:00:00", "completed"),
+        ("2026-10-28 12:00:00", "failed"),
+        ("2026-10-28 13:00:00", "cancelled"),
+        ("2026-10-28 14:00:00", "running"),
+        ("2026-10-28 15:00:00", "unknown"),
+        ("2026-10-28 23:59:59", "completed"),
+        ("2026-10-29 00:00:00", "failed"),
+        (None, "failed"),
+    ]):
+        row = legacy_record({
+            "id": number, "create_time": stamp,
+            "data": {"choices": [], "usage": {
+                "prompt_tokens": 100, "completion_tokens": 10, "cached_tokens": 20,
+            }},
+        }, "statistics-range")
+        row["status"] = status
+        rows.append(row)
+    rows.append({**legacy_record({
+        "id": 99, "create_time": "2026-10-28 16:00:00",
+        "data": {"type": "auto_speak_decision", "status": "failed"},
+    }, "python:agent_bot_auto_speak_decision")})
+    await store.import_batch(rows)
+    stats = await store.statistics(
+        start_time=datetime(2026, 10, 28), end_time=datetime(2026, 10, 29),
+    )
+    assert stats.conversation_count == 6
+    assert stats.total_tokens == 660
+    assert stats.cached_tokens == 120
+    assert stats.cache_hit_rate == pytest.approx(0.2)
+    assert stats.model_call_count == 3
+    assert stats.failed_model_calls == 1
+    assert stats.model_failure_rate == pytest.approx(1 / 3)
+    empty = await store.statistics(
+        start_time=datetime(2026, 10, 30), end_time=datetime(2026, 10, 31),
+    )
+    assert empty.model_call_count == empty.failed_model_calls == 0
+    assert empty.model_failure_rate is None
+
+
 @pytest.mark.parametrize(("usage", "overflow", "expected"), [
     ({"prompt_tokens": 1000, "completion_tokens": 100, "total_tokens": 1100,
       "cached_tokens": 300, "cache_prompt_tokens": 500}, False,

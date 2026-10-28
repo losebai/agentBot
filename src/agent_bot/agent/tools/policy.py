@@ -14,6 +14,8 @@ ADMIN_MEDIA_TOOLS = frozenset(
 )
 QQ_ONLY_TOOLS = frozenset(
     {
+        "bot_config_get",
+        "bot_config_update",
         "memory",
         "naraka_query",
         "naraka_search",

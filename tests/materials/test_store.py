@@ -94,6 +94,161 @@ async def test_other_session_cannot_query_or_read_material(materials):
 
 
 @pytest.mark.asyncio
+async def test_categories_merge_without_replacing_original_or_restoring_tags(materials):
+    """同图生成后发送保留两种类型，已清除的来源标签不随重复流转恢复。"""
+    from agent_bot.media.errors import MediaError
+
+    owner = MediaOwner(entry="qq", session_id="classified")
+    first = await materials.put(owner=owner, name="first.txt", mime_type="text/plain",
+                                data=b"same", category="generated", tags=(" \uff21\uff22\uff23 ",))
+    assert first.categories == ("generated",)
+    assert set(first.tags) == {"abc", "生成图片"}
+    await materials.update_tags(first.id, ())
+    repeated = await materials.put(owner=owner, name="renamed.txt", mime_type="text/plain",
+                                   data=b"same", description="new", category="sent",
+                                   source_key="c" * 64)
+    assert repeated.id == first.id and repeated.name == "first.txt" and repeated.description == ""
+    assert repeated.categories == ("generated", "sent") and repeated.tags == ()
+    assert await materials.describe(first.id, owner=owner) == repeated
+    assert await materials.find_source(owner, "c" * 64) == repeated
+    async with materials.open_content(first.id, owner=owner) as file:
+        assert file.read() == b"same"
+    await materials.update_tags(first.id, tuple(f"主题{i}" for i in range(8)))
+    received = await materials.put(owner=owner, name="same", mime_type="text/plain",
+                                  data=b"same", category="received")
+    assert received.categories == ("generated", "received", "sent")
+    assert len(received.tags) == 8
+    with pytest.raises(MediaError, match="MATERIAL_INVALID_TAGS"):
+        await materials.put(owner=owner, name="same", mime_type="text/plain", data=b"same",
+                            category="uploaded", tags=("第九个",))
+    # 标签并集失败也要回滚刚插入的新分类，保留旧原件和完整标签。
+    assert await materials.describe(first.id, owner=owner) == received
+
+
+@pytest.mark.asyncio
+async def test_add_category_uses_owner_and_preserves_full_tags_without_file_io(
+    materials, monkeypatch,
+):
+    """旧素材追加来源仅改元数据，八个标签不阻塞流转，也不放宽其他会话权限。"""
+    from agent_bot.media.errors import MediaError
+
+    owner = MediaOwner(entry="qq", session_id="legacy-category")
+    asset = await materials.put(owner=owner, name="old.txt", mime_type="text/plain", data=b"old",
+                                tags=tuple(f"主题{i}" for i in range(8)))
+    assert asset.categories == ()
+
+    def forbid_file_io(*_args, **_kwargs):
+        """分类登记不得读取、重写或重新发布素材原件。"""
+        raise AssertionError("category registration must not access original bytes")
+
+    monkeypatch.setattr(materials.files, "open", forbid_file_io)
+    monkeypatch.setattr(materials.files, "write", forbid_file_io)
+    received = await materials.add_category(asset.id, "received", owner=owner)
+    assert received == asset.model_copy(update={"categories": ("received",)})
+    assert await materials.add_category(asset.id, "received", owner=owner) == received
+    sent = await materials.add_category(asset.id, "sent", owner=owner)
+    assert sent.categories == ("received", "sent") and sent.tags == asset.tags
+    for foreign in (MediaOwner(entry="qq", session_id="other"),
+                    MediaOwner(entry="admin", session_id=owner.session_id)):
+        with pytest.raises(MediaError, match="MATERIAL_NOT_FOUND"):
+            await materials.add_category(asset.id, "uploaded", owner=foreign)
+    assert await materials.describe(asset.id, owner=owner) == sent
+
+
+@pytest.mark.asyncio
+async def test_add_category_failure_rolls_back_existing_metadata(materials, material_database):
+    """分类写入失败恢复原完整元数据，不能留下已发送标记或丢失八个标签。"""
+    from agent_bot.ai.errors import AiError
+
+    params, _pool = material_database
+    owner = MediaOwner(entry="qq", session_id="category-transaction")
+    asset = await materials.put(owner=owner, name="old.txt", mime_type="text/plain", data=b"old",
+                                tags=tuple(f"主题{i}" for i in range(8)))
+    received = await materials.add_category(asset.id, "received", owner=owner)
+    with sqlite3.connect(params.sqlite_path) as connection:
+        connection.execute(
+            "CREATE TRIGGER reject_sent_category AFTER INSERT ON chat_material_category "
+            "WHEN NEW.category='sent' BEGIN SELECT RAISE(ABORT, 'offline failure'); END"
+        )
+    with pytest.raises(AiError):
+        await materials.add_category(asset.id, "sent", owner=owner)
+    assert await materials.describe(asset.id, owner=owner) == received
+
+
+@pytest.mark.asyncio
+async def test_metadata_filters_share_count_pages_and_keep_owner_boundary(materials):
+    """多分类多标签不重复计数，标签规范和分页对齐，模型查询仍绑定当前会话。"""
+    from agent_bot.materials.contracts import MaterialLibraryArguments, MaterialSearchArguments
+    from agent_bot.media.errors import MediaError
+
+    owner = MediaOwner(entry="qq", session_id="filter")
+    ids = []
+    for index in range(3):
+        asset = await materials.put(owner=owner, name=f"{index}.txt", mime_type="text/plain",
+                                    data=str(index).encode(), category="generated", tags=("Topic",))
+        await materials.put(owner=owner, name="again", mime_type="text/plain",
+                            data=str(index).encode(), category="sent", tags=("second",))
+        ids.append(asset.id)
+    await materials.put(owner=MediaOwner(entry="qq", session_id="other"), name="foreign",
+                        mime_type="text/plain", data=b"private", category="sent", tags=("topic",))
+    args = MaterialLibraryArguments(
+        category="sent", tag=" \uff34\uff2f\uff30\uff29\uff23 ",
+        session_id="filter", limit=2,
+    )
+    assert await materials.count_library(args) == 3
+    first = await materials.list_library(args, page=1)
+    second = await materials.list_library(args, page=2)
+    assert {item.id for item in first.items + second.items} == set(ids)
+    assert len(first.items) == 2 and len(second.items) == 1
+    assert all(item.categories == ("generated", "sent") for item in first.items + second.items)
+    result = await materials.search(owner, MaterialSearchArguments(category="sent", tag="TOPIC"))
+    assert {item.id for item in result.records} == set(ids)
+    assert all(set(item.tags) == {"topic", "second", "生成图片"} for item in result.records)
+    with pytest.raises(MediaError, match="MATERIAL_INVALID_PAGE"):
+        await materials.list_library(
+            args.model_copy(update={"tag": "second"}), cursor=first.next_cursor,
+        )
+
+
+@pytest.mark.asyncio
+async def test_tag_replacement_failure_rolls_back_full_group(materials, material_database):
+    """真实 SQLite 插入约束失败发生在删除旧组后，事务仍恢复完整旧标签与分类。"""
+    from agent_bot.ai.errors import AiError
+
+    params, _pool = material_database
+    owner = MediaOwner(entry="admin", session_id="tags")
+    asset = await materials.put(owner=owner, name="a.txt", mime_type="text/plain", data=b"a",
+                                category="uploaded", tags=("before",))
+    with sqlite3.connect(params.sqlite_path) as connection:
+        connection.execute("CREATE TRIGGER reject_material_tag BEFORE INSERT ON chat_material_tag "
+                           "WHEN NEW.tag='reject' BEGIN "
+                           "SELECT RAISE(ABORT, 'offline failure'); END")
+    with pytest.raises(AiError):
+        await materials.update_tags(asset.id, ("accepted", "reject"))
+    assert await materials.describe(asset.id, owner=owner) == asset
+    updated = await materials.update_tags(asset.id, (" \uff21 ", "a", "第二"))
+    assert updated.tags == ("a", "第二") and updated.categories == ("uploaded",)
+    assert (await materials.update_tags(asset.id, ())).tags == ()
+
+
+@pytest.mark.parametrize("tags", [("",), ("x" * 33,), ("a\x00",), ("a\u200b",),
+                                   tuple(str(i) for i in range(9))])
+def test_material_tag_contract_rejects_invalid_full_group(tags):
+    """管理输入拒绝超额、空白及控制字符主题，模型筛选使用相同单标签规范。"""
+    from pydantic import ValidationError
+
+    from agent_bot.materials.contracts import MaterialSearchArguments, MaterialTagsUpdate
+
+    with pytest.raises(ValidationError):
+        MaterialTagsUpdate(tags=tags)
+    if len(tags) == 1:
+        # 空字符串是筛选的缺省值；管理替换组中的空项仍属于无效标签。
+        if tags[0]:
+            with pytest.raises(ValidationError):
+                MaterialSearchArguments(tag=tags[0])
+
+
+@pytest.mark.asyncio
 async def test_failed_write_rolls_back_database_and_files(materials, monkeypatch):
     """文件发布失败时不能留下可查询的成功记录或半成品。"""
     from agent_bot.materials.contracts import MaterialSearchArguments

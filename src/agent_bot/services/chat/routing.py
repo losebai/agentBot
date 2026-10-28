@@ -31,7 +31,7 @@ class ChatRouteSelector:
         available_tools: Sequence[ChatToolName] = (),
         web_search_enabled: bool = True,
     ) -> ChatRoute:
-        """搜索和插件工具交由模型选择；仅保留入口已经授予的能力，不新增授权。"""
+        """搜索、配置和插件工具交由模型选择，主人身份仍由入口和执行层校验。"""
 
         text = unicodedata.normalize("NFKC", prompt).strip()[:20_000]
         selected: set[ChatToolName] = set()
@@ -39,6 +39,7 @@ class ChatRouteSelector:
             selected.update(("naraka_query", "naraka_search"))
         selected.update(
             (
+                "bot_config_get", "bot_config_update",
                 "memory",
                 "job",
                 "soloncode",

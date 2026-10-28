@@ -42,6 +42,7 @@ it('主导航可进入标签与知识库，离开后不保留详情页', async (
     const path = String(url);
     if (path.endsWith('/auth')) return Response.json({password_required: false});
     if (path.includes('knowledge-tags')) return Response.json([]);
+    if (path.includes('/knowledge/count')) return Response.json({total: 0});
     if (path.includes('/knowledge?')) return Response.json({items: [], next_cursor: null});
     return managementResponse(path);
   }));
@@ -51,6 +52,29 @@ it('主导航可进入标签与知识库，离开后不保留详情页', async (
   expect(await screen.findByRole('button', {name: '新增知识'})).toBeInTheDocument();
   fireEvent.click(within(nav).getByRole('button', {name: /运行概览$/}));
   expect(screen.queryByRole('button', {name: '新增知识'})).not.toBeInTheDocument();
+});
+
+it('机器人配置提供与 LLM 同级的记忆入口', async () => {
+  vi.stubGlobal('fetch', vi.fn(async url => {
+    const path = String(url);
+    if (path.endsWith('/auth')) return Response.json({ password_required: false });
+    if (path.endsWith('/settings')) return Response.json({
+      database_revision: 1, applied_revision: 1, restart_required_fields: [], fields: [
+        { name: 'chat_memory_enabled', description: '会话记忆', kind: 'boolean', value: true,
+          nullable: false, secret_is_set: false, restart_required: false },
+      ],
+    });
+    return managementResponse(path);
+  }));
+  render(<App />);
+  const navigation = await screen.findByRole('navigation', { name: '主导航' });
+  fireEvent.click(within(navigation).getByRole('button', { name: /机器人配置$/ }));
+  const categories = await screen.findByRole('navigation', { name: '机器人配置分类' });
+  expect(within(categories).getAllByRole('button').map(button => button.textContent)).toEqual([
+    '基础设置', 'LLM设置', '记忆设置', '自动回复设置',
+  ]);
+  fireEvent.click(within(categories).getByRole('button', { name: '记忆设置' }));
+  expect(await screen.findByLabelText('会话记忆')).toBeVisible();
 });
 
 it('密码校验失败时保持登录页面且不持久化密码', async () => {

@@ -41,17 +41,34 @@ function setup(running = true) {
   return fetcher;
 }
 
-it('插件管理提供二级中心和已安装入口，列表不包含插件配置表单', async () => {
+it('插件管理仅提供一个中心入口，中心直接管理启停且不挂载配置表单', async () => {
   const fetcher = setup();
   render(<App />);
   const nav = await screen.findByRole('navigation', { name: '主导航' });
   fireEvent.click(await within(nav).findByRole('button', { name: '插件中心' }));
   expect(await screen.findByRole('heading', { name: '插件中心' })).toBeVisible();
-  fireEvent.click(within(nav).getByRole('button', { name: '已安装插件' }));
-  expect(await screen.findByRole('heading', { name: '已安装插件' })).toBeVisible();
+  expect(within(nav).queryByRole('button', { name: '已安装插件' })).not.toBeInTheDocument();
   expect(await screen.findByRole('switch', { name: '启用 B站' })).toBeVisible();
   expect(screen.queryByRole('button', { name: '扫码登录' })).not.toBeInTheDocument();
   expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/bilibili/status'))).toBe(false);
+});
+
+it('从中心进入配置再返回仍保留未保存的启停草稿', async () => {
+  const fetcher = setup();
+  render(<App />);
+  const nav = await screen.findByLabelText('主导航');
+  fireEvent.click(await within(nav).findByText('插件中心', { selector: 'button' }));
+  fireEvent.click(await screen.findByLabelText('启用 QQBot'));
+  fireEvent.click(screen.getByLabelText('配置 QQBot'));
+  const heading = await screen.findByText('QQ 配置', { selector: 'h1' });
+  const configuration = heading.closest<HTMLElement>('.page-content')!;
+  expect(within(configuration).queryByText('插件中心')).not.toBeInTheDocument();
+  fireEvent.click(within(nav).getByText('插件中心', { selector: 'button' }));
+  const center = await screen.findByText('插件中心', { selector: 'h1' });
+  expect(center).toBeVisible();
+  expect(screen.getByLabelText('启用 QQBot')).not.toBeChecked();
+  expect(within(center.closest<HTMLElement>('.page-content')!).getByRole('button', { name: /保\s*存/ })).toBeEnabled();
+  expect(fetcher.mock.calls.some(([, options]) => options?.method === 'PATCH')).toBe(false);
 });
 
 it('B站有独立配置页，离开页面取消当前二维码轮询', async () => {
@@ -71,7 +88,7 @@ it('保存待启用但尚未运行时，不显示独立配置二级菜单', asyn
   setup(false);
   render(<App />);
   const nav = await screen.findByRole('navigation', { name: '主导航' });
-  fireEvent.click(await within(nav).findByRole('button', { name: '已安装插件' }));
+  fireEvent.click(await within(nav).findByRole('button', { name: '插件中心' }));
   await screen.findByRole('switch', { name: '启用 B站' });
   expect(within(nav).queryByRole('button', { name: 'B站配置' })).not.toBeInTheDocument();
   expect(within(nav).queryByRole('button', { name: 'QQ 配置' })).not.toBeInTheDocument();
@@ -97,10 +114,10 @@ it('Comfy 连接与工作流归属插件配置，离开返回保留连接草稿'
 
 it('插件状态刷新保留当前 QQ 设置草稿，不把状态检查当作丢弃修改', async () => {
   setup();
-  render(<PluginConfiguration token="offline" pluginId="qqbot" onInstalled={() => {}} />);
+  render(<PluginConfiguration token="offline" pluginId="qqbot" />);
   const nickname = await screen.findByLabelText('机器人名称');
   fireEvent.change(nickname, { target: { value: '未保存名字' } });
-  const refresh = screen.getByText('重新加载插件', { selector: 'button > span' }).closest('button')!;
+  const refresh = screen.getByText('刷新状态', { selector: 'button > span' }).closest('button')!;
   fireEvent.click(refresh);
   await waitFor(() => expect(refresh).not.toHaveClass('ant-btn-loading'));
   expect(await screen.findByLabelText('机器人名称')).toHaveValue('未保存名字');
@@ -130,16 +147,16 @@ it('返回配置页先验证本次运行状态，不按离开前缓存提前读�
     if (delayed && String(url).endsWith('/plugins')) return new Promise<Response>(resolve => { complete = resolve; });
     return response(url, options);
   });
-  const view = render(<PluginConfiguration token="offline" pluginId="qqbot" onInstalled={() => {}} />);
+  const view = render(<PluginConfiguration token="offline" pluginId="qqbot" />);
   const nickname = await screen.findByLabelText('机器人名称');
-  view.rerender(<PluginConfiguration token="offline" pluginId="qqbot" active={false} onInstalled={() => {}} />);
+  view.rerender(<PluginConfiguration token="offline" pluginId="qqbot" active={false} />);
   delayed = true;
-  view.rerender(<PluginConfiguration token="offline" pluginId="qqbot" active onInstalled={() => {}} />);
+  view.rerender(<PluginConfiguration token="offline" pluginId="qqbot" active />);
   await waitFor(() => expect(complete).toBeDefined());
   expect(screen.queryByLabelText('QQ NapCat 接入')).not.toBeInTheDocument();
   expect(nickname).not.toBeVisible();
   await act(async () => complete!(Response.json([{ id: 'qqbot', enabled: false, saved_enabled: false, status: 'disabled' }])));
-  expect(await screen.findByText('插件未运行，请在已安装插件中启用并手动重启后端。')).toBeVisible();
+  expect(await screen.findByText('插件未运行，请在插件中心启用并手动重启后端。')).toBeVisible();
   expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/napcat/plugin'))).toHaveLength(1);
 });
 

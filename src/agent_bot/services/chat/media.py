@@ -61,8 +61,9 @@ class ChatMediaGenerator:
         reject_busy: bool,
         consume_cooldown: bool,
         request_id: str | None,
+        media_session_id: str | None = None,
     ) -> ChatMediaResponse:
-        """构建媒体请求并返回本地服务的类型化响应。"""
+        """锁定生成任务，同时将媒体归属绑定真实聊天会话而非后台互斥键。"""
 
         normalized = self._prompt_builder.normalize(prompt)
         current_prompt = (
@@ -108,7 +109,7 @@ class ChatMediaGenerator:
                     await self._model_guard.ensure_enabled(model_id)
             return await self._client.generate_media(
                 model=model_id,
-                session_id=session_id,
+                session_id=media_session_id or session_id,
                 prompt=media_prompt,
                 messages=messages,
                 request_id=request_id or f"qq-{uuid.uuid4().hex}",

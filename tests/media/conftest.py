@@ -42,7 +42,10 @@ def media_database(agent_database):  # noqa: F811
         sha256 TEXT, storage_key TEXT, status TEXT, created_at TEXT, expires_at TEXT);
     """)
     schema = Path("sql/agent_bot_init.sqlite.sql").read_text(encoding="utf-8")
-    tables = r"(?:chat_material|chat_material_source|chat_tagged_memory)\b"
+    tables = (
+        r"(?:chat_material|chat_material_source|chat_material_category|chat_material_tag|"
+        r"chat_tagged_memory)\b"
+    )
     statements = re.findall(
         rf"CREATE (?:TABLE IF NOT EXISTS {tables}|(?:UNIQUE )?INDEX IF NOT EXISTS "
         rf"\w+\s+ON {tables})[\s\S]*?;", schema,

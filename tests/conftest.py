@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import fakeredis.aioredis
@@ -97,6 +98,10 @@ def chat_plugin(
         chat_plugin_module.conversation_queue,
         "enqueue",
         AsyncMock(return_value="1-0"),
+    )
+    # 普通插件单测不访问部署素材库；真实原件、归属和分类由素材离线集成验证。
+    monkeypatch.setattr(
+        chat_plugin_module._media_resources, "materials", SimpleNamespace(put=AsyncMock()),
     )
     return chat_plugin_module
 

@@ -15,6 +15,8 @@ const builtinTools = [
   ['knowledge_search', '知识库检索'],
   ['material_search', '素材查询'], ['material_get', '素材读取'],
   ['memory', '标签记忆（QQ）'], ['naraka_query', '永劫无间查询（QQ）'],
+  ['bot_config_get', '查询机器人配置（仅主人）'],
+  ['bot_config_update', '修改机器人配置（仅主人）'],
   ['naraka_search', '永劫无间搜索（QQ）'], ['mention_member', '群成员 @（QQ）'],
   ['image_generate', '模型直接生图'],
   ['local_workflow_list', '工作流列表'], ['local_workflow_generate_image', '工作流生图'], ['local_workflow_generate_video', '工作流生视频'],
@@ -28,6 +30,8 @@ const pluginTools: Record<string, string> = {
   bilibili_reply_comment: 'bilibili', bilibili_publish_video: 'bilibili',
   bilibili_publish_dynamic: 'bilibili',
   memory: 'qqbot', naraka_query: 'qqbot', naraka_search: 'qqbot', mention_member: 'qqbot',
+  // 配置工具的可见性随 QQ 插件运行，实际执行还须服务端校验主人身份。
+  bot_config_get: 'qqbot', bot_config_update: 'qqbot',
   local_workflow_tasks: 'qqbot', local_workflow_cancel: 'qqbot', job: 'qqbot',
 };
 

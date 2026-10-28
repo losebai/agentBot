@@ -231,6 +231,9 @@ class PluginConfig(BaseModel):
     chat_auto_speak_interval_seconds: float = Field(
         default=3600, gt=0, le=2592000, allow_inf_nan=False,
     )
+    chat_auto_speak_message_interval_seconds: float = Field(
+        default=0, ge=0, le=2592000, allow_inf_nan=False,
+    )
     chat_auto_speak_max_reply_chars: int = Field(default=500, ge=1, le=1000)
     onebot_v11_access_token: SecretStr = Field(repr=False)
     chat_session_secret: SecretStr = Field(repr=False)
@@ -857,7 +860,7 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "port": "监听端口",
     "log_level": "日志级别",
     "api_timeout": "API 超时时间 (秒)",
-    "superusers": "超级用户 QQ 号列表",
+    "superusers": "机器人主人 QQ 号列表 (超级用户，修改后重启生效)",
     "nickname": "机器人名称与触发别名",
     "command_start": "命令前缀",
     "command_sep": "命令分隔符",
@@ -934,7 +937,8 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_auto_speak_trigger_mode": "自动发言触发方式：interval 定时或 message 群消息",
     "chat_auto_speak_prompt": "自动发言补充规则 (可留空，沿用现有人设与自动回复规则)",
     "chat_auto_speak_laya_prompt": "自动发言决策指令",
-    "chat_auto_speak_initial_delay_seconds": "自动发言启动等待秒数",
-    "chat_auto_speak_interval_seconds": "自动发言轮次间隔秒数，定时模式至少 60 秒",
+    "chat_auto_speak_initial_delay_seconds": "定时模式启动等待秒数",
+    "chat_auto_speak_interval_seconds": "定时模式轮次间隔秒数，至少 60 秒",
+    "chat_auto_speak_message_interval_seconds": "消息模式同群决策最短间隔秒数，0 表示不限制",
     "chat_auto_speak_max_reply_chars": "自动发言最大回复字数",
 }

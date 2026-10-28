@@ -29,6 +29,8 @@ def legacy_database(tmp_path):
             "agent_bot_bilibili_operation",
             "agent_bot_schema_version",
             "agent_bot_schema_migration",
+            "chat_material_category",
+            "chat_material_tag",
         ):
             connection.execute(f"DROP TABLE IF EXISTS {name}")
         connection.execute("CREATE TABLE private_business (value TEXT)")
@@ -47,14 +49,14 @@ def test_unversioned_database_upgrades_and_second_start_has_no_ddl(legacy_databa
     first = upgrade_database(legacy_database, read_resource=resource)
     assert first.current_version == __version__
     assert first.previous_version is None
-    assert first.applied == ("bilibili-v1", "comfy-plugin-v1")
+    assert first.applied == ("bilibili-v1", "comfy-plugin-v1", "material-classification-v1")
     assert query(legacy_database, "SELECT value FROM private_business") == [("must-preserve",)]
     assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [
         (__version__,),
     ]
     second = upgrade_database(legacy_database, read_resource=resource)
     assert second.applied == () and second.previous_version == __version__
-    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(2,)]
+    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(3,)]
 
 
 def test_newer_database_is_rejected_without_changing_any_rows(legacy_database):
@@ -146,7 +148,7 @@ def test_two_startups_serialize_and_only_one_applies_migration(legacy_database):
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: start(), range(2)))
-    assert sorted(len(result.applied) for result in results) == [0, 2]
+    assert sorted(len(result.applied) for result in results) == [0, 3]
 
 
 def test_missing_existing_sqlite_file_is_not_created(tmp_path):
@@ -255,3 +257,46 @@ def test_named_model_index_must_have_the_correct_columns(legacy_database):
     assert not query(
         legacy_database, "SELECT name FROM sqlite_master WHERE name='agent_bot_schema_version'"
     )
+
+
+def test_material_upgrade_keeps_legacy_rows_and_matches_fresh_schema(legacy_database, tmp_path):
+    """未知历史来源不回填，增量后的列、索引及外键与完整新库保持一致。"""
+    with sqlite3.connect(legacy_database.sqlite_path) as connection:
+        connection.execute(
+            "INSERT INTO chat_material "
+            "(id,entry,session_id,name,kind,mime_type,size_bytes,sha256,storage_key,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("a" * 32, "qq", "old", "old.txt", "file", "text/plain", 1,
+             "a" * 64, "a" * 32, "2026-01-01 00:00:00"),
+        )
+    upgrade_database(legacy_database, read_resource=resource)
+    with sqlite3.connect(legacy_database.sqlite_path) as upgraded, sqlite3.connect(
+        tmp_path / "fresh.sqlite3"
+    ) as fresh:
+        fresh.executescript(resource("agent_bot_init.sqlite.sql"))
+        assert upgraded.execute("SELECT name FROM chat_material").fetchall() == [("old.txt",)]
+        for table in ("chat_material_category", "chat_material_tag"):
+            assert upgraded.execute(f"SELECT * FROM {table}").fetchall() == []
+            for pragma in ("table_info", "index_list", "foreign_key_list"):
+                assert upgraded.execute(f"PRAGMA {pragma}({table})").fetchall() == (
+                    fresh.execute(f"PRAGMA {pragma}({table})").fetchall()
+                )
+            for index in upgraded.execute(f"PRAGMA index_list({table})").fetchall():
+                assert upgraded.execute(f"PRAGMA index_info({index[1]})").fetchall() == (
+                    fresh.execute(f"PRAGMA index_info({index[1]})").fetchall()
+                )
+
+
+def test_material_upgrade_requires_original_table_and_orders_foreign_keys(legacy_database):
+    """只允许新关联表缺失；MySQL 初始化必须先创建被外键引用的素材父表。"""
+    for filename in ("agent_bot_init.sql", "agent_bot_init.sqlite.sql"):
+        script = resource(filename)
+        parent = script.index("CREATE TABLE IF NOT EXISTS chat_material (")
+        source = script.index("CREATE TABLE IF NOT EXISTS chat_material_source (")
+        for table in ("chat_material_category", "chat_material_tag"):
+            assert parent < source < script.index(f"CREATE TABLE IF NOT EXISTS {table} (")
+    with sqlite3.connect(legacy_database.sqlite_path) as connection:
+        connection.execute("DROP TABLE chat_material_source")
+        connection.execute("DROP TABLE chat_material")
+    with pytest.raises(UpgradeError, match="chat_material"):
+        upgrade_database(legacy_database, read_resource=resource)

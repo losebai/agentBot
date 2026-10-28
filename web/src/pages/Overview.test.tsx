@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { Overview } from './Overview';
@@ -9,7 +9,7 @@ function status(statistics: object | null) {
     applied_revision: 4, restart_required_fields: [], statistics };
 }
 
-it('首页显示累计用量和加权缓存命中率，刷新更新正在运行数量', async () => {
+it('首页显示所选日期用量和加权缓存命中率，刷新更新正在运行数量', async () => {
   let running = 3;
   vi.stubGlobal('fetch', vi.fn(async url => Response.json(String(url).endsWith('/bots') ? [] : status({
     conversation_count: 1200, running_requests: running, total_tokens: 12345,
@@ -20,7 +20,7 @@ it('首页显示累计用量和加权缓存命中率，刷新更新正在运行�
   await screen.findByText('对话总数');
   expect(screen.getByText('1,200')).toBeInTheDocument();
   expect(screen.getByText('当前运行中').parentElement).toHaveTextContent('3');
-  expect(screen.getByText('累计 Token 消耗').parentElement).toHaveTextContent('12,345');
+  expect(screen.getByText('Token 消耗').parentElement).toHaveTextContent('12,345');
   expect(screen.getByText('缓存命中率').parentElement).toHaveTextContent('25.0%');
   expect(screen.queryByText(/视频、通用 Laya 和 SolonCode 尚未迁移/)).not.toBeInTheDocument();
   running = 0;
@@ -65,4 +65,51 @@ it('托管状态读取失败仍显示已有用量和机器人连接', async () =
   expect(await screen.findByText(/NapCat 状态读取失败/)).toBeInTheDocument();
   expect(screen.getByText('12345')).toBeInTheDocument();
   expect(screen.getByText('对话总数').parentElement).toHaveTextContent('9');
+});
+
+it('默认按北京时间今日查询，区间筛选、刷新与今日重置共用统计条件', async () => {
+  const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+  vi.stubGlobal('fetch', vi.fn(async raw => {
+    const url = new URL(String(raw), 'http://localhost');
+    if (url.pathname.endsWith('/bots')) return Response.json([]);
+    const current = url.searchParams.get('start_date') === today
+      && url.searchParams.get('end_date') === today;
+    const range = url.searchParams.get('start_date') === '2025-01-01'
+      && url.searchParams.get('end_date') === '2025-01-03';
+    return Response.json(status({
+      conversation_count: current ? 7 : range ? 12 : 99, running_requests: 2,
+      total_tokens: 100, cache_hit_rate: null,
+      model_call_count: current ? 4 : 10, failed_model_calls: current ? 1 : 5,
+      model_failure_rate: current ? 0.25 : 0.5,
+    }));
+  }));
+  render(<Overview token="offline" />);
+  await screen.findByText('模型调用失败率');
+  expect(screen.getByLabelText('开始日期')).toHaveValue(today);
+  expect(screen.getByLabelText('结束日期')).toHaveValue(today);
+  expect(screen.getByText('对话总数').parentElement).toHaveTextContent('7');
+  expect(screen.getByText('模型调用失败率').parentElement).toHaveTextContent('25.0%');
+  fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2025-01-01' } });
+  fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2025-01-03' } });
+  await userEvent.click(screen.getByRole('button', { name: /查\s*询/ }));
+  await waitFor(() => expect(screen.getByText('对话总数').parentElement).toHaveTextContent('12'));
+  expect(screen.getByText('模型调用失败率').parentElement).toHaveTextContent('50.0%');
+  await userEvent.click(screen.getByRole('button', { name: /刷新状态/ }));
+  await waitFor(() => expect(screen.getByText('对话总数').parentElement).toHaveTextContent('12'));
+  await userEvent.click(screen.getByRole('button', { name: /今\s*日/ }));
+  await waitFor(() => expect(screen.getByText('对话总数').parentElement).toHaveTextContent('7'));
+});
+
+it('没有已结束的模型调用时失败率显示未知，日期倒置时阻止查询', async () => {
+  vi.stubGlobal('fetch', vi.fn(async raw => Response.json(String(raw).endsWith('/bots') ? [] : status({
+    conversation_count: 0, running_requests: 0, total_tokens: 0,
+    cache_hit_rate: null, model_call_count: 0, failed_model_calls: 0,
+    model_failure_rate: null,
+  }))));
+  render(<Overview token="offline" />);
+  await screen.findByText('模型调用失败率');
+  expect(screen.getByText('模型调用失败率').parentElement).toHaveTextContent('暂无已结束的模型调用');
+  fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-10-29' } });
+  fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-10-28' } });
+  expect(screen.getByRole('button', { name: /查\s*询/ })).toBeDisabled();
 });

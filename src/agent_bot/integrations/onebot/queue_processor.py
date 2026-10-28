@@ -111,6 +111,7 @@ class ConversationQueueProcessor:
         image_submitter: Callable[[ConversationJob], Awaitable[str]],
         workflow_service_provider: Callable[[], WorkflowExecutionService | None],
         media_store_provider: Callable[[], Any] = lambda: None,
+        material_store_provider: Callable[[], Any] = lambda: None,
         outgoing_recorder: OutgoingRecorder | None = None,
         receive_queued: Callable[..., Awaitable[None]] | None = None,
         finish_received: Callable[[str, str], Awaitable[None]] | None = None,
@@ -128,6 +129,7 @@ class ConversationQueueProcessor:
         self._image_submitter = image_submitter
         self._workflow_service_provider = workflow_service_provider
         self._media_store_provider = media_store_provider
+        self._material_store_provider = material_store_provider
         self._outgoing_recorder = outgoing_recorder
         self._receive_queued = receive_queued
         self._finish_received_callback = finish_received
@@ -542,6 +544,14 @@ class ConversationQueueProcessor:
             await store.complete(job.job_id, "local_workflow_generate_image", signature, saved)
         if not isinstance(saved, ImageEffect):
             raise ChatAiProtocolError("background workflow result is invalid")
+        materials = self._material_store_provider()
+        if materials is not None:
+            # 成功回执已保存，素材保存失败后重试只复用原图，不能再次调用 Comfy。
+            await materials.put(
+                owner=MediaOwner(entry="qq", session_id=job.session_id),
+                name="工作流生成图片", mime_type=saved.media_type,
+                data=base64.b64decode(saved.data, validate=True), category="generated",
+            )
         return ConversationResult(kind="WORKFLOW_IMAGES", workflowImages=(WorkflowImageArtifact(
             mimeType=saved.media_type, data=saved.data,
         ),))
@@ -712,6 +722,7 @@ class ConversationQueueProcessor:
             user_name=job.user_name,
             chat_context=job.chat_context,
             recent_group_context=job.recent_group_context,
+            media_session_id=job.session_id,
         )
 
     async def delivery_count(self, job: ConversationJob, result: ConversationResult) -> int:

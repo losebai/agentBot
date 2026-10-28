@@ -24,7 +24,7 @@ it('独立插件进程的启停只读，使用当前命令选择且不发送保�
   expect(fetcher.mock.calls.every(([, options]) => options?.method !== 'PATCH')).toBe(true);
 });
 
-it('已安装列表只管理启停并跳转独立配置，不提前挂载账号设置', async () => {
+it('插件中心可跳转独立配置，不提前挂载账号设置', async () => {
   const configure = vi.fn();
   const fetcher = vi.fn(async url => String(url).endsWith('/plugins')
     ? Response.json(pluginResponse(true))
@@ -37,31 +37,21 @@ it('已安装列表只管理启停并跳转独立配置，不提前挂载账号�
   expect(fetcher.mock.calls.some(([url]) => String(url).includes('/napcat/'))).toBe(false);
 });
 
-it('插件中心展示随程序安装的目录，停用不误标为未安装', async () => {
-  const installed = vi.fn();
+it('插件中心同时展示安装信息和启停控制，停用仍标记为已安装', async () => {
   vi.stubGlobal('fetch', vi.fn(async url => String(url).endsWith('/plugins')
     ? Response.json([{ ...pluginResponse(false)[0], enabled: false, status: 'disabled' }])
     : Response.json({ database_revision: 3, applied_revision: 3, fields: [] })));
-  render(<Plugins token="offline" view="center" onInstalled={installed} />);
+  render(<Plugins token="offline" />);
   expect(await screen.findByRole('heading', { name: '插件中心' })).toBeVisible();
-  expect(await screen.findByText('QQBot')).toBeVisible();
+  const toggle = await screen.findByRole('switch', { name: '启用 QQBot' });
+  expect(screen.getByText('QQ 消息插件')).toBeVisible();
   expect(screen.getByText('内置插件')).toBeVisible();
   expect(screen.getByText('已安装')).toBeVisible();
-  expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '管理 QQBot' }));
-  expect(installed).toHaveBeenCalledOnce();
-});
-
-it('中心与已安装列表切换保留未保存的启停草稿', async () => {
-  vi.stubGlobal('fetch', vi.fn(async url => String(url).endsWith('/plugins')
-    ? Response.json(pluginResponse(true))
-    : Response.json({ database_revision: 3, applied_revision: 3, fields: [] })));
-  const view = render(<Plugins token="offline" />);
-  fireEvent.click(await screen.findByRole('switch', { name: '启用 QQBot' }));
-  view.rerender(<Plugins token="offline" view="center" />);
-  expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-  view.rerender(<Plugins token="offline" view="installed" />);
-  expect(screen.getByRole('switch', { name: '启用 QQBot' })).not.toBeChecked();
+  expect(screen.getByText('未启用')).toBeVisible();
+  expect(screen.getByText('qqbot · 0.5.0')).toBeVisible();
+  expect(toggle).not.toBeChecked();
+  expect(screen.queryByRole('button', { name: '配置 QQBot' })).not.toBeInTheDocument();
+  fireEvent.click(toggle);
   expect(screen.getByRole('button', { name: /保\s*存/ })).toBeEnabled();
 });
 

@@ -127,13 +127,13 @@ class PluginInfo(ApiModel):
 
 
 class OverviewStatistics(CallStatistics):
-    """累计数据来自数据库，正在运行数量来自当前进程，避免历史 running 残留误报。"""
+    """区间统计来自数据库，运行数量来自当前进程，避免历史 running 残留误报。"""
 
     running_requests: int = Field(ge=0)
 
 
 class ServiceStatus(ApiModel):
-    """同时展示服务就绪、连接、累计用量与当前对话活动。"""
+    """同时展示服务就绪、连接、日期区间用量与当前对话活动。"""
 
     service: Literal["agentBot"] = "agentBot"
     ready: bool

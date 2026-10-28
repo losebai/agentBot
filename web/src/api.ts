@@ -27,8 +27,11 @@ export class ApiClient {
 
   /** 查询公开登录模式，不读取任何管理员密码。 */
   auth(signal?: AbortSignal) { return this.request<{ password_required: boolean }>('auth', 'GET', undefined, signal); }
-  /** 允许概览取消旧读取，避免慢响应覆盖新状态。 */
-  status(signal?: AbortSignal) { return this.request<ServiceStatus>('status', 'GET', undefined, signal); }
+  /** 概览按北京时间日期区间读取，取消旧请求以阻止过期统计覆盖新筛选。 */
+  status(signal?: AbortSignal, range?: { start_date: string; end_date: string }) {
+    const query = range ? `?${new URLSearchParams(range)}` : '';
+    return this.request<ServiceStatus>(`status${query}`, 'GET', undefined, signal);
+  }
   /** 真实 QQ 连接来自适配器，不能用 NapCat 进程状态替代。 */
   bots(signal?: AbortSignal) { return this.request<BotInfo[]>('bots', 'GET', undefined, signal); }
   /** 只读观察所属托管实例，不触发程序启动或重启。 */

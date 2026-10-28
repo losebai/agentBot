@@ -131,8 +131,10 @@ def make_service(
     group_shared_session: bool = False,
     decision_backend: str = "laya",
     forward_user_name: bool = False,
+    message_interval_seconds: float = 0,
+    clock: Callable[[], float] | None = None,
 ) -> AutoSpeakService:
-    """用离线依赖构造群聊自动发言，允许覆盖机器人人设。"""
+    """用离线依赖构造自动发言，并允许用固定时钟验证消息间隔。"""
 
     return AutoSpeakService(
         job_submitter=job_submitter,
@@ -160,7 +162,106 @@ def make_service(
         group_shared_session=group_shared_session,
         decision_backend=decision_backend,
         forward_user_name=forward_user_name,
+        message_interval_seconds=message_interval_seconds,
+        **({"clock": clock} if clock is not None else {}),
     )
+
+
+@pytest.mark.parametrize("outcome", [decision(True), decision(False), RuntimeError("failed")])
+async def test_message_interval_limits_checks_per_group_until_boundary(outcome):
+    """同群决策不论发言、静默或失败都消耗间隔，其他群独立计时。"""
+    now = [0.0]
+    bot = FakeBot()
+    client = FakeDecisionClient([outcome, decision(True), decision(True)])
+    value = make_service(
+        job_submitter=FakeJobSubmitter(), decision_client=client,
+        context_store=FakeContextStore({}), bot_provider=lambda _: bot,
+        trigger_mode="message", group_ids={"88888", "77777"},
+        message_interval_seconds=30, clock=lambda: now[0],
+    )
+    assert not await value.handle_group_message(
+        bot, "88888", None, trigger_message="   ",
+    )
+    assert not await value.handle_group_message(
+        bot, "66666", None, trigger_message="非目标群",
+    )
+    await value.handle_group_message(bot, "88888", None, trigger_message="首次检查")
+    now[0] = 29.9
+    assert not await value.handle_group_message(
+        bot, "88888", None, trigger_message="间隔内跳过",
+    )
+    assert len(client.calls) == 1
+    assert await value.handle_group_message(
+        bot, "77777", None, trigger_message="另一群立即检查",
+    )
+    now[0] = 30
+    assert await value.handle_group_message(
+        bot, "88888", None, trigger_message="到达边界再次检查",
+    )
+    assert len(client.calls) == 3
+
+
+@pytest.mark.parametrize("trigger_mode", ["message", "interval"])
+async def test_message_interval_zero_and_timer_do_not_throttle(trigger_mode):
+    """零间隔保持逐消息检查，定时模式不受消息间隔影响。"""
+    bot = FakeBot()
+    client = FakeDecisionClient([decision(True), decision(True)])
+    value = make_service(
+        job_submitter=FakeJobSubmitter(), decision_client=client,
+        context_store=FakeContextStore({"88888": "群消息"}), bot_provider=lambda _: bot,
+        trigger_mode=trigger_mode, message_interval_seconds=0 if trigger_mode == "message" else 30,
+        clock=lambda: 0,
+    )
+    for _ in range(2):
+        if trigger_mode == "message":
+            assert await value.handle_group_message(bot, "88888", None, trigger_message="消息")
+        else:
+            assert (await value.run_once()).sent == 1
+    assert len(client.calls) == 2
+
+
+async def test_message_interval_starts_after_waiting_for_other_group_decision(monkeypatch):
+    """跨群决策锁排队的时间不能提前消耗本群间隔，避免解锁后连续调用。"""
+    now = [0.0]
+    started = asyncio.Event()
+    release = asyncio.Event()
+    bot = FakeBot()
+    client = FakeDecisionClient([decision(False), decision(False), decision(False)])
+    decide = client.decide_auto_speak
+
+    async def blocking_decision(**kwargs):
+        """首群持有全局锁，允许后续群在同一时钟下排队。"""
+        result = await decide(**kwargs)
+        if len(client.calls) == 1:
+            started.set()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(client, "decide_auto_speak", blocking_decision)
+    value = make_service(
+        job_submitter=FakeJobSubmitter(), decision_client=client,
+        context_store=FakeContextStore({}), bot_provider=lambda _: bot,
+        trigger_mode="message", group_ids={"88888", "77777"},
+        message_interval_seconds=30, clock=lambda: now[0],
+    )
+    first = asyncio.create_task(value.handle_group_message(
+        bot, "77777", None, trigger_message="占用决策锁",
+    ))
+    await started.wait()
+    waiting = asyncio.create_task(value.handle_group_message(
+        bot, "88888", None, trigger_message="等待另一群结束",
+    ))
+    try:
+        await asyncio.sleep(0)
+        now[0] = 60
+    finally:
+        release.set()
+        await asyncio.gather(first, waiting)
+    await value.handle_group_message(bot, "88888", None, trigger_message="紧接着的下一条")
+    assert len(client.calls) == 2
+    now[0] = 90
+    await value.handle_group_message(bot, "88888", None, trigger_message="完整间隔后")
+    assert len(client.calls) == 3
 
 
 @pytest.mark.parametrize("trigger_mode", ["interval", "message"])

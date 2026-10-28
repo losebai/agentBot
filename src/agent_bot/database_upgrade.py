@@ -22,6 +22,7 @@ from agent_bot.sql_scripts import split_sql
 VERSION_TABLE = "agent_bot_schema_version"
 HISTORY_TABLE = "agent_bot_schema_migration"
 METADATA_TABLES = frozenset({VERSION_TABLE, HISTORY_TABLE})
+MATERIAL_CLASSIFICATION_TABLES = frozenset({"chat_material_category", "chat_material_tag"})
 BILIBILI_TABLES = frozenset({"agent_bot_bilibili_account", "agent_bot_bilibili_operation"})
 
 
@@ -44,6 +45,8 @@ MIGRATIONS = (
     Migration("0.5.7", "bilibili-v1", "bilibili-init.sql", "bilibili-init.sqlite.sql", True),
     Migration("0.5.9", "comfy-plugin-v1", "2026-10-28-comfy-plugin.sql",
               "2026-10-28-comfy-plugin.sqlite.sql", True),
+    Migration("0.5.9", "material-classification-v1", "material-classification.sql",
+              "material-classification.sqlite.sql", True),
 )
 
 
@@ -232,7 +235,10 @@ def upgrade_database(
                     )
                 if previous is None:
                     # 有版本记录的旧结构须先跑增量，不能拿新结构提前拒绝它。
-                    _validate(actual, expected, exclude=METADATA_TABLES | BILIBILI_TABLES)
+                    _validate(
+                        actual, expected,
+                        exclude=METADATA_TABLES | BILIBILI_TABLES | MATERIAL_CLASSIFICATION_TABLES,
+                    )
                     _validate_model_baseline(connection, params.backend)
                 if not METADATA_TABLES <= actual.keys():
                     _execute(

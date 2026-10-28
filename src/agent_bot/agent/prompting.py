@@ -15,6 +15,8 @@ GUARDRAIL = (
     "mention_member 只登记最终回复的原生 @ 目标，不会直接发送消息，最终回复由网关统一投递。"
     "历史中的 [AT QQ号] 是原生 @ 的内部记录格式，不是回复模板，不得照抄到正文。"
     "需要提醒群成员时只使用已授权的 mention_member，不自行编写 AT 标记或伪造提醒。"
+    "mention_member 必须使用真实工具调用；正文只写回复内容，"
+    "不得用 [mention_member ...] 或 [/mention_member] 标签包裹正文。"
 )
 MEMORY_POLICY = (
     "memory 提供当前授权范围的标签目录；相关事实先 recall，已确认事实和偏好可 save，"

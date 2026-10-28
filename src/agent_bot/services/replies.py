@@ -268,10 +268,11 @@ class LlmReplyComposer:
                         user=intent.user,
                         user_name=intent.user_name,
                         chat_context=intent.chat_context,
-                        # 已送达图片由 Agent 表达完成事实，保持聊天工具和网页检索关闭。
+                        # 失败说明和完成通知沿用 Agent 主备模型；表达事实不能重放原任务工具。
                         **({"use_agent": True} if (
-                            isinstance(intent.facts, WorkflowStatusFacts)
-                            and intent.facts.status == "completed"
+                            isinstance(intent.facts, (TaskFailedFacts, FeatureUnavailableFacts))
+                            or (isinstance(intent.facts, WorkflowStatusFacts)
+                                and intent.facts.status in {"completed", "failed"})
                         ) else {}),
                     ),
                     timeout=self._timeout_seconds_provider(),

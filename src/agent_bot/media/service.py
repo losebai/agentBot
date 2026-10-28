@@ -95,6 +95,12 @@ class MediaGenerationService:
                     data=data,
                     mime_type=response.items[0].mime_type,
                 )
+                if request.output_type == "IMAGE":
+                    # 生成原件先持久保存，管理端未发送、QQ 后续发送失败也不能丢失图片。
+                    await self.resources.materials.put(
+                        owner=owner, name="生成图片", data=data,
+                        mime_type=response.items[0].mime_type, category="generated",
+                    )
             except Exception as error:
                 raise MediaError("MEDIA_SAVE_FAILED") from error
             text, status = response.text or "", "completed"

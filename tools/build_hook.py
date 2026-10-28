@@ -16,7 +16,8 @@ class CustomBuildHook(BuildHookInterface):
         for filename in ('bilibili-init.sql', 'bilibili-init.sqlite.sql', 'UPGRADE-BILIBILI.md',
                          'startup-versioning.sql', 'startup-versioning.sqlite.sql',
                          'UPGRADE-AUTOMATIC.md', '2026-10-28-comfy-plugin.sql',
-                         '2026-10-28-comfy-plugin.sqlite.sql'):
+                         '2026-10-28-comfy-plugin.sqlite.sql', 'material-classification.sql',
+                         'material-classification.sqlite.sql'):
             if not (Path(self.root) / 'sql' / filename).is_file():
                 raise FileNotFoundError(f'required database resource missing: {filename}')
         if version != "editable":

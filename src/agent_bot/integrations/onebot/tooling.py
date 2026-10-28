@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequen
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from nonebot import get_bots
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent
@@ -40,6 +41,9 @@ from agent_bot.services.workflow_execution import (
 from agent_bot.services.workflow_inputs import workflow_input_scope
 
 GroupMemberRefresher = Callable[[Bot, int], Awaitable[object]]
+
+if TYPE_CHECKING:
+    from agent_bot.services.bot_config_tools import BotConfigTools
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,8 +84,9 @@ class ChatToolSessionManager:
         material_store_provider: Callable[[], object | None] = lambda: None,
         catalog_provider: Callable[[], AiCatalog | None] = lambda: None,
         plugin_tools_provider: Callable[[], Sequence[ChatToolName]] = lambda: (),
+        bot_config_tools_provider: Callable[[], BotConfigTools | None] = lambda: None,
     ) -> None:
-        """保存热更新配置和依赖；跨插件工具只能由宿主的实时能力提供器授予。"""
+        """保存实时依赖；主人配置工具只借用宿主明确注入的配置服务。"""
 
         self._config_provider = config_provider
         self._store_provider = store_provider
@@ -96,13 +101,16 @@ class ChatToolSessionManager:
         self._material_store_provider = material_store_provider
         self._catalog_provider = catalog_provider
         self._plugin_tools_provider = plugin_tools_provider
+        self._bot_config_tools_provider = bot_config_tools_provider
 
     def available_tools(self, event: MessageEvent) -> tuple[ChatToolName, ...]:
-        """按真实事件计算白名单，B站写工具仅授予已有超级用户。"""
+        """按真实事件授予主人配置能力，B站写工具也只授予已有超级用户。"""
 
         from agent_bot.plugins.bilibili.contracts import WRITE_TOOLS
 
-        tools = self._available_tools(group=isinstance(event, GroupMessageEvent))
+        tools = self._available_tools(
+            group=isinstance(event, GroupMessageEvent), user_id=str(event.user_id),
+        )
         if str(event.user_id) not in self._config_provider().superusers:
             tools = tuple(name for name in tools if name not in WRITE_TOOLS)
         return tools
@@ -112,13 +120,17 @@ class ChatToolSessionManager:
 
         return self._available_tools(group=True)
 
-    def _available_tools(self, *, group: bool) -> tuple[ChatToolName, ...]:
-        """按真实服务授权，插件待重启的启用选择不能提前开放工具。"""
+    def _available_tools(
+        self, *, group: bool, user_id: str | None = None,
+    ) -> tuple[ChatToolName, ...]:
+        """配置能力还需真人主人身份；无入站身份的自动发言不获得该权限。"""
 
         config = self._config_provider()
         if not config.chat_mcp_enabled or self._store_provider() is None:
             return ()
         tools: list[ChatToolName] = []
+        if user_id in config.superusers and self._bot_config_tools_provider() is not None:
+            tools.extend(("bot_config_get", "bot_config_update"))
         if config.chat_job_enabled:
             tools.append("job")
         if config.chat_tagged_memory_enabled and self._memory_store_provider() is not None:
@@ -195,6 +207,7 @@ class ChatToolSessionManager:
                 group_member_provider if isinstance(event, GroupMessageEvent) else None
             ),
             allowed_tools=frozenset(tools),
+            bot_config_tools=self._bot_config_tools_provider(),
             workflow_service=self._workflow_service_provider(),
             workflow_collector=collector,
             image_tasks=self._image_tasks_provider(),
@@ -237,7 +250,7 @@ class ChatToolSessionManager:
         self,
         job: ConversationJob,
     ) -> AsyncIterator[ChatToolSessionLease]:
-        """恢复固化白名单及绘图回执，避免重启后再次生成已提交的图片。"""
+        """恢复回执和真实用户身份；自动任务不能借主人账号获得配置能力。"""
 
         if not job.chat_tools and not job.laya_decision:
             yield ChatToolSessionLease(tools=(), token=None)
@@ -249,7 +262,10 @@ class ChatToolSessionManager:
         if job.laya_decision:
             raise RuntimeError("queued Laya decision is not available")
 
-        available_tools = set(self._available_tools(group=job.scene == "group"))
+        available_tools = set(self._available_tools(
+            group=job.scene == "group",
+            user_id=job.user_id if has_user_memory_source(job) else None,
+        ))
         workflow_service = self._workflow_service_provider()
         tts_service = self._tts_service_provider()
         if not set(job.chat_tools).issubset(available_tools):
@@ -284,6 +300,7 @@ class ChatToolSessionManager:
             naraka_service=self._naraka_service_provider(),
             group_member_provider=group_member_provider if group_id is not None else None,
             allowed_tools=frozenset(job.chat_tools),
+            bot_config_tools=self._bot_config_tools_provider(),
             workflow_service=workflow_service,
             workflow_collector=collector,
             image_tasks=self._image_tasks_provider(),

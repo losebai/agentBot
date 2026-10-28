@@ -49,7 +49,7 @@ export interface DeadLetterClearResult {
   images: number;
 }
 
-/** 持久归档累计与当前进程的活动请求分开统计，未上报缓存信息保持未知。 */
+/** 日期区间内的归档与实时请求分开统计，无有效分母的比例保持未知。 */
 export interface OverviewStatistics {
   conversation_count: number;
   running_requests: number;
@@ -59,6 +59,9 @@ export interface OverviewStatistics {
   cached_tokens: number;
   cache_prompt_tokens: number;
   cache_hit_rate: number | null;
+  model_call_count: number;
+  failed_model_calls: number;
+  model_failure_rate: number | null;
 }
 
 export interface ServiceStatus {

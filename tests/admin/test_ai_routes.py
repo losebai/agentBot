@@ -368,7 +368,8 @@ async def test_status_statistics_use_live_counts_and_authenticated_archive(pytho
     service = runtime.ai_service
     store = CallRecordStore(service.sessions.params, connect=service.sessions.connect)
     await store.import_batch([legacy_record({
-        "id": 1, "data": {"choices": [], "status": "running", "usage": {
+        "id": 1, "create_time": "2026-10-28 12:00:00",
+        "data": {"choices": [], "status": "running", "usage": {
             "prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110,
             "cached_tokens": 30,
         }},
@@ -376,9 +377,10 @@ async def test_status_statistics_use_live_counts_and_authenticated_archive(pytho
     runtime.agent_service = SimpleNamespace(
         active_requests=2, readiness=AsyncMock(return_value=None),
     )
-    assert (await api.get("/api/v1/status")).status_code == 401
+    path = "/api/v1/status?start_date=2026-10-28&end_date=2026-10-28"
+    assert (await api.get(path)).status_code == 401
     async with service._slot(), service._slot(conversation=False):
-        response = await api.get("/api/v1/status", headers=HEADERS)
+        response = await api.get(path, headers=HEADERS)
         assert response.status_code == 200, response.text
         stats = response.json()["statistics"]
         assert stats["conversation_count"] == 1
@@ -388,6 +390,40 @@ async def test_status_statistics_use_live_counts_and_authenticated_archive(pytho
     runtime.agent_service.active_requests = 0
     response = await api.get("/api/v1/status", headers=HEADERS)
     assert response.json()["statistics"]["running_requests"] == 0
+
+
+async def test_status_defaults_to_beijing_today_and_supports_date_ranges(python_api):
+    """日期按归档北京时间包含整天；默认今日，非法或不完整区间明确拒绝。"""
+    from datetime import datetime, timedelta, timezone
+
+    from agent_bot.ai.call_records import CallRecordStore, legacy_record
+
+    api, _, runtime = python_api
+    sessions = runtime.ai_service.sessions
+    store = CallRecordStore(sessions.params, connect=sessions.connect)
+    today = datetime.now(timezone(timedelta(hours=8))).date()
+    yesterday = today - timedelta(days=1)
+    await store.import_batch([
+        legacy_record({"id": 1, "create_time": f"{today} 00:00:00",
+                       "data": {"choices": [], "status": "failed"}}, "status-range"),
+        legacy_record({"id": 2, "create_time": f"{yesterday} 23:59:59",
+                       "data": {"choices": [], "status": "completed"}}, "status-range"),
+    ])
+    response = await api.get("/api/v1/status", headers=HEADERS)
+    assert response.status_code == 200
+    stats = response.json()["statistics"]
+    assert stats["conversation_count"] == 1
+    assert stats["model_failure_rate"] == 1
+    response = await api.get(
+        f"/api/v1/status?start_date={yesterday}&end_date={today}", headers=HEADERS,
+    )
+    assert response.json()["statistics"]["model_failure_rate"] == 0.5
+    for query in (
+        f"start_date={today}&end_date={yesterday}", f"start_date={today}",
+        f"end_date={today}", "start_date=invalid&end_date=2026-10-28",
+    ):
+        response = await api.get(f"/api/v1/status?{query}", headers=HEADERS)
+        assert response.status_code == 422
 
 
 async def test_call_record_usage_is_available_in_list_and_detail(python_api):

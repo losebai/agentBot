@@ -14,6 +14,8 @@ from agent_bot.model_guard import ModelNotAvailableError
 from agent_bot.services.chat import ChatBusyError, ChatRateLimitedError, PromptTooLongError
 from agent_bot.services.conversation_queue import ConversationQueueFullError
 from agent_bot.services.workflow_execution import GeneratedWorkflowImage
+from materials.test_store import material_database as material_database
+from materials.test_store import materials as materials
 
 
 @pytest.fixture
@@ -71,6 +73,41 @@ async def run_draw(drawing, prompt: str = "猫", *, group: bool = False) -> None
             matcher=drawing.matcher,
         )
     drawing.matcher.finish.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+async def test_draw_receives_attached_image_only_after_admission(
+    drawing, monkeypatch, materials, accepted,
+):
+    """画图命令接收本次图片，冷却拒绝时不下载也不入库，归属沿用真实 QQ 会话。"""
+    from nonebot.adapters.onebot.v11 import MessageSegment
+
+    from agent_bot.materials.contracts import MaterialSearchArguments
+    from agent_bot.materials.receiver import MaterialReceiver
+    from agent_bot.media.contracts import MediaOwner
+    from agent_bot.media.inputs import ImagePreparer
+    from media.test_inputs import picture
+
+    downloader = SimpleNamespace(fetch=AsyncMock(
+        return_value=ImagePreparer().prepare(picture(), "image/png"),
+    ))
+    monkeypatch.setattr(drawing.plugin, "_material_receiver", MaterialReceiver(
+        materials, image_downloader=downloader,
+    ))
+    drawing.counter.return_value = accepted
+    bot, event = Mock(self_id="90001"), draw_event()
+    argument = Message("猫") + MessageSegment.image("https://qpic.cn/draw.png")
+    with pytest.raises(FinishedException):
+        await drawing.plugin._drawing_handler.handle(bot, event, argument, matcher=drawing.matcher)
+    owner = MediaOwner(entry="qq", session_id=drawing.plugin._event_context.session_id(bot, event))
+    records = (await materials.search(owner, MaterialSearchArguments())).records
+    assert len(records) == int(accepted)
+    if accepted:
+        assert records[0].categories == ("received",)
+        async with materials.open_content(records[0].id, owner=owner) as file:
+            assert file.read() == picture()
+    else:
+        downloader.fetch.assert_not_awaited()
 
 
 @pytest.mark.parametrize("group", [False, True])

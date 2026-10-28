@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ChatToolName = Literal[
+    "bot_config_get", "bot_config_update",
     "soloncode",
     "job",
     "memory",
@@ -22,6 +23,7 @@ ChatToolName = Literal[
     "bilibili_reply_comment", "bilibili_publish_video", "bilibili_publish_dynamic",
 ]
 AgentToolName = Literal[
+    "bot_config_get", "bot_config_update",
     "soloncode",
     "job",
     "memory",

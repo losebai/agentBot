@@ -6,7 +6,7 @@ import base64
 import binascii
 import hashlib
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -117,9 +117,11 @@ class OutgoingRecorder:
                 parts.append(f"[引用消息 {segment.data['id']}]")
             else:
                 raise MediaError("OUTGOING_SEGMENT_UNSUPPORTED", status_code=422)
-        return await self._deliver(
+        result = await self._deliver(
             scope, key, "".join(parts), tuple(ids), sender,
         )
+        await self._mark_sent(scope, ids)
+        return result
 
     async def send_video_asset(
         self, asset: MediaAssetView, sender: Callable[[], Awaitable[Any]], *, key: str,
@@ -139,18 +141,26 @@ class OutgoingRecorder:
         """生成文件以真实内容入库，长回复正文和附件引用共同进入上下文。"""
         scope = _scope.get() or await self.scope_provider(request_id)
         asset = await self._material(scope, data, "text/plain", name)
-        return await self._deliver(
+        result = await self._deliver(
             scope, "file", f"{text}\n{self._reference(asset)}", (asset.id,), sender,
         )
+        await self._mark_sent(scope, (asset.id,))
+        return result
 
     async def _material(
         self, scope: DeliveryScope, data: bytes, mime: str, name: str,
     ) -> Any:
-        """后台绘图原件归原聊天会话，素材不受临时执行附件过期影响。"""
+        """先归档真实会话的原件，平台发送失败或回执未知时不能标记已发送。"""
         return await self.materials_provider().put(
             owner=MediaOwner(entry="qq", session_id=scope.session_id),
             name=name, mime_type=mime, data=data,
         )
+
+    async def _mark_sent(self, scope: DeliveryScope, ids: Iterable[str]) -> None:
+        """平台确认与出站回执保存后追加分类，补记失败重试只复用既有回执。"""
+        owner = MediaOwner(entry="qq", session_id=scope.session_id)
+        for id in dict.fromkeys(ids):
+            await self.materials_provider().add_category(id, "sent", owner=owner)
 
     async def _deliver(
         self, scope: DeliveryScope, key: str, text: str, ids: tuple[str, ...],

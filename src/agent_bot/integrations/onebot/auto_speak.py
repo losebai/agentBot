@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
@@ -82,8 +83,10 @@ class AutoSpeakService:
         group_shared_session: bool = False,
         decision_backend: Literal["laya", "llm"] = "laya",
         forward_user_name: bool = False,
+        message_interval_seconds: float = 0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        """保存触发方式与可选补充规则；独立 LLM 决策不读取会话历史或人设。"""
+        """保存两种触发各自的间隔；独立 LLM 决策不读取会话历史或人设。"""
 
         if (
             not bot_id
@@ -94,6 +97,8 @@ class AutoSpeakService:
             raise ValueError("auto-speak identity, groups, decision prompt and secret are required")
         if initial_delay_seconds < 0 or interval_seconds <= 0 or max_reply_chars <= 0:
             raise ValueError("auto-speak timing and reply limits are invalid")
+        if not math.isfinite(message_interval_seconds) or message_interval_seconds < 0:
+            raise ValueError("auto-speak message interval must be finite and non-negative")
 
         self._job_submitter = job_submitter
         self._available_tools_provider = available_tools_provider
@@ -116,6 +121,9 @@ class AutoSpeakService:
         self._forward_user_name = forward_user_name
         self._initial_delay_seconds = initial_delay_seconds
         self._interval_seconds = interval_seconds
+        self._message_interval_seconds = message_interval_seconds
+        self._clock = clock
+        self._last_message_checks: dict[str, float] = {}
         self._max_reply_chars = max_reply_chars
         self._sleep = sleep
         self._on_error = on_error
@@ -194,9 +202,13 @@ class AutoSpeakService:
         trigger_message: str,
         chat_context_provider: AutoSpeakMetadataProvider | None = None,
     ) -> bool:
-        """保留事件原文和真实来源；获准发言后才解析正文所需的 QQ 元数据。"""
+        """按群限制消息决策频率；获准发言后才解析正文所需的 QQ 元数据。"""
 
         if not self.accepts_message(str(bot.self_id), group_id) or not trigger_message.strip():
+            return False
+        now = self._clock()
+        last_check = self._last_message_checks.get(group_id)
+        if last_check is not None and now - last_check < self._message_interval_seconds:
             return False
         try:
             return await self._evaluate_group(
@@ -245,6 +257,13 @@ class AutoSpeakService:
                 recent_group_context=recent_group_context,
             )
         async with _DECISION_LOCK:
+            if self._trigger_mode == "message":
+                # 排队其他群时不提前计时；在实际调用前复核，静默和失败也消耗间隔。
+                now = self._clock()
+                last_check = self._last_message_checks.get(group_id)
+                if last_check is not None and now - last_check < self._message_interval_seconds:
+                    return False
+                self._last_message_checks[group_id] = now
             result = await self._decision_client.decide_auto_speak(
                 state=state,
                 session_id=session_id,

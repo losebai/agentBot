@@ -396,7 +396,7 @@ class ChatService:
         user_name: str | None = None,
         chat_context: ChatContext | None = None,
     ) -> str:
-        """通过无工具 chatOne 把原请求和脱敏异常类型转换为用户说明。"""
+        """通过 Agent 主备模型表达脱敏异常，独立于原任务且禁止重新执行工具。"""
 
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,127}", error_type):
             raise ValueError("error type is invalid")
@@ -421,9 +421,11 @@ class ChatService:
             reject_busy=False,
             consume_cooldown=False,
             request_id=f"{request_id[:120]}-error",
-            use_agent=False,
+            use_agent=True,
             use_web_search=False,
             record_user_input=False,
+            persist_history=False,
+            reply_composition=True,
         )
 
     async def generate_reply_queued(
@@ -594,8 +596,9 @@ class ChatService:
         user_name: str | None = None,
         chat_context: ChatContext | None = None,
         recent_group_context: str | None = None,
+        media_session_id: str | None = None,
     ) -> ChatMediaResponse:
-        """生成排队媒体结果，不投递也不提交历史。"""
+        """生成排队媒体，后台独立互斥键与真实素材归属会话分别传递。"""
 
         return await self._media_generator.generate(
             session_id,
@@ -613,6 +616,7 @@ class ChatService:
             reject_busy=False,
             consume_cooldown=False,
             request_id=request_id,
+            media_session_id=media_session_id,
         )
 
     async def _run(
@@ -749,8 +753,10 @@ class ChatService:
             if image_material_ids:
                 context_options["image_material_ids"] = tuple(image_material_ids)
             if reply_composition:
-                # 完成通知只表达已确定事实，新增共享知识工具不能扩大原有通知能力。
+                # 失败与完成说明使用 Agent 时显式关闭全部工具，含预设关联的 MCP。
                 context_options["allow_knowledge"] = False
+                if effective_agent:
+                    context_options["allow_tools"] = False
             if laya_decision:
                 context_options["laya_decision"] = True
             if chat_tools or laya_decision:

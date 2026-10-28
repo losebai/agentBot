@@ -63,6 +63,12 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 
 /* 指标共用白色内容面，数字与说明保持清楚的阅读层次。 */
 .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); margin-bottom: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+/* 首页日期区间可换行，五项用量指标在窄屏继续使用现有双列布局。 */
+.overview-filters { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.overview-filters label { display: grid; gap: 6px; color: var(--text-secondary); font-size: 13px; }
+.overview-filters > span { align-self: center; color: var(--text-secondary); font-size: 12px; }
+.overview-filters > [role=alert] { color: #b42318; }
+.overview-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .metric { padding: 20px; border-right: 1px solid var(--border); }
 .metric:first-child { padding-left: 20px; }
 .metric:last-child { border-right: 0; }
@@ -249,6 +255,25 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .media-attachment img, .media-attachment video { display: block; max-width: 100%; max-height: 480px; object-fit: contain; margin-bottom: 12px; }
 .media-attachment audio { display: block; width: 100%; max-width: 480px; margin-bottom: 12px; }
 .media-attachment figcaption { margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
+/* 固定预览区域避免图片载入时表格跳动；原件仅在详情中读取。 */
+.material-library .page-heading { flex-wrap: wrap; gap: 16px; }
+.material-library .data-table { min-width: 1150px; }
+.material-labels > div { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.material-labels .ant-tag { margin: 0; overflow-wrap: anywhere; white-space: normal; }
+.material-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.material-tag-editor { display: flex; flex-direction: column; gap: 8px; }
+.material-tag-editor input { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; }
+.material-thumbnail, .material-file-icon { width: 72px; height: 72px; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 8px; background: #f8fafd; font-size: 24px; overflow: hidden; }
+.material-thumbnail { padding: 4px; cursor: pointer; }
+.material-thumbnail:hover, .material-thumbnail:focus-visible { border-color: var(--accent); }
+.material-thumbnail img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.material-thumbnail small { font-size: 11px; margin-top: 2px; }
+@media (max-width: 700px) {
+  /* 筛选单列显示，避免下拉框与标签共同挤出窄屏。 */
+  .material-library .record-filter { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .material-library .record-filter label { display: flex; flex-direction: column; gap: 6px; }
+  .material-library .record-filter input { width: 100%; }
+}
 .media-upload { padding: 12px 0; overflow-wrap: anywhere; }
 .media-upload input { display: block; max-width: 100%; margin-top: 8px; }
 .media-upload ul { padding-left: 20px; }
@@ -355,17 +380,12 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .plugin-submenu { display: grid; gap: 4px; margin-left: 20px; padding-left: 10px; border-left: 1px solid var(--border); }
 .sidebar nav .plugin-submenu button { padding-left: 12px; font-size: 13px; }
 .plugin-menu-error { padding: 6px; color: #b94b4b; font-size: 12px; }
-.plugin-catalog { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 20px; }
-.plugin-catalog-card { padding: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
-.plugin-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.plugin-card-heading h2 { margin: 0; font-size: 20px; }
-.plugin-catalog-card > p { color: var(--text-secondary); line-height: 1.8; min-height: 3.6em; }
-.plugin-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 24px; }
-.plugin-card-meta code { color: var(--text-secondary); font-size: 12px; }
-.plugin-settings { margin-top: 28px; }
+.plugin-settings { margin-top: 16px; }
+/* 插件页沿用外层标题，表单仅保留工具栏；单分类不再占用重复导航列。 */
+.settings-toolbar { display: flex; justify-content: flex-end; margin-bottom: 16px; }
+.settings-layout-single { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 700px) {
   .plugin-navigation { display: flex; flex: 0 0 auto; align-items: center; }
   .plugin-navigation > button { width: auto; }
   .plugin-submenu { display: flex; margin-left: 0; padding-left: 4px; }
-  .plugin-catalog-card { padding: 20px; }
 }

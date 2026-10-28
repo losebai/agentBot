@@ -15,12 +15,15 @@ from nonebot.adapters.onebot.v11 import (
     MessageEvent,
     MessageSegment,
 )
+from nonebot.adapters.onebot.v11.exception import ActionFailed, ApiNotAvailable, NetworkError
 from nonebot.matcher import Matcher
 
 from agent_bot.ai.chat_errors import ChatAiError
+from agent_bot.ai.errors import AiError
 from agent_bot.config import RuntimeConfig
 from agent_bot.integrations.onebot.queue_processor import generated_reply_from_model
 from agent_bot.integrations.onebot.replies import OneBotReplyService
+from agent_bot.materials.contracts import MaterialView
 from agent_bot.model_guard import ModelNotAvailableError
 from agent_bot.models import ChatContext
 from agent_bot.services.chat import (
@@ -51,6 +54,9 @@ from agent_bot.services.workflow_execution import (
 from agent_bot.state import MessageCounter
 
 ChatContextProvider = Callable[[Bot, MessageEvent], Awaitable[ChatContext | None]]
+MaterialRegistrar = Callable[
+    [Bot, MessageEvent], Callable[[MessageSegment], Awaitable[MaterialView]] | None,
+]
 
 
 class DrawingCommandHandler:
@@ -71,6 +77,7 @@ class DrawingCommandHandler:
         chat_context_provider: ChatContextProvider,
         reply_service: OneBotReplyService,
         reply_intent_factory: Callable[[Bot, MessageEvent, ReplyFacts], Awaitable[ReplyIntent]],
+        material_registrar: MaterialRegistrar = lambda bot, event: None,
     ) -> None:
         """保存热更新依赖并复用应用共享的回复边界。"""
 
@@ -86,6 +93,7 @@ class DrawingCommandHandler:
         self._chat_context_provider = chat_context_provider
         self._reply_service = reply_service
         self._reply_intent_factory = reply_intent_factory
+        self._material_registrar = material_registrar
 
     async def _finish_reply(
         self, matcher: type[Matcher], bot: Bot, event: MessageEvent, facts: ReplyFacts,
@@ -144,6 +152,23 @@ class DrawingCommandHandler:
             )
         except (ChatRateLimitedError, ChatBusyError, ConversationQueueFullError):
             await matcher.finish()
+
+        register = self._material_registrar(bot, event)
+        if register is not None:
+            # 画图命令绕过自然聊天解析，只有授权、冷却和提示校验通过后接收附图。
+            images = [segment for segment in argument if segment.type == "image"]
+            try:
+                if len(images) > 16:
+                    raise ValueError("一次最多接收十六张图片")
+                for image in images:
+                    await register(image)
+            except (
+                AiError, OSError, ValueError, ActionFailed, ApiNotAvailable, NetworkError,
+            ) as error:
+                await self._finish_reply(
+                    matcher, bot, event,
+                    TaskFailedFacts(operation="保存素材", error_type=type(error).__name__),
+                )
 
         request_id = f"qq-draw-{uuid.uuid4().hex}"
         generation = (

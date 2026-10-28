@@ -85,7 +85,7 @@ def build_runtime_state(
     sent_messages: SentMessageStore | None = None,
     session_delivery: SessionDeliveryStore | None = None,
 ) -> RuntimeState:
-    """复用无过期的统一仓库，所有收发上下文按会话并发合并。"""
+    """复用统一仓库，并为每次配置快照绑定对应的触发方式和独立间隔。"""
 
     session_secret = config.chat_session_secret.get_secret_value()
     naraka_default_role_id = (
@@ -217,6 +217,7 @@ def build_runtime_state(
             session_secret=session_secret,
             initial_delay_seconds=config.chat_auto_speak_initial_delay_seconds,
             interval_seconds=config.chat_auto_speak_interval_seconds,
+            message_interval_seconds=config.chat_auto_speak_message_interval_seconds,
             max_reply_chars=config.chat_auto_speak_max_reply_chars,
             on_error=auto_speak_error_handler,
         )

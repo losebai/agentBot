@@ -15,6 +15,8 @@ function Editor({ initialTools = [] as string[], initialMcps = [] as number[] })
 
 it.each([
   ['知识库检索', 'knowledge_search'], ['素材读取', 'material_get'],
+  ['查询机器人配置（仅主人）', 'bot_config_get'],
+  ['修改机器人配置（仅主人）', 'bot_config_update'],
   ['B站我的视频', 'bilibili_get_my_videos'],
   ['B站发布图文动态', 'bilibili_publish_dynamic'],
 ])('%s 不会自动勾选，用户明确选择后写入工具草稿', async (label, name) => {
@@ -22,6 +24,7 @@ it.each([
   render(<Editor />);
   expect(screen.getByLabelText('工具草稿')).toHaveTextContent('[]');
   fireEvent.mouseDown(screen.getByRole('combobox', {name: '允许工具'}));
+  fireEvent.change(screen.getByRole('combobox', {name: '允许工具'}), { target: { value: name } });
   fireEvent.click(await screen.findByText(label + ' · ' + name));
   expect(screen.getByLabelText('工具草稿')).toHaveTextContent(JSON.stringify([name]));
 });

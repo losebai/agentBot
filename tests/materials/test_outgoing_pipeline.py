@@ -64,14 +64,16 @@ def make_pipeline_processor(service, config, recorder, gateway, bot):
 
 
 @pytest.mark.parametrize("proactive", [False, True])
+@pytest.mark.parametrize("platform_fails", [False, True])
 async def test_material_picture_is_sent_separately_and_in_next_chat_context(
-    material_database, materials, proactive,
+    material_database, materials, proactive, platform_fails,
 ):
     """真实读取器与队列打通后，主动消息也能独立发图，后续聊天仍只使用聊天模型。"""
     params, pool = material_database
     owner = MediaOwner(entry="qq", session_id="s")
     asset = await materials.put(
         owner=owner, name="上一轮.png", mime_type="image/png", data=picture(),
+        category="generated",
     )
     read = MaterialGetTool(materials, MediaScope(
         owner=owner, execution_id="b" * 32, execution_kind="agent",
@@ -107,7 +109,9 @@ async def test_material_picture_is_sent_separately_and_in_next_chat_context(
     config = RuntimeConfig(onebot_v11_access_token='x' * 40, chat_session_secret='y' * 40)
     gateway = OneBotReplyGateway(lambda: config, recorder=recorder)
     bot = SimpleNamespace(send_group_msg=AsyncMock(
-        side_effect=[{'message_id': 1}, {'message_id': 2}],
+        side_effect=ConnectionError("platform offline") if platform_fails else [
+            {'message_id': 1}, {'message_id': 2},
+        ],
     ))
 
     processor = make_pipeline_processor(service, config, recorder, gateway, bot)
@@ -117,6 +121,12 @@ async def test_material_picture_is_sent_separately_and_in_next_chat_context(
                           auto_speak_max_reply_chars=300 if proactive else None)
     result = await processor.generate(job)
     assert len(result.tool_images) == 1
+    if platform_fails:
+        with pytest.raises(ConnectionError, match="platform offline"):
+            await processor.deliver_part(job, result, 0)
+        updated = await materials.describe(asset.id, owner=owner)
+        assert updated.categories == ("generated",)
+        return
     for index in range(await processor.delivery_count(job, result)):
         await processor.deliver_part(job, result, index)
     await processor.commit(job, result)
@@ -131,7 +141,9 @@ async def test_material_picture_is_sent_separately_and_in_next_chat_context(
         assert all(message.role == 'assistant' for message in context.messages)
     else:
         assert any(message.role == 'user' for message in context.messages)
-    assert await materials.describe(asset.id, owner=owner) == asset
+    updated = await materials.describe(asset.id, owner=owner)
+    assert updated.id == asset.id and set(updated.categories) == {"generated", "sent"}
+    assert len((await materials.search(owner, MaterialSearchArguments())).records) == 1
 
     client.complete.side_effect = None
     client.complete.return_value = '上一轮发了一张图片。'

@@ -22,6 +22,70 @@ from agent_bot.media.inputs import ImagePreparer
 from media.test_inputs import picture
 
 
+@pytest.mark.parametrize("backup_fails", [False, True])
+async def test_failure_explanation_backup_stays_in_agent(
+    media_database, agent_params, media_model, backup_fails,
+):
+    """失败说明的主备模型共用 Agent 执行归档，备用再次失败也不能降级普通调用。"""
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from agent_bot.agent.tools.runtime import ToolRuntime
+    from agent_bot.ai.routing import RoutingAiClient
+    from agent_bot.model_router import ContentModelRouter
+    from agent_bot.models import LlmRequestOptions
+    from agent_bot.services.chat import ChatService
+    from agent_bot.services.replies import LlmReplyComposer, ReplyIntent, TaskFailedFacts
+    from agent_bot.state import ConversationStore
+
+    service, _, _, _, _ = await routed_service(media_database, agent_params, media_model)
+
+    class FailureReplyProvider(Provider):
+        """只替换供应商边界；一次故障接管发生在真实 Agent 图中。"""
+
+        async def stream_turn(self, call):
+            """主模型不可用时由备用表达失败结果，整个过程不执行工具。"""
+            self.calls.append(call)
+            if call.resolved.model.alias == "chat" or backup_fails:
+                raise AiError("AI_UPSTREAM_UNAVAILABLE", status_code=502)
+            yield ModelEvent(kind="text_delta", delta="任务失败，请稍后重试。")
+            yield ModelEvent(kind="turn_end", turn=ModelTurn(
+                content="任务失败，请稍后重试。", model=call.resolved.model.upstream_model,
+            ))
+
+    provider = FailureReplyProvider()
+    service.providers["openai-chat"] = provider
+    connector = SimpleNamespace(open=Mock(side_effect=AssertionError("不得连接 MCP")))
+    service.tool_runtime = ToolRuntime(connector)
+    ordinary = SimpleNamespace(complete=AsyncMock(side_effect=AssertionError("不得普通调用")))
+    router = RoutingAiClient(
+        ordinary, agent_service=service, agent_code="routed", timeout_seconds=30,
+        default_options=LlmRequestOptions(), mcp_services=("configured-remote",),
+    )
+    store = ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60)
+    chat = ChatService(
+        client=router, store=store, system_prompt="", max_input_chars=100,
+        cooldown_seconds=0, max_concurrent_requests=1,
+        model_router=ContentModelRouter("ordinary", "vision", "image", "audio"),
+    )
+    reply = await LlmReplyComposer(lambda: chat, timeout_seconds_provider=lambda: 30).compose(
+        ReplyIntent(requestId="failed-task", sessionId="s", code="TASK_FAILED",
+                    facts=TaskFailedFacts(
+                        operation="conversation", error_type="ChatAiRejectedError",
+                        error_code="MEDIA_NOT_FOUND")),
+    )
+    assert (reply is None) == backup_fails
+    if reply:
+        assert reply.text == "任务失败，请稍后重试。"
+    assert [call.resolved.model.alias for call in provider.calls] == ["chat", "backup"]
+    assert all(call.tools == () for call in provider.calls)
+    ordinary.complete.assert_not_awaited()
+    connector.open.assert_not_called()
+    assert store.messages("s") == []
+    run = (await service.records.list_runs()).items[0]
+    assert run.status == ("failed" if backup_fails else "completed")
+
+
 async def routed_service(media_database, agent_params, media_model, *, fallback=True):
     """聊天与识图模型分离，备用模型独立，工具仍使用真实图调度。"""
     ai, provider, vision = media_model
@@ -61,12 +125,13 @@ async def routed_service(media_database, agent_params, media_model, *, fallback=
 
 
 def request(*, images=False):
-    """同一 Agent 根据本次输入选路，不从历史文本猜测图片。"""
+    """按本次输入选路，显式限制一次工具调用；预设旧轮次字段不再承担运行预算。"""
     return AgentRequest(
         agent_code="routed",
         prompt="请回答",
         session_id="s",
         request_id="r",
+        max_steps=1,
         image_urls=("https://qpic.cn/a",) if images else (),
     )
 

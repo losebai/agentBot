@@ -13,7 +13,13 @@ from agent_bot.model_guard import ModelNotAvailableError
 from agent_bot.model_router import ContentModelRouter
 from agent_bot.models import ChatContext, ChatMessage, LlmRequestOptions
 from agent_bot.services.chat import ChatService
-from agent_bot.services.replies import LlmReplyComposer, ReplyIntent, WorkflowStatusFacts
+from agent_bot.services.replies import (
+    FeatureUnavailableFacts,
+    LlmReplyComposer,
+    ReplyIntent,
+    TaskFailedFacts,
+    WorkflowStatusFacts,
+)
 from agent_bot.state import ConversationStore
 
 from .test_service import make_service
@@ -21,9 +27,12 @@ from .test_service import make_service
 
 @pytest.mark.parametrize("status, expected", [
     ("started", "普通模型正文"), ("completed", "Agent 按人设生成的完成通知"),
+    ("failed", "Agent 按人设生成的完成通知"),
+    ("TASK_FAILED", "Agent 按人设生成的完成通知"),
+    ("FEATURE_UNAVAILABLE", "Agent 按人设生成的完成通知"),
 ])
 async def test_image_completion_composer_routes_through_agent(status, expected) -> None:
-    """真实 Composer、聊天服务与路由确保完成通知采用 Agent 正文，保持其他状态路由。"""
+    """完成和失败说明均使用 Agent，显式关闭本地及 MCP 工具以免重放已失败的操作。"""
 
     class RecordingService:
         """替换模型执行边界，用不同正文识别实际选择的服务。"""
@@ -49,7 +58,7 @@ async def test_image_completion_composer_routes_through_agent(status, expected) 
     agent = RecordingService("Agent 按人设生成的完成通知")
     router = RoutingAiClient(
         ordinary, agent_service=agent, agent_code="drawing-agent", timeout_seconds=2,
-        default_options=LlmRequestOptions(), mcp_services=(),
+        default_options=LlmRequestOptions(), mcp_services=("configured-remote",),
     )
     store = ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60)
     chat = ChatService(
@@ -57,22 +66,26 @@ async def test_image_completion_composer_routes_through_agent(status, expected) 
         cooldown_seconds=0, max_concurrent_requests=2,
         model_router=ContentModelRouter("text", "vision", "image", "audio"),
     )
+    facts = (TaskFailedFacts(operation="conversation", error_type="ChatAiUnavailableError",
+                             error_code="AI_UPSTREAM_UNAVAILABLE") if status == "TASK_FAILED"
+             else FeatureUnavailableFacts(feature="本地工作流") if status == "FEATURE_UNAVAILABLE"
+             else WorkflowStatusFacts(status=status))
     reply = await LlmReplyComposer(lambda: chat, timeout_seconds_provider=lambda: 2).compose(
-        ReplyIntent(
-            requestId="image-status", sessionId="image:task", code="WORKFLOW_STATUS",
-            facts=WorkflowStatusFacts(status=status), originalPrompt="画一只猫",
-        ),
+        ReplyIntent(requestId="image-status", sessionId="image:task", code=facts.kind,
+                    facts=facts, originalPrompt="画一只猫"),
     )
 
     assert reply is not None and reply.text == expected
     assert store.messages("image:task") == []
-    if status == "completed":
+    if status != "started":
         assert ordinary.requests == []
         assert len(agent.requests) == 1
         request = agent.requests[0]
         assert request.agent_code == "drawing-agent"
-        assert any("图片已生成并已发送" in message.content for message in request.messages)
+        assert any(facts.kind in message.content for message in request.messages)
+        assert request.tools == () and request.mcp_services == ()
         assert agent.authorities[0].allowed_tools == ()
+        assert agent.authorities[0].allowed_mcp_services == ()
         assert agent.authorities[0].chat_token is None
     else:
         assert agent.requests == []

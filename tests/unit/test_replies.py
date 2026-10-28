@@ -38,6 +38,35 @@ def test_generated_reply_rejects_internal_at_marker_without_visible_body() -> No
         GeneratedReply(text="[AT 3616076808]", requestId="auto-at-only")
 
 
+@pytest.mark.parametrize("context", [None, {"preserve_format": True}, {"file_reply": True}])
+@pytest.mark.parametrize("marked", [
+    '[mention_member target="2180526847" text="回答租卡选型问题"]正文 2180526847[/mention_member]',
+    "[MENTION_MEMBER target='all' text='意图含 ] 符号']正文 2180526847[/MENTION_MEMBER]",
+    '[mention_member target="2180526847"]正文 2180526847',
+])
+def test_generated_reply_unwraps_fake_mention_without_granting_at(marked, context) -> None:
+    """伪工具标签仅剥离外壳，不把 target 或 text 属性变成权限、@ 或回复正文。"""
+    reply = GeneratedReply.model_validate({"text": marked, "requestId": "fake-mention"},
+                                         context=context)
+    assert reply.text == "正文 2180526847"
+
+
+def test_generated_reply_keeps_regular_brackets_and_multiline_body() -> None:
+    """只处理已知内部标记，普通括号和原件回复中的正文换行保持原样。"""
+    reply = GeneratedReply.model_validate({
+        "text": '[mention_member target="2180526847"]第一行\n\n[b]第二行[/b][/mention_member]',
+        "requestId": "multiline-mention",
+    }, context={"preserve_format": True})
+    assert reply.text == "第一行\n\n[b]第二行[/b]"
+
+
+def test_generated_reply_rejects_fake_mention_without_body() -> None:
+    """只有伪调用属性时保持空回复拒绝，不能把提醒意图当作生成正文。"""
+    with pytest.raises(ValidationError):
+        GeneratedReply(text='[mention_member target="all" text="内部提醒意图"][/mention_member]',
+                       requestId="empty-fake-mention")
+
+
 @dataclass(frozen=True)
 class ReplyCall:
     """Capture one fake reply-generation call without exposing a generic mapping."""

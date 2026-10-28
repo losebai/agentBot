@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { pluginConfigurationLabels, useRunningPlugins } from '../plugin-runtime';
 import type { ConfigurablePlugin } from '../plugin-runtime';
 
-/** 二级配置入口只展示运行中的本地插件，每次导航重新核对进程状态。 */
+/** 中心统一管理目录与启停；二级配置入口按当前进程状态展示。 */
 export function PluginMenu({ token, page, onNavigate }: {
   token: string; page: string; onNavigate: (page: string) => void;
 }) {
@@ -14,7 +14,6 @@ export function PluginMenu({ token, page, onNavigate }: {
   }, [page]);
   const items = [
     { key: 'plugin-center', label: '插件中心' },
-    { key: 'plugins', label: '已安装插件' },
     ...(Object.keys(pluginConfigurationLabels) as ConfigurablePlugin[])
       .filter(id => runningPlugins.has(id))
       .map(id => ({ key: `plugin-${id}`, label: pluginConfigurationLabels[id] })),

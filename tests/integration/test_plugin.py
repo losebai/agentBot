@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import threading
 from contextlib import asynccontextmanager
@@ -86,7 +87,6 @@ async def plugin_materials(request, monkeypatch, tmp_path):
 
     from PIL import Image
 
-    from agent_bot.database import initialize_database
     from agent_bot.database_pool import create_database_pool
     from agent_bot.materials.receiver import MaterialReceiver
     from agent_bot.materials.store import MaterialStore
@@ -95,7 +95,13 @@ async def plugin_materials(request, monkeypatch, tmp_path):
     from agent_bot.settings import DatabaseParams
 
     params = DatabaseParams(backend="sqlite", sqlite_path=str(tmp_path / "materials.sqlite3"))
-    initialize_database(params)
+    # 使用仓库当前结构，避免已安装 wheel 的 SQL 副本遮蔽本轮迁移。
+    import sqlite3
+    from pathlib import Path
+
+    with sqlite3.connect(params.sqlite_path) as connection:
+        schema = await asyncio.to_thread(Path("sql/agent_bot_init.sqlite.sql").read_text, "utf-8")
+        connection.executescript(schema)
     pool = create_database_pool(params)
     store = MaterialStore(params, connect=pool.connect, files=MediaFiles(tmp_path / "materials"))
     await store.start()
@@ -120,8 +126,8 @@ async def plugin_materials(request, monkeypatch, tmp_path):
 
 
 @pytest.mark.integration
-async def test_receive_image_persists_without_chat_model(app, chat_plugin, plugin_materials):
-    """附件监听器只保存原件；未触发自然聊天时不调用任何回复模型。"""
+async def test_untriggered_image_is_not_saved(app, chat_plugin, plugin_materials):
+    """图片只有触发对话才接收，普通消息监听不能采集全部聊天图片。"""
     from agent_bot.materials.contracts import MaterialSearchArguments
     from agent_bot.media.contracts import MediaOwner
 
@@ -132,8 +138,29 @@ async def test_receive_image_persists_without_chat_model(app, chat_plugin, plugi
         ctx.receive_event(bot, event)
     owner = MediaOwner(entry="qq", session_id=chat_plugin._event_context.session_id(bot, event))
     records = (await plugin_materials.search(owner, MaterialSearchArguments())).records
-    assert len(records) == 1 and records[0].kind == "image"
+    assert records == ()
     chat_plugin.conversation_queue.enqueue.assert_not_awaited()
+
+
+async def test_natural_chat_cooldown_does_not_receive_image(
+    chat_plugin, plugin_materials, monkeypatch,
+):
+    """触发对话但被冷却拒绝的图片不能提前进入素材库。"""
+    from nonebot.exception import FinishedException
+
+    from agent_bot.materials.contracts import MaterialSearchArguments
+    from agent_bot.media.contracts import MediaOwner
+
+    monkeypatch.setattr(chat_plugin.message_counter, "try_consume", lambda _: False)
+    bot = Mock(self_id="90001")
+    event = private_event(MessageSegment.image("https://qpic.cn/cooldown.png"))
+    matcher = Mock(finish=AsyncMock(side_effect=FinishedException))
+    with pytest.raises(FinishedException):
+        await chat_plugin._conversation_handler.natural_chat(
+            bot, event, matcher=matcher, mention_handler=None,
+        )
+    owner = MediaOwner(entry="qq", session_id=chat_plugin._event_context.session_id(bot, event))
+    assert (await plugin_materials.search(owner, MaterialSearchArguments())).records == ()
 
 
 @pytest.mark.integration
@@ -412,10 +439,10 @@ async def test_model_answer_enters_gateway_once_without_rewriting_or_truncation_
 
 
 @pytest.mark.integration
-async def test_chat_model_failure_never_calls_reply_model_or_sends_text(
+async def test_chat_model_failure_explains_without_committing_failed_answer(
     monkeypatch: pytest.MonkeyPatch, chat_plugin, reply_chat: AsyncMock,
 ) -> None:
-    """主模型最终失败后不调用解释模型、不发送正文，也不提交不存在的回答。"""
+    """主模型失败只发送一次脱敏解释，不提交或重放失败回答与原工具。"""
 
     matcher = Mock(send=AsyncMock(), finish=AsyncMock(side_effect=FinishedException))
     with pytest.raises(FinishedException):
@@ -424,7 +451,9 @@ async def test_chat_model_failure_never_calls_reply_model_or_sends_text(
             mention_handler=AsyncMock(return_value=None),
         )
     job = chat_plugin.conversation_queue.enqueue.await_args.args[0]
-    generate = AsyncMock(side_effect=ChatAiUnavailableError("private detail"))
+    generate = AsyncMock(side_effect=ChatAiUnavailableError(
+        "private detail", error_code="AI_UPSTREAM_UNAVAILABLE",
+    ))
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
 
     @asynccontextmanager
@@ -441,10 +470,17 @@ async def test_chat_model_failure_never_calls_reply_model_or_sends_text(
     with pytest.raises(ChatAiUnavailableError) as error:
         await processor.generate(job)
     await processor.deliver_failure(job, error.value)
-    assert not bot.mock_calls
+    bot.send_private_msg.assert_awaited_once_with(
+        user_id=10001, message=Message("模型生成的校验回复。"),
+    )
+    assert len(bot.mock_calls) == 1
     commit.assert_not_awaited()
     generate.assert_awaited_once()
-    reply_chat.assert_not_awaited()
+    reply_chat.assert_awaited_once()
+    assert reply_chat.await_args.kwargs["use_agent"] is True
+    instruction = reply_chat.await_args.kwargs["instruction"]
+    assert "TASK_FAILED" in instruction and "ChatAiUnavailableError" in instruction
+    assert "AI_UPSTREAM_UNAVAILABLE" in instruction and "private detail" not in instruction
 
 
 @pytest.mark.integration

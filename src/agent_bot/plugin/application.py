@@ -375,6 +375,9 @@ _tool_session_manager = ChatToolSessionManager(
     operation_store_provider=_tool_operations,
     catalog_provider=lambda: model_guard.catalog,
     plugin_tools_provider=_plugin_tool_names,
+    bot_config_tools_provider=lambda: getattr(
+        get_driver().server_app.state, "bot_config_tools", None,
+    ),
 )
 
 _runtime_gate = _context.runtime.gate if _context is not None else RuntimeLeaseGate()
@@ -442,6 +445,7 @@ class _ConversationProcessor(ConversationQueueProcessor):
             image_submitter=lambda job: image_queue.enqueue(job),
             workflow_service_provider=lambda: workflow_service,
             media_store_provider=lambda: _media_resources.store,
+            material_store_provider=lambda: _media_resources.materials,
             outgoing_recorder=_reply_gateway.recorder,
             receive_queued=lambda *args, **kwargs: chat_service.receive_queued(*args, **kwargs),
             finish_received=lambda session_id, request_id: chat_service.finish_received(
@@ -1000,6 +1004,7 @@ _drawing_handler = DrawingCommandHandler(
     chat_context_provider=lambda bot, event: _chat_context(bot, event),
     reply_service=_reply_service,
     reply_intent_factory=_conversation_handler.reply_intent,
+    material_registrar=_conversation_handler.material_registrar,
 )
 _naraka_handler = NarakaCommandHandler(
     service_provider=lambda: naraka_service,

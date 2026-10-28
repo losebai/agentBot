@@ -24,6 +24,7 @@ def mysql_factory(params, *, lock=1, fail_once=False):
     with sqlite3.connect(":memory:") as parser:
         parser.executescript(resource("startup-versioning.sqlite.sql"))
         parser.executescript(resource("bilibili-init.sqlite.sql"))
+        parser.executescript(resource("material-classification.sqlite.sql"))
         translations = dict(parser.execute("SELECT name,sql FROM sqlite_master WHERE type='table'"))
     state = SimpleNamespace(events=[], closed=0, fail_once=fail_once)
 
@@ -179,7 +180,7 @@ def test_mysql_known_idempotent_step_resumes_after_partial_ddl(legacy_database):
         upgrade_database(params, connect=connect, read_resource=resource)
     assert not query(legacy_database, "SELECT version FROM agent_bot_schema_version")
     result = upgrade_database(params, connect=connect, read_resource=resource)
-    assert result.applied == ("bilibili-v1", "comfy-plugin-v1")
+    assert result.applied == ("bilibili-v1", "comfy-plugin-v1", "material-classification-v1")
     assert state.closed == 2
     assert sum("GET_LOCK" in event for event in state.events) == 2
 

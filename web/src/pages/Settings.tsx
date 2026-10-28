@@ -12,7 +12,8 @@ import { useRunningPlugins } from '../plugin-runtime';
 // 分类仅改变展示，共享同一草稿与版本；按字段用途归类，不用描述文本猜测。
 const categories = [
   { key: 'basic', label: '基础设置', description: '服务资源、会话与其他基础配置。' },
-  { key: 'llm', label: 'LLM设置', description: '模型、Agent、推理、图片理解与生成、提示词和记忆。' },
+  { key: 'llm', label: 'LLM设置', description: '模型、Agent、推理、图片理解与生成和提示词。' },
+  { key: 'memory', label: '记忆设置', description: '会话心智记忆、标签记忆、历史保留、自动压缩和向量检索。' },
   { key: 'qq', label: 'QQ', description: 'OneBot 接入、机器人名称、账号与访问权限。' },
   { key: 'reply', label: '自动回复设置', description: '关键词回复、回复限制、群聊上下文、主动发言与定时任务。' },
   { key: 'games', label: '游戏资讯设置', description: '永劫无间账号凭据、服务器、赛季与查询限制。' },
@@ -23,7 +24,7 @@ type Category = typeof categories[number]['key'];
 type DraftValue = string | boolean | null;
 const llmSettingNames = new Set([
   'chat_model', 'chat_vision_model', 'chat_image_model', 'chat_system_prompt', 'chat_mcp_services',
-  'chat_image_recognition_enabled', 'chat_max_images_per_message', 'chat_tagged_memory_enabled',
+  'chat_image_recognition_enabled', 'chat_max_images_per_message',
 ]);
 const qqSettingNames = new Set([
   'nickname', 'superusers', 'command_start', 'command_sep', 'api_timeout',
@@ -43,9 +44,18 @@ function visibleDecisionField(name: string, backend: string): boolean {
   return true;
 }
 
-/** 按用途分类；供应商模型归 LLM，避免生图模型因图片字段前缀混入 Comfy。 */
+/** 仅展示当前触发模式的时间配置，隐藏字段仍保留已有草稿供切换和保存。 */
+function visibleTriggerField(name: string, mode: string): boolean {
+  if (['chat_auto_speak_interval_seconds', 'chat_auto_speak_initial_delay_seconds'].includes(name)) return mode === 'interval';
+  if (name === 'chat_auto_speak_message_interval_seconds') return mode === 'message';
+  return true;
+}
+
+/** 按用途分类；记忆及历史独立归类，记忆向量模型也遵循该分类。 */
 function fieldCategory(field: SettingField): Category {
   const name = field.name;
+  if (name === 'chat_tagged_memory_enabled'
+    || ['chat_memory_', 'chat_history_'].some(prefix => name.startsWith(prefix))) return 'memory';
   if (name.startsWith('chat_naraka_')) return 'games';
   if (replySettingNames.has(name) || [
     'chat_auto_', 'chat_group_', 'chat_user_message_', 'chat_job_', 'chat_multi_reply_',
@@ -55,7 +65,7 @@ function fieldCategory(field: SettingField): Category {
   ].some(prefix => name.startsWith(prefix))) return 'qq';
   if (llmSettingNames.has(name) || [
     'chat_llm_', 'chat_python_', 'chat_agent_', 'chat_web_search_',
-    'chat_memory_', 'chat_history_', 'chat_tts_', 'chat_image_',
+    'chat_tts_', 'chat_image_',
   ].some(prefix => name.startsWith(prefix))) return 'llm';
   // 生图模型和预算与 Comfy 无关，只有本地工作流字段归入 Comfy。
   if (name.startsWith('chat_local_workflow_')) return 'comfy';
@@ -102,7 +112,7 @@ function patchValue(field: SettingField, value: DraftValue): JsonValue {
   return String(value);
 }
 
-/** 按页面指定的分类编辑配置，跨分类保留草稿，提交时排除所属范围以外的字段。 */
+/** 按页面分类编辑配置；嵌入插件页时只保留操作栏，避免重复页面与分类标题。 */
 export function Settings({ token, onPlugins, categoryKeys, embedded = false, title = '机器人配置', description, active = true }: {
   token: string; onPlugins?: () => void; categoryKeys?: readonly Category[];
   embedded?: boolean; title?: string; description?: string; active?: boolean;
@@ -123,12 +133,14 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
   const visibleCategories = categories.filter(item => (!categoryKeys || categoryKeys.includes(item.key))
     && (qqRunning || !['qq', 'games'].includes(item.key)));
   const currentCategory = visibleCategories.some(item => item.key === category) ? category : visibleCategories[0]?.key;
-  const Heading = embedded ? 'h2' : 'h1';
   const [comfyTab, setComfyTab] = useState('connection');
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [settingsRefreshing, setSettingsRefreshing] = useState(false);
   const decisionBackend = String(draft.chat_auto_speak_decision_backend
     ?? snapshot?.fields.find(field => field.name === 'chat_auto_speak_decision_backend')?.value ?? 'laya');
+  // 优先响应未保存的模式选择；旧快照缺少该字段时沿用定时模式，不生成草稿。
+  const triggerMode = String(draft.chat_auto_speak_trigger_mode
+    ?? snapshot?.fields.find(field => field.name === 'chat_auto_speak_trigger_mode')?.value ?? 'interval');
   const showModels = !!snapshot?.fields.some(field => modelSettingNames.has(field.name)
     && fieldCategory(field) === currentCategory && visibleDecisionField(field.name, decisionBackend));
   const models = useSettingsModels(token, showModels);
@@ -177,13 +189,15 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
 
   const fields = snapshot?.fields.filter(field => !hiddenSettingNames.has(field.name) && fieldCategory(field) === currentCategory
     && visibleDecisionField(field.name, decisionBackend)
+    && visibleTriggerField(field.name, triggerMode)
     && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase()))
     // 名称是群聊触发入口，在 QQ 分类中优先展示。
     .sort((left, right) => Number(right.name === 'nickname') - Number(left.name === 'nickname')) || [];
   return <div className={embedded ? 'plugin-settings' : 'page-content'}>
-    <div className="page-heading"><div><p className="eyebrow">CONFIGURATION</p>
-      <Heading>{title}</Heading>
-      <p>{description || '按用途调整配置，切换分类保留草稿，保存时统一提交所有修改。'}</p></div>
+    <div className={embedded ? 'settings-toolbar' : 'page-heading'}>
+      {!embedded && <div><p className="eyebrow">CONFIGURATION</p>
+        <h1>{title}</h1>
+        <p>{description || '按用途调整配置，切换分类保留草稿，保存时统一提交所有修改。'}</p></div>}
       <div className="heading-actions"><Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading} disabled={saving || workflowBusy || settingsRefreshing}>
         {Object.keys(draft).length ? '放弃修改并重新加载' : '重新加载'}</Button>
         <Button type="primary" icon={<SaveOutlined aria-hidden />} loading={saving} disabled={!Object.keys(draft).length || loading || workflowBusy || settingsRefreshing} onClick={() => void save()}>保存修改</Button></div>
@@ -194,19 +208,19 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
     {snapshot && <div className="version-strip"><span>数据库版本 {snapshot.database_revision} · 运行时版本 {snapshot.applied_revision}</span>
       <Tag color={snapshot.database_revision === snapshot.applied_revision && !snapshot.restart_required_fields.length ? 'green' : 'gold'}>
         {snapshot.restart_required_fields.length ? `需要重启：${snapshot.restart_required_fields.join(', ')}` : snapshot.database_revision !== snapshot.applied_revision ? '等待热刷新' : '已应用'}</Tag></div>}
-    <div className="settings-layout">
-      <nav className="settings-navigation" aria-label="机器人配置分类">
+    <div className={`settings-layout${embedded && visibleCategories.length <= 1 ? ' settings-layout-single' : ''}`}>
+      {(!embedded || visibleCategories.length > 1) && <nav className="settings-navigation" aria-label="机器人配置分类">
         {visibleCategories.map(item => <button key={item.key} type="button"
           disabled={workflowBusy || settingsRefreshing}
           className={item.key === currentCategory ? 'active' : ''}
           aria-current={item.key === currentCategory ? 'page' : undefined}
           onClick={() => setCategory(item.key)}>{item.label}</button>)}
-      </nav>
+      </nav>}
       <section className="settings-category" aria-label={categories.find(item => item.key === currentCategory)?.label}>
-        <div className="settings-category-heading">
+        {!embedded && <div className="settings-category-heading">
           <h2>{categories.find(item => item.key === currentCategory)?.label}</h2>
           <p>{categories.find(item => item.key === currentCategory)?.description}</p>
-        </div>
+        </div>}
         {currentCategory === 'comfy' && <Tabs activeKey={comfyTab} onChange={setComfyTab} items={[
           { key: 'connection', label: '连接设置', disabled: workflowBusy || settingsRefreshing },
           { key: 'workflows', label: '工作流管理', disabled: loading || saving },
@@ -257,6 +271,10 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
               value={String(value)} onChange={change}>
               <option value="laya">Laya</option><option value="llm">LLM</option>
             </ChoiceSelect>
+              : field.name === 'chat_auto_speak_trigger_mode' ? <ChoiceSelect id={id} disabled={readOnly}
+              value={String(value)} onChange={change}>
+              <option value="interval">定时模式</option><option value="message">消息模式</option>
+            </ChoiceSelect>
               : modelSettingNames.has(field.name) ? <SettingsModelSelect id={id} value={String(value)}
               readOnly={readOnly} nullable={modelCanClear}
               directory={models} onChange={change} />
@@ -272,8 +290,13 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
               : kind === 'json' || ['chat_auto_speak_llm_prompt', 'chat_auto_speak_prompt', 'chat_multi_reply_prompt'].includes(field.name) || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
               : <Input id={id} disabled={readOnly} type={kind === 'number' ? 'number' : 'text'} step="any" value={String(value)} onChange={event => change(event.target.value)} />}
             {field.name === 'nickname' && <small>每行一个名称或别名，保存后热更新；留空关闭名字触发。</small>}
+            {field.name === 'superusers' && <small>填写主人 QQ 号的 JSON 数组，如 ["123456789"]；保存后手动重启后端生效。仅主人可使用配置查询和修改工具，留空数组不授权任何人；密钥请在管理页面编辑。</small>}
             {field.name === 'chat_agent_max_steps' && <small>按实际工具调用次数计数，所有 Agent 和联网请求共用。默认 5，可填写任意正整数；留空不限次数，仍遵守请求超时。</small>}
             {field.name === 'chat_auto_speak_llm_prompt' && <small>使用独立决策模型和此提示词，结合当前收到的消息及近期群聊进行单次普通调用；不读取会话记忆、历史轮次或 Agent 人设。仅返回 {`{"choice":"speak"}`} 或 {`{"choice":"silent"}`}。</small>}
+            {field.name === 'chat_auto_speak_trigger_mode' && <small>定时模式按周期检查；消息模式由群消息触发检查。两种模式分别保留时间配置。</small>}
+            {field.name === 'chat_auto_speak_interval_seconds' && <small>仅定时模式使用，设置周期检查的间隔秒数。</small>}
+            {field.name === 'chat_auto_speak_initial_delay_seconds' && <small>仅定时模式使用，设置启动后首次检查的延迟秒数。</small>}
+            {field.name === 'chat_auto_speak_message_interval_seconds' && <small>仅消息模式使用，按群限制两次决策检查的最短间隔，单位秒；0 不限制，不影响定时模式。</small>}
             {field.name === 'chat_auto_speak_prompt' && <small>留空沿用人设与自动回复规则。message 使用触发时消息，interval 使用群里最新有效消息，无需填写生成引导句。</small>}
             {field.name === 'onebot_v11_access_token' && <small>{readOnly
               ? '当前字段由启动环境覆盖或缺少启动文件，请检查启动配置；与 NapCat Token 保持一致。'

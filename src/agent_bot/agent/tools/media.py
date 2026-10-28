@@ -254,6 +254,12 @@ class AdminMediaToolSession:
                     data=generated.data, mime_type="video/mp4",
                 )
             image = await ImagePreparer().prepare_async(generated.data, generated.media_type)
+            if self.owner.resources is not None:
+                # 管理 Agent 的结果直接进入本会话素材库，不依赖 QQ 发送或临时附件寿命。
+                await self.owner.resources.materials.put(
+                    owner=self.scope.owner, name="工作流生成图片", data=image.data,
+                    mime_type=image.media_type, category="generated",
+                )
             return await self.owner.store.put(
                 owner=self.scope.owner,
                 scope=self.scope,

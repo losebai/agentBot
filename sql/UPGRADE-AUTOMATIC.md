@@ -31,6 +31,14 @@
 不要脱离迁移流水重复手工执行这份数据 SQL。SQLite 与 MySQL 均在同一数据事务内更新，
 失败回滚并停止启动，不读取部分升级的运行配置。
 
+## 素材来源类型与标签（0.5.9）
+
+完成上述步骤后执行 `material-classification.sql` / `material-classification.sqlite.sql`，
+以 `material-classification-v1` 登记迁移。升级起点必须已具备完整 `chat_material` 素材表；
+无版本旧库允许缺少这两个新增关联表，但不会放宽原素材表的结构要求。
+该步骤仅新增 `chat_material_category`、`chat_material_tag` 与筛选索引，保留所有原件和旧数据，
+不猜测、回填历史素材的未知来源类型或标签。新库完整初始化脚本包含相同有效结构。
+
 ## 版本、校验和与失败
 
 - `agent_bot_schema_version` 记录最终核验成功的程序版本；升级前后可查询该表核对。

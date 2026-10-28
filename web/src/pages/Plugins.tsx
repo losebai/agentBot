@@ -9,10 +9,9 @@ const statusLabels: Record<PluginInfo['status'], string> = {
   disabled: '未启用', prepared: '已准备', running: '运行中', stopped: '已停止', failed: '启动失败',
 };
 
-/** 目录与启停列表共享草稿；内置代码已随程序安装，启用选择不冒充安装状态。 */
-export function Plugins({ token, view = 'installed', onConfigure, onInstalled }: {
-  token: string; view?: 'center' | 'installed';
-  onConfigure?: (id: string) => void; onInstalled?: () => void;
+/** 插件中心统一展示内置目录和启停草稿；安装状态与当前进程状态分别说明。 */
+export function Plugins({ token, onConfigure }: {
+  token: string; onConfigure?: (id: string) => void;
 }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
@@ -74,32 +73,23 @@ export function Plugins({ token, view = 'installed', onConfigure, onInstalled }:
   }
 
   return <div className="page-content">
-    <div className="page-heading"><div><p className="eyebrow">PLUGINS</p><h1>{view === 'center' ? '插件中心' : '已安装插件'}</h1>
-      <p>{view === 'center' ? '查看随程序安装的内置插件及其能力，在已安装插件中管理启停。'
-        : '管理已安装插件的启用状态，保存后手动重启后端生效。'}</p></div>
+    <div className="page-heading"><h1>插件中心</h1>
       <div className="heading-actions">
         <Button icon={<ReloadOutlined />} disabled={saving} loading={loading} onClick={() => void load()}>
           {changed ? '放弃修改并重新加载' : '重新加载'}</Button>
-        {view === 'installed' && <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={loading || !changed}
-          onClick={() => void save()}>保存</Button>}
+        <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={loading || !changed}
+          onClick={() => void save()}>保存</Button>
       </div></div>
     {error && <Alert message={error} type="error" showIcon className="notice" />}
     {selectionLocked && <Alert type="info" showIcon className="notice"
       message="当前为插件独立进程，启用插件由启动命令固定，此页面仅查看运行状态。" />}
     {saved && <Alert message="插件选择已保存；当前进程保持原状态，请手动重启后端。" type="success" showIcon className="notice" />}
     {pendingRestart && <Alert message="重启后生效" description="使用已有的“服务 → 重启后端”，或手动重启服务。" type="warning" showIcon className="notice" />}
-    {loading ? <div className="loading"><Spin /></div> : view === 'center' ? <div className="plugin-catalog">
+    {loading ? <div className="loading"><Spin /></div> : <div className="settings-card">
       {!plugins.length && <Empty description="没有可用插件" />}
-      {plugins.map(plugin => <article className="plugin-catalog-card" key={plugin.id}>
-        <div className="plugin-card-heading"><h2>{plugin.name}</h2><Tag color="green">已安装</Tag></div>
-        <p>{plugin.description}</p>
-        <div className="plugin-card-meta"><Tag>内置插件</Tag><code>{plugin.id} · {plugin.version}</code></div>
-        <Button aria-label={`管理 ${plugin.name}`} onClick={onInstalled}>管理已安装插件</Button>
-      </article>)}
-    </div> : <div className="settings-card">
-      {!plugins.length && <Empty description="没有已安装插件" />}
       {plugins.map(plugin => <div key={plugin.id}><div className="setting-row">
         <div className="setting-description"><label htmlFor={`plugin-${plugin.id}`}>{plugin.name}</label>
+          <Tag>内置插件</Tag><Tag color="green">已安装</Tag>
           <Tag>{statusLabels[plugin.status]}</Tag><code>{plugin.id} · {plugin.version}</code>
           <p>{plugin.description}</p></div>
         <div className="setting-control"><Switch id={`plugin-${plugin.id}`} aria-label={`启用 ${plugin.name}`}

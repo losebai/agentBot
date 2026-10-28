@@ -10,6 +10,7 @@ from agent_bot.agent.mcp.discovery import convert_result
 from agent_bot.agent.tools.local_media import project_local_schema, validate_local_call
 from agent_bot.agent.tools.policy import CHAT_TOOLS
 from agent_bot.agent.tools.schema import ToolSchema
+from agent_bot.services.bot_config_tools import BOT_CONFIG_TOOLS, CONFIG_TOOL_ERROR_MESSAGES
 from agent_bot.services.tagged_memory import MEMORY_SOURCE_ERROR_MESSAGE
 from agent_bot.services.tool_sessions import ToolSessionExpiredError
 
@@ -68,6 +69,21 @@ class ChatToolBridge:
             result = await server.call_tool(token, call.name, call.arguments)
         except ToolSessionExpiredError as error:
             raise AgentError("AGENT_TOOL_SESSION_EXPIRED", status_code=403) from error
+        # 本地配置错误也只能按受控代码重建提示，绝不公开 MCP 返回的任意异常正文。
+        if (call.name in BOT_CONFIG_TOOLS and isinstance(result, types.CallToolResult)
+                and result.is_error and len(result.content) == 1
+                and isinstance(result.content[0], types.TextContent)):
+            try:
+                body = json.loads(result.content[0].text)
+            except (ValueError, TypeError):
+                body = None
+            code = body.get("code") if isinstance(body, dict) else None
+            if isinstance(code, str) and code in CONFIG_TOOL_ERROR_MESSAGES:
+                return ToolResult(
+                    call_id=call.call_id, name=call.name, is_error=True,
+                    content=json.dumps({"code": code, "message": CONFIG_TOOL_ERROR_MESSAGES[code]},
+                                       ensure_ascii=False),
+                )
         # 只公开本地记忆来源的固定提示；其他错误继续遮蔽，不透传服务器异常正文。
         if (call.name == "memory" and isinstance(result, types.CallToolResult)
                 and result.is_error and len(result.content) == 1

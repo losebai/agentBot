@@ -1,11 +1,17 @@
-import { Alert, Button, Spin, Tag } from 'antd';
+import { Alert, Button, Input, Spin, Tag } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import type { BotInfo, NapCatStatus as NapCatObservation, ServiceStatus } from '../types';
 import { NapCatStatus } from '../components/NapCatStatus';
 
-/** 展示真实归档用量、当前对话活动与服务状态。 */
+/** 归档按北京时间计日，浏览器所在时区不能改变今日统计的边界。 */
+function todayRange() {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
+  return { start_date: today, end_date: today };
+}
+
+/** 展示所选日期的归档用量、模型失败率及实时服务状态。 */
 export function Overview({ token }: { token: string }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [status, setStatus] = useState<ServiceStatus>();
@@ -14,6 +20,9 @@ export function Overview({ token }: { token: string }) {
   const [loading, setLoading] = useState(false);
   const [napcat, setNapcat] = useState<NapCatObservation>();
   const [napcatError, setNapcatError] = useState('');
+  const [range, setRange] = useState(todayRange);
+  const [draft, setDraft] = useState(range);
+  const validRange = Boolean(draft.start_date && draft.end_date && draft.start_date <= draft.end_date);
   const pending = useRef<AbortController | null>(null);
   /** 各观察接口独立失败；取消和身份检查一起阻止旧读取覆盖新状态。 */
   async function refresh() {
@@ -21,8 +30,10 @@ export function Overview({ token }: { token: string }) {
     const controller = new AbortController();
     pending.current = controller;
     setLoading(true); setError('');
+    // 切换条件或刷新时清除旧指标，失败后不能把上一日期的统计当作当前结果。
+    setStatus(previous => previous && { ...previous, statistics: null, statistics_error: null });
     const [next, connections, managed] = await Promise.allSettled([
-      api.status(controller.signal), api.bots(controller.signal), api.napcatStatus(controller.signal),
+      api.status(controller.signal, range), api.bots(controller.signal), api.napcatStatus(controller.signal),
     ]);
     if (controller.signal.aborted || pending.current !== controller) return;
     if (next.status === 'fulfilled') setStatus(next.value);
@@ -33,7 +44,7 @@ export function Overview({ token }: { token: string }) {
     else setNapcatError(errorMessage(managed.reason));
     setLoading(false);
   }
-  useEffect(() => { void refresh(); return () => pending.current?.abort(); }, [api]);
+  useEffect(() => { void refresh(); return () => pending.current?.abort(); }, [api, range]);
   const statistics = status?.statistics;
   // 统计故障独立显示，归档尚未升级时仍可查看机器人连接和服务就绪状态。
   const statisticsError = status?.statistics_error === 'AI_NOT_INITIALIZED'
@@ -45,14 +56,26 @@ export function Overview({ token }: { token: string }) {
   }
   return <div className="page-content">
     <div className="page-heading"><div><p className="eyebrow">WORKSPACE OVERVIEW</p><h1>运行概览</h1><p>查看对话活动、模型用量与服务状态。</p></div><Button icon={<ReloadOutlined />} loading={loading} onClick={() => void refresh()}>刷新状态</Button></div>
+    <form className="overview-filters" aria-label="统计时间筛选" onSubmit={event => {
+      event.preventDefault();
+      if (validRange) setRange({ ...draft });
+    }}>
+      <label>开始日期<Input type="date" value={draft.start_date} onChange={event => setDraft({ ...draft, start_date: event.target.value })} /></label>
+      <label>结束日期<Input type="date" value={draft.end_date} onChange={event => setDraft({ ...draft, end_date: event.target.value })} /></label>
+      <Button type="primary" htmlType="submit" disabled={!validRange}>查询</Button>
+      <Button onClick={() => { const today = todayRange(); setDraft(today); setRange(today); }}>今日</Button>
+      <span>北京时间 · 含起止日期</span>
+      {!validRange && <span role="alert">请选择完整日期，且开始日期不能晚于结束日期。</span>}
+    </form>
     {error && <Alert message={error} type="error" showIcon className="notice" />}
     {statisticsError && <Alert message={statisticsError} type="warning" showIcon className="notice" />}
     {loading && !status ? <div className="loading"><Spin /></div> : status && <>
-      <div className="metrics-grid" aria-label="对话与用量统计">
+      <div className="metrics-grid overview-metrics" aria-label="对话与用量统计" aria-busy={loading}>
         <div className="metric"><span>对话总数</span><strong>{count(statistics?.conversation_count)}</strong><p>已归档的普通 / Agent 对话</p></div>
         <div className="metric"><span>当前运行中</span><strong>{count(statistics?.running_requests)}</strong><p>当前执行中的对话 / Agent 请求</p></div>
-        <div className="metric"><span>累计 Token 消耗</span><strong>{count(statistics?.total_tokens)}</strong><p>模型已上报用量，包含系统调用</p></div>
+        <div className="metric"><span>Token 消耗</span><strong>{count(statistics?.total_tokens)}</strong><p>所选日期内的用量，包含系统调用</p></div>
         <div className="metric"><span>缓存命中率</span><strong>{statistics?.cache_hit_rate == null ? '—' : `${(statistics.cache_hit_rate * 100).toFixed(1)}%`}</strong><p>{statistics?.cache_hit_rate == null ? '暂无缓存用量' : `缓存输入 ${count(statistics.cached_tokens)} / ${count(statistics.cache_prompt_tokens)}`}</p></div>
+        <div className="metric"><span>模型调用失败率</span><strong>{statistics?.model_failure_rate == null ? '—' : `${(statistics.model_failure_rate * 100).toFixed(1)}%`}</strong><p>{!statistics ? '统计不可用' : statistics.model_failure_rate == null ? '暂无已结束的模型调用' : `失败 ${count(statistics.failed_model_calls)} / 已结束 ${count(statistics.model_call_count)}`}</p><p>仅计成功或失败的模型调用</p></div>
       </div>
       <div className="metrics-grid">
         <div className="metric"><span>服务状态</span><strong className={status.ready ? 'healthy' : 'waiting'}>{status.ready ? '就绪' : '依赖异常'}</strong><p>数据库与持久队列</p></div>

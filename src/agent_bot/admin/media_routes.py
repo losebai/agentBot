@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Query, Request
 from starlette.requests import ClientDisconnect
+from starlette.responses import Response
 
 from agent_bot.admin.media_models import MaterialUploadView, MediaGenerationProbeRequest
 from agent_bot.admin.media_requests import run_with_disconnect
@@ -13,11 +14,14 @@ from agent_bot.ai.contracts import Page
 from agent_bot.database_pool import finish_database_write
 from agent_bot.materials.contracts import (
     MAX_FILE_BYTES,
+    MaterialCategory,
     MaterialId,
     MaterialLibraryArguments,
+    MaterialLibraryCount,
     MaterialLibraryView,
     MaterialSearchArguments,
     MaterialSearchResult,
+    MaterialTagsUpdate,
     MaterialView,
 )
 from agent_bot.media.config import MAX_IMAGE_BYTES, UPLOAD_SECONDS
@@ -119,7 +123,7 @@ def install_media_routes(router: APIRouter, runtime) -> None:
                         owner = MediaOwner(entry="admin", session_id=f"admin_{session_id}")
                         material = await current.materials.put(
                             owner=owner, name="上传图片", data=prepared.data,
-                            mime_type=prepared.media_type,
+                            mime_type=prepared.media_type, category="uploaded",
                         )
                         temporary = await current.store.put(
                             owner=owner,
@@ -160,7 +164,7 @@ def install_media_routes(router: APIRouter, runtime) -> None:
                     return await run_with_disconnect(request, current.materials.put(
                         owner=MediaOwner(entry="admin", session_id=f"admin_{session_id}"),
                         name=name, data=bytes(data),
-                        mime_type=mime.split(";", 1)[0].strip().lower(),
+                        mime_type=mime.split(";", 1)[0].strip().lower(), category="uploaded",
                     ))
 
                 try:
@@ -190,22 +194,59 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         query: str = Query("", max_length=200, pattern=r"^[^\x00]*$"),
         kind: str | None = Query(None, pattern=r"^(image|file)$"),
         entry: str | None = Query(None, pattern=r"^(admin|qq)$"),
+        category: MaterialCategory | None = None,
+        tag: str = Query("", max_length=128),
         session_id: str = Query("", max_length=256, pattern=r"^[^\x00]*$"),
         limit: int = Query(20, ge=1, le=100),
         cursor: str | None = Query(None, min_length=1, max_length=1024),
+        page: int | None = Query(None),
     ) -> Page[MaterialLibraryView]:
         """管理员素材库可只读浏览全部来源，不接受伪造的会话所有者。"""
         async with runtime.lease():
             return await resources().materials.list_library(
                 MaterialLibraryArguments(query=query, kind=kind, entry=entry,
-                                         session_id=session_id, limit=limit), cursor=cursor,
+                                         session_id=session_id, limit=limit,
+                                         category=category, tag=tag), cursor=cursor,
+                page=page,
             )
+
+    @router.get("/material-library/count", response_model=MaterialLibraryCount)
+    async def material_library_count(
+        query: str = Query("", max_length=200, pattern=r"^[^\x00]*$"),
+        kind: str | None = Query(None, pattern=r"^(image|file)$"),
+        entry: str | None = Query(None, pattern=r"^(admin|qq)$"),
+        category: MaterialCategory | None = None,
+        tag: str = Query("", max_length=128),
+        session_id: str = Query("", max_length=256, pattern=r"^[^\x00]*$"),
+    ) -> MaterialLibraryCount:
+        """管理认证后独立计数，筛选改变时请求而非每次翻页重复计算。"""
+        async with runtime.lease():
+            total = await resources().materials.count_library(MaterialLibraryArguments(
+                query=query, kind=kind, entry=entry, session_id=session_id,
+                category=category, tag=tag,
+            ))
+            return MaterialLibraryCount(total=total)
 
     @router.get("/material-library/{id}", response_model=MaterialLibraryView)
     async def library_material(id: MaterialId) -> MaterialLibraryView:
         """继承管理认证后读取完整素材说明，不与会话工具共享跨来源权限。"""
         async with runtime.lease():
             return await resources().materials.describe_for_library(id)
+
+    @router.patch("/material-library/{id}/tags", response_model=MaterialLibraryView)
+    async def update_library_material_tags(id: MaterialId, body: MaterialTagsUpdate):
+        """管理认证后替换标签；空数组明确清除，不能修改原件、分类或会话归属。"""
+        async with runtime.lease():
+            return await resources().materials.update_tags(id, body.tags)
+
+    @router.get("/material-library/{id}/thumbnail")
+    async def library_material_thumbnail(id: MaterialId) -> Response:
+        """持有运行时租约直到缩图编码结束，取消不能抢先回收文件资源。"""
+        async with runtime.lease():
+            data = await resources().materials.library_thumbnail(id)
+            return Response(content=data, media_type="image/png", headers={
+                "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+            })
 
     @router.get("/material-library/{id}/content")
     async def library_material_content(id: MaterialId) -> MediaContentResponse:

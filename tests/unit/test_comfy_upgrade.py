@@ -56,7 +56,9 @@ def test_same_software_version_still_applies_new_registered_migration(legacy_dat
     """旧 0.5.9 已登记版本的部署仍须执行新增 ID，不能仅凭程序版本跳过。"""
     from agent_bot.database_upgrade import MIGRATIONS
 
-    upgrade_database(legacy_database, read_resource=resource, migrations=MIGRATIONS[:1])
+    upgrade_database(
+        legacy_database, read_resource=resource, migrations=(MIGRATIONS[0], MIGRATIONS[2]),
+    )
     with sqlite3.connect(legacy_database.sqlite_path) as connection:
         connection.execute("INSERT INTO chat_setting_revision(id,revision) VALUES (1,5)")
         connection.execute("INSERT INTO chat_setting(config_key,config_value) "

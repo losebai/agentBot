@@ -24,6 +24,7 @@ function setup(fail = false) {
     if (options?.method === 'DELETE') { saved = false; return new Response(null, {status: 204}); }
     if (path.includes('knowledge-tags')) return Response.json([{tag: '部署', count: saved ? 1 : 0}]);
     if (path.includes('/knowledge/count')) return Response.json({total: saved ? 1 : 0});
+    if (path.includes('/material-library/count')) return Response.json({total: 0});
     if (path.includes('memory-tags') || path.includes('memory-scopes')) return Response.json([]);
     if (path.includes('/knowledge/')) return Response.json(item);
     return Response.json({items: saved ? [item] : [], next_cursor: null});

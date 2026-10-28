@@ -87,7 +87,8 @@ class MaterialReceiver:
         ).encode()).hexdigest()
         old = await self.store.find_source(owner, source)
         if old is not None:
-            return old
+            # 升级前已收录的原件再次参与对话时补记来源，仍复用原件且不恢复用户标签。
+            return await self.store.add_category(old.id, "received", owner=owner)
         reported = data.get("file_size", data.get("size"))
         if reported is not None:
             try:
@@ -120,4 +121,5 @@ class MaterialReceiver:
             content, mime = await self.files.fetch(url)
         return await self.store.put(
             owner=owner, name=name, mime_type=mime, data=content, source_key=source,
+            category="received",
         )

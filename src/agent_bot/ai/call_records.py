@@ -265,7 +265,7 @@ class CallDetail(CallSummary):
 
 
 class CallStatistics(AiModel):
-    """统一归档的累计用量，缓存比例只使用同时上报缓存和输入用量的调用。"""
+    """所选区间归档用量与失败率；缓存仅使用同时上报缓存和输入用量的调用。"""
 
     conversation_count: int = Field(ge=0)
     total_tokens: int = Field(ge=0)
@@ -274,6 +274,9 @@ class CallStatistics(AiModel):
     cached_tokens: int = Field(ge=0)
     cache_prompt_tokens: int = Field(ge=0)
     cache_hit_rate: float | None = Field(default=None, ge=0, le=1)
+    model_call_count: int = Field(ge=0)
+    failed_model_calls: int = Field(ge=0)
+    model_failure_rate: float | None = Field(default=None, ge=0, le=1)
 
 
 class CallCount(AiModel):
@@ -355,8 +358,22 @@ def _usage_from_row(row: dict[str, Any]) -> TokenUsage:
 class CallRecordStore(AiDatabase):
     """统一记录分页和幂等历史导入，时间相同时由自增主键稳定排序。"""
 
-    async def statistics(self) -> CallStatistics:
-        """在数据库内聚合统一记录，避免分页遗漏或重复累加原始执行表。"""
+    async def statistics(
+        self, *, start_time: datetime | None = None, end_time: datetime | None = None,
+    ) -> CallStatistics:
+        """按归档北京时间的左闭右开区间聚合，不重复累加原始执行表。
+
+        失败率只计算明确成功或失败的调用；独立 MCP 决策不属于模型调用。
+        不传区间的内部调用继续汇总完整归档，空分母保持未知。
+        """
+        conditions, args = [], []
+        if start_time is not None:
+            conditions.append("create_time >= %s")
+            args.append(start_time)
+        if end_time is not None:
+            conditions.append("create_time < %s")
+            args.append(end_time)
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
         usage = _usage_expressions()
         prompt, completion = usage["prompt_tokens"], usage["completion_tokens"]
         total, cached = usage["total_tokens"], usage["cached_tokens"]
@@ -364,6 +381,10 @@ class CallRecordStore(AiDatabase):
         row = await self.run(lambda c: query(
             c,
             "SELECT COUNT(CASE WHEN system_kind IS NULL THEN 1 END) AS conversation_count, "
+            "COUNT(CASE WHEN source <> 'python:agent_bot_auto_speak_decision' "
+            "AND status IN ('completed','failed') THEN 1 END) AS model_call_count, "
+            "COUNT(CASE WHEN source <> 'python:agent_bot_auto_speak_decision' "
+            "AND status = 'failed' THEN 1 END) AS failed_model_calls, "
             "COALESCE(SUM(COALESCE(total_tokens,"
             "COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0))),0) "
             "AS total_tokens, COALESCE(SUM(prompt_tokens),0) AS prompt_tokens, "
@@ -372,15 +393,21 @@ class CallRecordStore(AiDatabase):
             "AS cached_tokens, "
             "COALESCE(SUM(CASE WHEN cached_tokens IS NOT NULL THEN cache_prompt_tokens END),0) "
             "AS cache_prompt_tokens "
-            f"FROM (SELECT {_SYSTEM_KIND} AS system_kind, {prompt} AS prompt_tokens, "
+            f"FROM (SELECT source, status, {_SYSTEM_KIND} AS system_kind, "
+            f"{prompt} AS prompt_tokens, "
             f"{completion} AS completion_tokens, {total} AS total_tokens, "
             f"{cached} AS cached_tokens, {cache_prompt} AS cache_prompt_tokens "
-            f"FROM {_TABLE}) AS usage_records",
+            f"FROM {_TABLE}{where}) AS usage_records",
+            tuple(args),
             one=True,
         ))
         row["cache_hit_rate"] = (
             row["cached_tokens"] / row["cache_prompt_tokens"]
             if row["cache_prompt_tokens"] else None
+        )
+        row["model_failure_rate"] = (
+            row["failed_model_calls"] / row["model_call_count"]
+            if row["model_call_count"] else None
         )
         return CallStatistics.model_validate(row)
 

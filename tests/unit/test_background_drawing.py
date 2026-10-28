@@ -181,6 +181,31 @@ def background_job(*, cloud: bool = False, job_id: str = "background-job"):
     )
 
 
+async def test_cloud_generation_keeps_real_material_session(monkeypatch, chat_plugin):
+    """后台的独立互斥键不能成为素材归属，生成客户端必须收到原 QQ 会话。"""
+    received = []
+
+    async def generate_media(**kwargs):
+        """隔离供应商网络，观察真实 ChatService 构造的模型请求。"""
+        received.append(kwargs["session_id"])
+        return ChatMediaResponse(items=(ChatMediaItem(
+            type="IMAGE", mimeType="image/png", data=base64.b64encode(b"image").decode(),
+        ),))
+
+    service = ChatService(
+        client=SimpleNamespace(generate_media=generate_media),
+        store=ConversationStore(history_turns=2, max_sessions=10, ttl_seconds=60),
+        system_prompt="正常聊天", max_input_chars=100, cooldown_seconds=0,
+        max_concurrent_requests=1, max_concurrent_media_requests=1,
+        model_router=ContentModelRouter("text", "vision", "image", "audio"),
+    )
+    monkeypatch.setattr(chat_plugin, "chat_service", service)
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_image_generation_enabled", True)
+    job = background_job(cloud=True)
+    await chat_plugin._ConversationProcessor()._generate_media(job)
+    assert received == [job.session_id]
+
+
 @pytest.mark.parametrize("part", [0, 1, "failure"])
 async def test_cancel_before_media_or_during_completion_never_sends(
     monkeypatch, chat_plugin, image_stores, part,

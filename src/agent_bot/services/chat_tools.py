@@ -13,7 +13,7 @@ import time
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import (
     BaseModel,
@@ -89,6 +89,9 @@ _MAX_RESULT_CHARS = 32_000
 _MAX_SEARCH_RESULTS = 10
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from agent_bot.services.bot_config_tools import BotConfigTools
 
 
 class _Bot(Protocol):
@@ -205,6 +208,8 @@ class SpeechCollector:
 
 @dataclass(slots=True)
 class ChatToolContext:
+    """保存服务端绑定的真实身份、工具白名单和请求级资源，模型不能自行构造。"""
+
     session_id: str
     user_id: str
     allowed_tools: frozenset[str]
@@ -234,6 +239,7 @@ class ChatToolContext:
     operation_store: ToolOperationStore | None = field(default=None, repr=False)
     deadline_at: float | None = None
     memory_session: MemorySession | None = field(default=None, repr=False)
+    bot_config_tools: BotConfigTools | None = field(default=None, repr=False)
 
     def ensure_active(self) -> None:
         """工具回调和实际副作用均不得超过原消息的绝对截止时间。"""
@@ -681,6 +687,18 @@ async def _image_generate(arguments: dict[str, object], context: ChatToolContext
     return {"status": "queued", "task_id": task_id}
 
 
+async def _save_generated_workflow_image(
+    context: ChatToolContext, image: GeneratedWorkflowImage,
+) -> None:
+    """正常生成和回执恢复共用持久化；保存失败不得重调已经完成的工作流。"""
+    if context.material_store is not None:
+        await context.material_store.put(
+            owner=MediaOwner(entry="qq", session_id=context.session_id),
+            name="工作流生成图片", data=image.data, mime_type=image.media_type,
+            category="generated",
+        )
+
+
 async def _generate_local_workflow(
     arguments: dict[str, object], context: ChatToolContext, *, video: bool = False,
 ) -> object:
@@ -719,6 +737,7 @@ async def _generate_local_workflow(
         if video or not isinstance(cached, ImageEffect):
             raise ChatToolError("INVALID_RESULT", "持久化图片结果无效")
         await context.restore_effect(cached)
+        await _save_generated_workflow_image(context, context.workflow_collector.images[0])
         return {
             "workflow_key": cached.workflow_key, "image_index": 1,
             "media_type": cached.media_type,
@@ -783,6 +802,7 @@ async def _generate_local_workflow(
                 data=base64.b64encode(image.data).decode("ascii"),
             ),
         )
+        await _save_generated_workflow_image(context, image)
     except Exception as error:
         error_code = error.code if isinstance(error, WorkflowExecutionError) else "INTERNAL"
         logger.warning(
@@ -875,8 +895,33 @@ async def _memory(arguments: dict[str, object], context: ChatToolContext) -> Mem
 
 
 def build_chat_tool_registry() -> ChatToolRegistry:
+    """装配受会话授权约束的工具，主人配置能力仍须在执行时复核身份。"""
+    from agent_bot.services.bot_config_tools import (
+        BotConfigGetArguments,
+        BotConfigUpdateArguments,
+        bot_config_get,
+        bot_config_update,
+    )
+
     return ChatToolRegistry(
         [
+            ChatToolDefinition(
+                name="bot_config_get",
+                description=("仅机器人主人可用。查询机器人配置、字段用途和版本；"
+                             "可按 names 或 query 筛选，用 offset 分页。密钥仅展示设置状态。"
+                             "修改前先查询字段、只读状态和版本，不得猜测配置名称。"),
+                input_schema=BotConfigGetArguments.model_json_schema(),
+                handler=bot_config_get,
+            ),
+            ChatToolDefinition(
+                name="bot_config_update",
+                description=("仅机器人主人可用。按用户明确要求修改查询得到的可编辑非密钥配置，"
+                             "values 只提交本次修改，expected_revision 使用最新查询版本；"
+                             "静态字段还须 startup_revision。冲突后重新查询，不盲目覆盖。"
+                             "保存不代表已经生效，需重启字段由用户手动重启后端。"),
+                input_schema=BotConfigUpdateArguments.model_json_schema(),
+                handler=bot_config_update,
+            ),
             ChatToolDefinition(
                 name="memory",
                 description=MEMORY_TOOL_DESCRIPTION,

@@ -237,8 +237,9 @@ class RoutingAiClient:
         tool_session_token: str | None = None,
         laya_decision: bool = False,
         allow_knowledge: bool = True,
+        allow_tools: bool = True,
     ) -> str:
-        """系统调用继承当前 Agent 人设，模型及工具授权仍由原路由决定。"""
+        """Agent 事实表达关闭全部工具，主备模型与归档仍保留在 Agent 路径。"""
         route = AiRouteRequest(
             agent=use_agent,
             web=use_web_search,
@@ -262,12 +263,16 @@ class RoutingAiClient:
                 vision_only = decision.capability == "media"
                 names = (
                     ()
-                    if vision_only
+                    if vision_only or not allow_tools
                     else tuple(chat_tools) + (("read_url",) if use_web_search else ())
                 )
-                services = tuple(self.mcp_services) if use_agent and not vision_only else ()
+                services = (
+                    tuple(self.mcp_services)
+                    if use_agent and not vision_only and allow_tools else ()
+                )
                 # 共享知识仍与命名 Agent 的显式工具配置取交集，不改变普通对话路径。
-                if allow_knowledge and use_agent and self.agent_code and not vision_only:
+                if (allow_tools and allow_knowledge and use_agent and self.agent_code
+                        and not vision_only):
                     names += ("knowledge_search", "material_search", "material_get")
                 agent_code = None if vision_only else self.agent_code
                 request = AgentRequest(
@@ -275,7 +280,7 @@ class RoutingAiClient:
                     model=None if agent_code else model,
                     image_urls=tuple(image_urls),
                     image_material_ids=tuple(image_material_ids),
-                    tools=() if vision_only else None,
+                    tools=() if vision_only or not allow_tools else None,
                     session_id=session_id,
                     prompt=prompt,
                     request_id=request_id,

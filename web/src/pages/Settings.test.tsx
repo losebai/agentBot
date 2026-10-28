@@ -347,12 +347,15 @@ describe('配置编辑', () => {
       values: { chat_llm_temperature: 0.4 } }));
   });
 
-  it('QQ 接入、自动回复与游戏资讯独立展示，搜索只筛选当前分类', async () => {
+  it('记忆、QQ 接入、自动回复与游戏资讯独立展示，搜索只筛选当前分类', async () => {
     const fields = [
       { name: 'chat_max_sessions', description: '最大会话数', kind: 'number', value: 1000 },
       { name: 'future_setting', description: '新配置', kind: 'string', value: '默认基础' },
       { name: 'chat_python_agent_code', description: 'Agent 预设', kind: 'string', value: 'main' },
       { name: 'chat_memory_enabled', description: '会话记忆', kind: 'boolean', value: true },
+      { name: 'chat_tagged_memory_enabled', description: '标签记忆', kind: 'boolean', value: false },
+      { name: 'chat_history_turns', description: '历史保留轮数', kind: 'number', value: 6 },
+      { name: 'chat_memory_compression_max_tokens', description: '记忆压缩 Token', kind: 'number', value: 1024 },
       { name: 'chat_vision_model', description: '图片理解模型', kind: 'string', value: 'vision' },
       { name: 'chat_image_model', description: '图片生成模型名称', kind: 'string', value: 'gpt-image-1' },
       { name: 'chat_image_recognition_enabled', description: '图片识别', kind: 'boolean', value: true },
@@ -378,15 +381,23 @@ describe('配置编辑', () => {
     const navigation = screen.getByRole('navigation', { name: '机器人配置分类' });
     await within(navigation).findByRole('button', { name: 'QQ' });
     expect(within(navigation).getAllByRole('button').map(button => button.textContent)).toEqual([
-      '基础设置', 'LLM设置', 'QQ', '自动回复设置', '游戏资讯设置', 'Comfy',
+      '基础设置', 'LLM设置', '记忆设置', 'QQ', '自动回复设置', '游戏资讯设置', 'Comfy',
     ]);
     expect(await screen.findByLabelText('最大会话数')).toBeInTheDocument();
     expect(screen.getByLabelText('新配置')).toBeInTheDocument();
     fireEvent.click(within(navigation).getByRole('button', { name: 'LLM设置' }));
     // 生图模型由模型供应商提供，应与其他模型一起配置。
-    for (const label of ['Agent 预设', '会话记忆', '图片理解模型', '图片生成模型名称', '图片识别', '图片生成']) {
+    for (const label of ['Agent 预设', '图片理解模型', '图片生成模型名称', '图片识别', '图片生成']) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
+    for (const label of ['会话记忆', '标签记忆', '历史保留轮数', '记忆压缩 Token']) {
+      expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    }
+    fireEvent.click(within(navigation).getByRole('button', { name: '记忆设置' }));
+    for (const label of ['会话记忆', '标签记忆', '历史保留轮数', '记忆压缩 Token']) {
+      expect(screen.getByLabelText(label)).toBeEnabled();
+    }
+    expect(screen.queryByLabelText('Agent 预设')).not.toBeInTheDocument();
     fireEvent.click(within(navigation).getByRole('button', { name: 'QQ' }));
     for (const label of ['群成员 AT 工具', '群访问列表']) {
       expect(screen.getByLabelText(label)).toBeEnabled();
@@ -419,6 +430,9 @@ describe('配置编辑', () => {
   it('跨分类保留草稿并一起提交可写字段', async () => {
     let submitted: unknown;
     const fields = [...snapshot.fields,
+      { name: 'chat_memory_max_chars', description: '心智记忆最大字符数', kind: 'number', value: 2000,
+        nullable: false, secret_is_set: false, restart_required: false,
+        scope: 'runtime', read_only: false },
       { name: 'chat_auto_speak_interval_seconds', description: '自动发言间隔', kind: 'number', value: 3600,
         nullable: false, secret_is_set: false, restart_required: false,
         scope: 'runtime', read_only: false },
@@ -432,6 +446,8 @@ describe('配置编辑', () => {
     render(<Settings token="offline-token" />);
     fireEvent.click(screen.getByText('LLM设置', { selector: 'button' }));
     fireEvent.change(await screen.findByLabelText('温度'), { target: { value: '0.4' } });
+    fireEvent.click(screen.getByText('记忆设置', { selector: 'button' }));
+    fireEvent.change(screen.getByLabelText('心智记忆最大字符数'), { target: { value: '3000' } });
     fireEvent.click(screen.getByText('QQ', { selector: 'button' }));
     fireEvent.change(screen.getByLabelText('机器人名称'), { target: { value: '小桃' } });
     fireEvent.click(screen.getByText('自动回复设置', { selector: 'button' }));
@@ -443,6 +459,7 @@ describe('配置编辑', () => {
     fireEvent.click(screen.getByText('保存修改').closest('button')!);
     await waitFor(() => expect(submitted).toEqual({ expected_revision: 1,
       values: { chat_llm_temperature: 0.4, nickname: ['小桃'],
+        chat_memory_max_chars: 3000,
         chat_auto_speak_interval_seconds: 1800, chat_naraka_default_role_id: 'game-role' } }));
   });
 

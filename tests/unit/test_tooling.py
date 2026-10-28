@@ -82,6 +82,7 @@ def test_available_group_tools_matches_normal_group_chat_capabilities(chat_plugi
         "mention_member",
         "local_workflow_list",
         "local_workflow_generate_image",
+        "local_workflow_generate_video",
         "tts_generate",
     )
 

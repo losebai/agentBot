@@ -69,6 +69,7 @@ def test_config_has_safe_operational_defaults() -> None:
     assert config.chat_auto_speak_bot_id is None
     assert config.chat_auto_speak_groups == set()
     assert config.chat_auto_speak_trigger_mode == "interval"
+    assert config.chat_auto_speak_message_interval_seconds == 0
     assert config.chat_config_refresh_interval_seconds == 5
     assert config.chat_llm_max_tokens is None
     assert config.chat_llm_temperature is None
@@ -589,6 +590,10 @@ def test_auto_speak_rejects_invalid_qq_identifiers(field: str, value: object) ->
     [
         ("chat_auto_speak_initial_delay_seconds", 9.99),
         ("chat_auto_speak_interval_seconds", 59.99),
+        ("chat_auto_speak_message_interval_seconds", -1),
+        ("chat_auto_speak_message_interval_seconds", float("nan")),
+        ("chat_auto_speak_message_interval_seconds", float("inf")),
+        ("chat_auto_speak_message_interval_seconds", 2592001),
         ("chat_auto_speak_prompt", "x" * 1001),
         ("chat_auto_speak_laya_prompt", ""),
         ("chat_auto_speak_laya_prompt", "x" * 1001),

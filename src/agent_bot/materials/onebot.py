@@ -1,4 +1,4 @@
-"""为授权 QQ 消息和文件通知登记素材，不在接收监听器中调用模型。"""
+"""仅为授权 QQ 文件消息和通知登记素材，图片交由实际触发的对话接收。"""
 
 from nonebot import logger, on_message, on_notice
 from nonebot.adapters.onebot.v11 import (
@@ -36,8 +36,8 @@ def install_material_receivers(
 
     @messages.handle()
     async def receive_message(bot: Bot, event: MessageEvent):
-        """即使消息没有触发自然聊天，也先保存收到的图片和文件。"""
-        segments = [item for item in event.get_message() if item.type in {"image", "file"}]
+        """普通文件保留独立接收能力，未触发对话的图片不能自动进入素材库。"""
+        segments = [item for item in event.get_message() if item.type == "file"]
         if not segments:
             return
         async with runtime_lease():

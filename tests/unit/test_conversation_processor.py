@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -237,13 +238,17 @@ async def test_disabled_multi_reply_sends_decoded_messages_without_json_wrapping
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("multi_reply", [False, True])
+@pytest.mark.parametrize("marked", [
+    "[AT 3616076808] 说得对。",
+    '[mention_member target="2180526847" text="回答租卡选型问题"]说得对。[/mention_member]',
+])
 async def test_auto_reply_removes_internal_at_before_length_limit_and_delivery(
-    monkeypatch, chat_plugin, multi_reply,
+    monkeypatch, chat_plugin, multi_reply, marked,
 ) -> None:
     """自动发言不能照抄内部 @ 标记，正文预算也不能被这种历史元数据占用。"""
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", multi_reply)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
-        return_value='["[AT 3616076808] 说得对。"]',
+        return_value=json.dumps([marked], ensure_ascii=False),
     ))
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agent_bot.ai.credentials import CredentialResolver
+from agent_bot.materials.contracts import MaterialSearchArguments
 from agent_bot.media.config import MediaConfig
 from agent_bot.media.contracts import MediaOwner
 from agent_bot.media.errors import MediaError
@@ -44,6 +45,15 @@ async def test_generation_publishes_asset_and_record(
         assert result.record_saved and result.attachments[0].status == "ready"
         assert result.response.items and "response" not in result.model_dump()
         assert (await resources.records.get_run(result.execution_id)).status == "completed"
+        records = (await resources.materials.search(
+            MediaOwner(entry="admin", session_id="s"), MaterialSearchArguments(),
+        )).records
+        assert len(records) == 1 and records[0].kind == "image"
+        assert records[0].categories == ("generated",)
+        async with resources.materials.open_content(
+            records[0].id, owner=MediaOwner(entry="admin", session_id="s"),
+        ) as image:
+            assert image.read() == picture()
         provider.generate.assert_awaited_once()
     finally:
         await resources.aclose()
@@ -64,6 +74,24 @@ async def test_record_failure_keeps_file_but_save_failure_returns_error(
         with pytest.raises(MediaError, match="MEDIA_SAVE_FAILED"):
             await service.generate(request, MediaOwner(entry="admin", session_id="s"))
         assert provider.generate.await_count == 2
+    finally:
+        await resources.aclose()
+
+
+async def test_material_save_failure_returns_error_without_regenerating(
+    media_model, media_database, agent_params, tmp_path,
+):
+    """生成原件保存失败必须显式失败，不能把临时附件成功当作完整成功或重调模型。"""
+    service, resources, provider, request = await build(
+        media_model, media_database, agent_params, tmp_path,
+    )
+    resources.materials.put = AsyncMock(side_effect=OSError("material disk unavailable"))
+    try:
+        with pytest.raises(MediaError, match="MEDIA_SAVE_FAILED"):
+            await service.generate(request, MediaOwner(entry="admin", session_id="s"))
+        runs = await resources.records.list_runs()
+        assert len(runs.items) == 1 and runs.items[0].status == "failed"
+        provider.generate.assert_awaited_once()
     finally:
         await resources.aclose()
 

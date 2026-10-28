@@ -512,7 +512,7 @@ async def test_runtime_state_rebuilds_recent_group_context_only_when_its_limits_
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["laya", "llm"])
 async def test_runtime_state_builds_group_only_auto_speak(chat_plugin, backend) -> None:
-    """替换运行时按方式绑定独立依赖，切换 LLM 后不再要求 MCP code。"""
+    """替换运行时绑定消息独立间隔和决策依赖，LLM 不要求 MCP code。"""
     current = chat_plugin._runtime_state
     values = runtime_config_to_plain_values(current.config)
     values.update(
@@ -521,6 +521,7 @@ async def test_runtime_state_builds_group_only_auto_speak(chat_plugin, backend) 
             "chat_auto_speak_bot_id": "940000000000001",
             "chat_auto_speak_groups": ["940000000000002"],
             "chat_auto_speak_trigger_mode": "message",
+            "chat_auto_speak_message_interval_seconds": 23,
             "chat_mcp_enabled": True,
             "chat_auto_speak_mcp_code": "decision" if backend == "laya" else None,
             "chat_auto_speak_decision_backend": backend,
@@ -536,6 +537,7 @@ async def test_runtime_state_builds_group_only_auto_speak(chat_plugin, backend) 
         service = replacement.auto_speak_service
         assert service is not None
         assert service.runs_on_interval is False
+        assert service._message_interval_seconds == 23
         assert service.accepts_message("940000000000001", "940000000000002") is True
         assert service.accepts_message("940000000000001", "940000000000003") is False
         if backend == "laya":

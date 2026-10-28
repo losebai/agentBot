@@ -28,8 +28,8 @@ function servePlugins(items: PluginInfo[]) {
 it.each(['disabled', 'prepared', 'failed', 'stopped'] as const)(
   '插件为 %s 时独立配置页也不能挂载账号设置', async status => {
     servePlugins([plugin('bilibili', status), plugin('qqbot', status)]);
-    render(<PluginConfiguration token="offline" pluginId="bilibili" onInstalled={() => {}} />);
-    expect(await screen.findByText('插件未运行，请在已安装插件中启用并手动重启后端。')).toBeVisible();
+    render(<PluginConfiguration token="offline" pluginId="bilibili" />);
+    expect(await screen.findByText('插件未运行，请在插件中心启用并手动重启后端。')).toBeVisible();
     expect(screen.queryByRole('region', { name: 'B站账号' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'QQ NapCat 接入' })).not.toBeInTheDocument();
   },
@@ -38,7 +38,7 @@ it.each(['disabled', 'prepared', 'failed', 'stopped'] as const)(
 it('插件运行后显示所属设置，QQ 配置随实际状态重新加载', async () => {
   const items = [plugin('bilibili', 'running'), plugin('qqbot', 'running')];
   servePlugins(items);
-  const view = render(<PluginConfiguration token="offline" pluginId="bilibili" onInstalled={() => {}} />);
+  const view = render(<PluginConfiguration token="offline" pluginId="bilibili" />);
   expect(await screen.findByRole('button', { name: '扫码登录' })).toBeEnabled();
   view.unmount();
   render(<Settings token="offline" />);

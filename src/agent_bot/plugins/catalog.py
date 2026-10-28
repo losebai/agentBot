@@ -30,7 +30,21 @@ def _bilibili_factory() -> ApplicationPlugin:
     return BilibiliPlugin()
 
 
+COMFY_METADATA = PluginMetadata(
+    "comfy", "ComfyUI", __version__, "本地 ComfyUI 连接、工作流管理与图片视频生成",
+)
+
+
+def _comfy_factory() -> ApplicationPlugin:
+    """只有启用 Comfy 时才导入它的客户端与生命周期。"""
+    from agent_bot.plugins.comfy.plugin import ComfyPlugin
+
+    return ComfyPlugin()
+
+
 BUILTIN_PLUGINS = (
+    # Comfy 先启动，QQ 才能借用完整服务；退出顺序相反。
+    BuiltinPlugin(COMFY_METADATA, _comfy_factory),
     BuiltinPlugin(QQBOT_METADATA, _qqbot_factory),
     BuiltinPlugin(BILIBILI_METADATA, _bilibili_factory),
 )

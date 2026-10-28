@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from agent_bot.agent.catalog import AgentCatalog
 from agent_bot.agent.mcp.client import McpConnector
@@ -20,7 +21,6 @@ from agent_bot.ai.service import AiService
 from agent_bot.ai.sessions import AiSessionStore
 from agent_bot.config import RuntimeConfig
 from agent_bot.database_pool import MySqlConnectionPool
-from agent_bot.integrations.comfy import ComfyClient
 from agent_bot.integrations.gpt_sovits import GptSoVitsClient
 from agent_bot.integrations.workflow_store import WorkflowStore
 from agent_bot.jobs.service import JobService
@@ -33,15 +33,19 @@ from agent_bot.media.resources import MediaResources
 from agent_bot.media.service import MediaGenerationService
 from agent_bot.models import LlmRequestOptions
 from agent_bot.services.request_deadline import remaining_timeout
-from agent_bot.services.workflow_execution import WorkflowExecutionService
 from agent_bot.settings import (
     DatabaseParams,
 )
 
+if TYPE_CHECKING:
+    from agent_bot.integrations.comfy import ComfyClient
+    from agent_bot.plugins.comfy.plugin import ComfyPlugin, ComfyResources
+    from agent_bot.services.workflow_execution import WorkflowExecutionService
+
 
 @dataclass(frozen=True, slots=True, repr=False)
 class CoreRuntimeState:
-    """公共客户端属于宿主，QQ 快照只借用这些引用。"""
+    """宿主拥有公共客户端，Comfy 资源由插件委托管理，QQ 只借用引用。"""
 
     config: RuntimeConfig
     ai_client: RoutingAiClient
@@ -51,6 +55,8 @@ class CoreRuntimeState:
     comfy_client: ComfyClient | None
     workflow_service: WorkflowExecutionService | None
     tts_client: GptSoVitsClient | None
+    comfy_resources: ComfyResources | None = None
+    comfy_owner: ComfyPlugin | None = None
 
 
 def build_core_state(
@@ -63,6 +69,8 @@ def build_core_state(
     chat_bridge: ChatToolBridge | None = None,
     knowledge_store: KnowledgeStore | None = None,
     bilibili_tools=None,
+    comfy_resources: ComfyResources | None = None,
+    comfy_owner: ComfyPlugin | None = None,
 ) -> CoreRuntimeState:
     """QQ 与管理工具共用公共生图服务，消息队列仍由 QQ 宿主独立装配。"""
     chat_tool_bridge = chat_bridge
@@ -80,18 +88,8 @@ def build_core_state(
             "ollama": LangChainProvider("ollama"),
         },
     )
-    comfy_client: ComfyClient | None = None
-    workflow_service: WorkflowExecutionService | None = None
-    if config.chat_local_workflow_enabled:
-        comfy_client = ComfyClient(
-            base_url=config.chat_local_workflow_base_url,
-            timeout_seconds=config.chat_local_workflow_timeout_seconds,
-            max_image_bytes=config.chat_image_max_bytes,
-        )
-        workflow_service = WorkflowExecutionService(
-            store=workflow_store or WorkflowStore(database, connect=database_pool.connect),
-            client=comfy_client,
-        )
+    comfy_client = comfy_resources.client if comfy_resources is not None else None
+    workflow_service = comfy_resources.workflow_service if comfy_resources is not None else None
 
     tts_client: GptSoVitsClient | None = None
     if (
@@ -184,6 +182,8 @@ def build_core_state(
         comfy_client,
         workflow_service,
         tts_client,
+        comfy_resources,
+        comfy_owner,
     )
 
 
@@ -193,8 +193,11 @@ async def close_core_state(state: CoreRuntimeState) -> None:
         await state.ai_client.aclose()
     finally:
         try:
-            if state.comfy_client is not None:
-                await state.comfy_client.aclose()
+            if state.comfy_resources is not None:
+                if state.comfy_owner is not None:
+                    await state.comfy_owner.release(state.comfy_resources)
+                else:
+                    await state.comfy_resources.aclose()
         finally:
             if state.tts_client is not None:
                 await state.tts_client.aclose()

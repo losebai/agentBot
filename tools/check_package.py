@@ -11,7 +11,11 @@ def check(path: Path) -> None:
         names = archive.namelist()
         required = {
             'agent_bot/database_upgrade.py',
+            'agent_bot/plugins/comfy/__init__.py',
+            'agent_bot/plugins/comfy/plugin.py',
             'agent_bot/sql_scripts.py',
+            'agent_bot/resources/2026-10-28-comfy-plugin.sql',
+            'agent_bot/resources/2026-10-28-comfy-plugin.sqlite.sql',
             'agent_bot/resources/startup-versioning.sql',
             'agent_bot/resources/startup-versioning.sqlite.sql',
             'agent_bot/resources/UPGRADE-AUTOMATIC.md',

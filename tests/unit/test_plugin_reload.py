@@ -13,7 +13,8 @@ from agent_bot.settings import DatabaseParams, VersionedSettings
 
 def fake_state(config):
     """用可计数的关闭方法替代公共 HTTP 客户端。"""
-    return SimpleNamespace(config=config, ai_client=AsyncMock(), comfy_client=None, tts_client=None)
+    return SimpleNamespace(config=config, ai_client=AsyncMock(), comfy_client=None,
+                           comfy_resources=None, tts_client=None)
 
 
 def fake_runtime(monkeypatch):

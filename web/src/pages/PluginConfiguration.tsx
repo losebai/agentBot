@@ -8,7 +8,7 @@ import type { ConfigurablePlugin } from '../plugin-runtime';
 import type { PluginInfo } from '../types';
 import { Settings } from './Settings';
 
-/** 独立配置页离开时只卸载账号组件；QQ 表单保留草稿，返回时重新核对运行状态。 */
+/** 独立配置页离开时只卸载账号组件；运行设置保留草稿，返回时重新核对状态。 */
 export function PluginConfiguration({ token, pluginId, onInstalled, active = true }: {
   token: string; pluginId: ConfigurablePlugin; onInstalled: () => void; active?: boolean;
 }) {
@@ -51,6 +51,10 @@ export function PluginConfiguration({ token, pluginId, onInstalled, active = tru
         ? <Alert type="info" showIcon message="插件未运行，请在已安装插件中启用并手动重启后端。" />
         : pluginId === 'bilibili' ? active && activationValidated
           && <div className="settings-card"><BilibiliPlugin api={api} enabled /></div>
+          : pluginId === 'comfy'
+            ? <div hidden={!activationValidated}><Settings token={token} categoryKeys={['comfy']} embedded
+              active={active && activationValidated}
+              title="Comfy 运行设置" description="管理 ComfyUI 连接、执行开关与工作流；运行设置保存后自动更新。" /></div>
           : <>{active && activationValidated && <div className="settings-card"><NapCatPlugin api={api} /></div>}
             {/* 未验证本次运行状态时只隐藏表单，保留草稿且不允许操作旧缓存。 */}
             <div hidden={!activationValidated}><Settings token={token} categoryKeys={['qq', 'games']} embedded

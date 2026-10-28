@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_bot import __version__
 from agent_bot.database_upgrade import Migration, UpgradeError, upgrade_database
 from agent_bot.settings import DatabaseParams
 
@@ -44,14 +45,16 @@ def query(params, statement):
 def test_unversioned_database_upgrades_and_second_start_has_no_ddl(legacy_database):
     """首次升级补 B站及版本记录，第二次启动不重复执行 DDL 或更改数据。"""
     first = upgrade_database(legacy_database, read_resource=resource)
-    assert first.current_version == "0.5.7"
+    assert first.current_version == __version__
     assert first.previous_version is None
-    assert first.applied == ("bilibili-v1",)
+    assert first.applied == ("bilibili-v1", "comfy-plugin-v1")
     assert query(legacy_database, "SELECT value FROM private_business") == [("must-preserve",)]
-    assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [("0.5.7",)]
+    assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [
+        (__version__,),
+    ]
     second = upgrade_database(legacy_database, read_resource=resource)
-    assert second.applied == () and second.previous_version == "0.5.7"
-    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(1,)]
+    assert second.applied == () and second.previous_version == __version__
+    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(2,)]
 
 
 def test_newer_database_is_rejected_without_changing_any_rows(legacy_database):
@@ -71,7 +74,7 @@ def test_sqlite_failure_rolls_back_ddl_and_preserves_old_version(legacy_database
     from agent_bot.database_upgrade import MIGRATIONS
 
     upgrade_database(legacy_database, read_resource=resource)
-    bad = Migration("0.5.8", "broken-test", "bad.sql", "bad.sql")
+    bad = Migration("0.6.0", "broken-test", "bad.sql", "bad.sql")
 
     def read(name):
         """以真实 SQL 执行中途失败，不通过 mock 假装回滚。"""
@@ -85,10 +88,12 @@ def test_sqlite_failure_rolls_back_ddl_and_preserves_old_version(legacy_database
         upgrade_database(
             legacy_database,
             read_resource=read,
-            target_version="0.5.8",
+            target_version="0.6.0",
             migrations=(*MIGRATIONS, bad),
         )
-    assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [("0.5.7",)]
+    assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [
+        (__version__,),
+    ]
     assert not query(legacy_database, "SELECT name FROM sqlite_master WHERE name='test_partial'")
 
 
@@ -141,7 +146,7 @@ def test_two_startups_serialize_and_only_one_applies_migration(legacy_database):
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: start(), range(2)))
-    assert sorted(len(result.applied) for result in results) == [0, 1]
+    assert sorted(len(result.applied) for result in results) == [0, 2]
 
 
 def test_missing_existing_sqlite_file_is_not_created(tmp_path):
@@ -164,15 +169,15 @@ def test_recorded_old_version_can_add_structure_required_by_new_version(legacy_d
             "SELECT sql FROM sqlite_master WHERE name='chat_workflow'"
         ).fetchone()[0]
         connection.execute("DROP TABLE chat_workflow")
-    next_step = Migration("0.5.8", "new-workflow-table", "workflow.sql", "workflow.sql")
+    next_step = Migration("0.6.0", "new-workflow-table", "workflow.sql", "workflow.sql")
     result = upgrade_database(
         legacy_database,
-        target_version="0.5.8",
+        target_version="0.6.0",
         migrations=(*MIGRATIONS, next_step),
         read_resource=lambda name: creation if name == "workflow.sql" else resource(name),
     )
     assert result.applied == ("new-workflow-table",)
-    assert result.current_version == "0.5.8"
+    assert result.current_version == "0.6.0"
 
 
 def test_sql_splitter_preserves_quoted_semicolons_and_comment_markers():

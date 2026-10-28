@@ -5,6 +5,8 @@ import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -58,6 +60,31 @@ async def import_one(api, content, filename="portrait.json"):
     )
     assert result.status_code == 200, result.text
     return (await api.get("/api/v1/workflows", headers=HEADERS)).json()["items"][0]
+
+
+@pytest.mark.parametrize('method,path,body', [
+    ('GET', '/api/v1/workflows', None),
+    ('POST', '/api/v1/workflows/sync', None),
+    ('POST', '/api/v1/workflows/import', {'filename': 'disabled.json', 'content': '{}'}),
+])
+async def test_disabled_comfy_denies_formal_workflow_http(
+    admin_store, admin_runtime, workflows, method, path, body,
+):
+    """正式宿主的禁用门槛返回 503，不因数据库仍存有工作流而开放管理。"""
+    from agent_bot.admin.application_runtime import ApplicationRuntimeProvider
+
+    plugins = SimpleNamespace(running_plugin=Mock(return_value=None))
+    runtime = SimpleNamespace(config=admin_runtime.config, workflow_store=workflows,
+                              lease=lambda **kwargs: admin_runtime.lease())
+    provider = ApplicationRuntimeProvider(runtime, plugins)
+    app = FastAPI()
+    install_admin(app, admin_store, provider, AdminConfig(token="offline-admin"))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url='http://offline.test') as client:
+        result = await client.request(method, path, headers=HEADERS, json=body)
+    assert result.status_code == 503
+    assert result.json()['code'] == 'WORKFLOW_NOT_READY'
+    plugins.running_plugin.assert_called_with('comfy')
 
 
 async def test_h3_import_requires_enable_and_cannot_replace_default_image(workflow_api):

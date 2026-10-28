@@ -56,8 +56,8 @@ class ApplicationRuntimeProvider:
 
     @property
     def workflow_store(self):
-        """工作流存储由宿主唯一持有。"""
-        return self.runtime.workflow_store
+        """存储跨启停保留，只有当前运行的 Comfy 插件才授予 HTTP 管理能力。"""
+        return self.runtime.workflow_store if self.plugins.running_plugin("comfy") else None
 
     def lease(self):
         """管理读取共享快照保护，但刷新期间明确拒绝，不能等在途模型结束才响应。"""

@@ -276,6 +276,38 @@ class CallStatistics(AiModel):
     cache_hit_rate: float | None = Field(default=None, ge=0, le=1)
 
 
+class CallCount(AiModel):
+    """独立返回筛选后的条数，避免统计扫描阻塞首屏及每次翻页。"""
+
+    total: int = Field(ge=0)
+
+
+def _call_conditions(
+    type: CallType | None, session_id: str | None, status: str | None,
+    category: CallCategory | None, system_kind: SystemKind | None,
+) -> tuple[list[str | None], list[str], list[Any]]:
+    """列表和计数共用分类及筛选校验，防止总页数与实际记录范围不一致。"""
+    if type not in {None, "ordinary", "agent", "auto_speak", "unknown"}:
+        raise AiError("AI_INVALID_PAGE", status_code=422)
+    if category not in {None, "conversation", "system"} or system_kind not in {
+        None, "auto_speak", "command",
+    }:
+        raise AiError("AI_INVALID_PAGE", status_code=422)
+    filters = [type, session_id, status, category, system_kind]
+    conditions, args = [], []
+    for field, value in zip(("type", "session_Id", "status"), filters[:3], strict=True):
+        if value is not None:
+            conditions.append(f"`{field}`=%s")
+            args.append(value)
+    if category is not None:
+        null_check = "NOT NULL" if category == "system" else "NULL"
+        conditions.append(f"({_SYSTEM_KIND}) IS {null_check}")
+    if system_kind is not None:
+        conditions.append(f"({_SYSTEM_KIND})=%s")
+        args.append(system_kind)
+    return filters, conditions, args
+
+
 def _usage_number(*fields: str) -> str:
     """仅解析固定 JSON 数值路径，兼容历史协议及超长归档，不将空值视为零。"""
     paths = [f"$.{prefix}.{field}" for prefix in ("usage", "original_data.usage")
@@ -422,30 +454,34 @@ class CallRecordStore(AiDatabase):
             }) for step in steps]
         return CallDetail.model_validate(row)
 
+    async def count_calls(
+        self, *, type: CallType | None = None, session_id: str | None = None,
+        status: str | None = None, category: CallCategory | None = None,
+        system_kind: SystemKind | None = None,
+    ) -> CallCount:
+        """只统计筛选结果，不读取用量或正文；前端可与首屏并发请求并复用总数。"""
+        _, conditions, args = _call_conditions(type, session_id, status, category, system_kind)
+        where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        row = await self.run(lambda c: query(
+            c, f"SELECT COUNT(*) AS total FROM {_TABLE}{where}", tuple(args), one=True,
+        ))
+        return CallCount.model_validate(row)
+
     async def list_calls(
-        self, *, type=None, session_id=None, status=None, limit=50, cursor=None,
-        category=None, system_kind=None,
-    ):
-        """分页前筛选分组和类型，并只投影用量数值；游标绑定完整条件避免串页。"""
+        self, *, type: CallType | None = None, session_id: str | None = None,
+        status: str | None = None, limit: int = 50, cursor: str | None = None,
+        category: CallCategory | None = None, system_kind: SystemKind | None = None,
+        page: int | None = None,
+    ) -> Page[CallSummary]:
+        """兼容游标与直接页码，先限定当前页主键，再提取用量，避免深页重复解析 JSON。"""
         page_limit(limit)
-        if type not in {None, "ordinary", "agent", "auto_speak", "unknown"}:
+        if page is not None and (
+            isinstance(page, bool) or not isinstance(page, int) or page < 1 or cursor is not None
+        ):
             raise AiError("AI_INVALID_PAGE", status_code=422)
-        if category not in {None, "conversation", "system"} or system_kind not in {
-            None, "auto_speak", "command",
-        }:
-            raise AiError("AI_INVALID_PAGE", status_code=422)
-        filters = [type, session_id, status, category, system_kind]
-        conditions, args = [], []
-        for field, value in zip(("type", "session_Id", "status"), filters[:3], strict=True):
-            if value is not None:
-                conditions.append(f"`{field}`=%s")
-                args.append(value)
-        if category is not None:
-            null_check = "NOT NULL" if category == "system" else "NULL"
-            conditions.append(f"({_SYSTEM_KIND}) IS {null_check}")
-        if system_kind is not None:
-            conditions.append(f"({_SYSTEM_KIND})=%s")
-            args.append(system_kind)
+        filters, conditions, args = _call_conditions(
+            type, session_id, status, category, system_kind,
+        )
         if cursor:
             try:
                 if len(cursor) > 2048:
@@ -466,13 +502,21 @@ class CallRecordStore(AiDatabase):
             except (ValueError, KeyError, TypeError) as error:
                 raise AiError("AI_INVALID_PAGE", status_code=422) from error
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
+        # LIMIT 阻止派生表合并，深页只扫描排序和筛选字段，用量只对选中的记录求值。
+        source = (
+            f"{_TABLE} JOIN (SELECT id AS record_id FROM {_TABLE}{where} "
+            "ORDER BY create_time DESC,id DESC LIMIT %s OFFSET %s) AS selected "
+            f"ON {_TABLE}.id=selected.record_id"
+            if page is not None else f"{_TABLE}{where}"
+        )
+        paging = (limit + 1, (page - 1) * limit) if page is not None else (limit + 1,)
         rows = await self.run(
             lambda c: query(
                 c,
                 f"SELECT {sql_columns(set(CallSummary.model_fields) - {'system_kind', 'usage'})}, "
-                f"{_SYSTEM_KIND} AS system_kind, {_usage_columns()} FROM {_TABLE}{where} "
-                "ORDER BY create_time DESC,id DESC LIMIT %s",
-                (*args, limit + 1),
+                f"{_SYSTEM_KIND} AS system_kind, {_usage_columns()} FROM {source} "
+                "ORDER BY create_time DESC,id DESC" + ("" if page is not None else " LIMIT %s"),
+                (*args, *paging),
             )
         )
         items = []

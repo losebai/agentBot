@@ -78,25 +78,27 @@ def install_workflow_routes(router: APIRouter, runtime, settings: SettingsServic
 
     @router.post("/workflows/import", response_model=WorkflowImportResult)
     async def import_workflow(request: Request) -> WorkflowImportResult:
-        """认证通过后解析有界正文；导入不落上传文件，也不解析任意伴随路径。"""
-        body = WorkflowImport.model_validate_json(await request.body())
-
-        def persist() -> WorkflowImportResult:
-            """转换和事务都在线程执行，客户端取消时仍等待已启动写入完成。"""
-            definition = WorkflowCatalogImporter().parse_json(body.filename, body.content)
-            definition = replace(
-                definition,
-                enabled=definition.executable and definition.workflow_type != "image_to_video",
-            )
-            return WorkflowImportResult(imported=store().upsert((definition,)))
-
+        """认证和插件门槛通过后解析有界正文；导入不落文件或解析伴随路径。"""
         async with runtime.lease():
+            target_store = store()
+            body = WorkflowImport.model_validate_json(await request.body())
+
+            def persist() -> WorkflowImportResult:
+                """转换和事务都在线程执行，取消时仍等待已启动写入完成。"""
+                definition = WorkflowCatalogImporter().parse_json(body.filename, body.content)
+                definition = replace(
+                    definition,
+                    enabled=definition.executable and definition.workflow_type != "image_to_video",
+                )
+                return WorkflowImportResult(imported=target_store.upsert((definition,)))
+
             return await finish_database_write(persist)
 
     @router.post("/workflows/sync", response_model=WorkflowImportResult)
     async def sync_workflows() -> WorkflowImportResult:
-        """仅扫描已配置目录，整批校验成功后同步技术字段，保留管理员业务信息。"""
+        """先验证插件运行能力再扫描目录，整批同步技术字段并保留管理员信息。"""
         async with runtime.lease():
+            target_store = store()
             directory = runtime.config.chat_local_workflow_directory
             if not directory:
                 raise WorkflowManagementError("WORKFLOW_DIRECTORY_MISSING", status_code=422)
@@ -109,22 +111,25 @@ def install_workflow_routes(router: APIRouter, runtime, settings: SettingsServic
                     raise WorkflowManagementError(
                         "WORKFLOW_DIRECTORY_UNAVAILABLE", status_code=422,
                     ) from exc
-                return WorkflowImportResult(imported=store().upsert(definitions))
+                return WorkflowImportResult(imported=target_store.upsert(definitions))
 
             return await finish_database_write(persist)
 
     @router.get("/workflows/{workflow_key}", response_model=WorkflowDetail)
     async def workflow_detail(workflow_key: str) -> WorkflowDetail:
-        """停用和不可执行模板仍可查看、导出和维护业务属性。"""
-        return _detail(await asyncio.to_thread(store().get, workflow_key))
+        """插件租约保护读取；停用的模板仍可查看，但停用插件不开放存储。"""
+        async with runtime.lease():
+            return _detail(await asyncio.to_thread(store().get, workflow_key))
 
     @router.patch("/workflows/{workflow_key}", response_model=WorkflowDetail)
     async def update_workflow(workflow_key: str, body: WorkflowUpdate) -> WorkflowDetail:
-        """在存储行锁内检查摘要版本，不允许网页覆盖技术字段。"""
-        definition = await finish_database_write(lambda: store().update_metadata(
-            workflow_key, expected_revision=body.expected_revision, values=body.values,
-        ))
-        return _detail(definition)
+        """租约防止退出关闭存储，行锁检查摘要版本，不允许网页覆盖技术字段。"""
+        async with runtime.lease():
+            target_store = store()
+            definition = await finish_database_write(lambda: target_store.update_metadata(
+                workflow_key, expected_revision=body.expected_revision, values=body.values,
+            ))
+            return _detail(definition)
 
     @router.post("/workflows/{workflow_key}/default", response_model=WorkflowCatalog)
     async def set_default(workflow_key: str, body: WorkflowDefaultUpdate) -> WorkflowCatalog:

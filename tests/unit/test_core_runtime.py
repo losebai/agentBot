@@ -33,7 +33,8 @@ async def test_core_close_failure_still_closes_other_clients():
 
     clients = [AsyncMock(), AsyncMock(), AsyncMock()]
     clients[0].aclose.side_effect = RuntimeError("client failure")
-    state = SimpleNamespace(ai_client=clients[0], comfy_client=clients[1], tts_client=clients[2])
+    state = SimpleNamespace(ai_client=clients[0], comfy_resources=clients[1],
+                            comfy_owner=None, tts_client=clients[2])
     with pytest.raises(RuntimeError):
         await close_core_state(state)
     for client in clients:
@@ -69,13 +70,14 @@ async def test_core_constructor_does_not_build_http_clients_and_pool_closes_last
 
 
 async def test_local_workflow_import_receives_path_and_runs_without_qq(monkeypatch, tmp_path):
-    """工作流目录是启动字符串，公共导入边界须保持既有 Path 契约。"""
+    """工作流目录归插件所有，启动字符串仍转换为 Path；QQ 可保持禁用。"""
     from pathlib import Path
 
     from agent_bot.core import application
+    from agent_bot.plugins.comfy import plugin
 
     config = valid_config(
-        app_enabled_plugins=[],
+        app_enabled_plugins=['comfy'],
         chat_local_workflow_enabled=True,
         chat_mcp_enabled=True,
         chat_image_generation_enabled=True,
@@ -98,13 +100,18 @@ async def test_local_workflow_import_receives_path_and_runs_without_qq(monkeypat
             config=config,
             ai_client=AsyncMock(),
             comfy_client=None,
+            comfy_resources=None,
             tts_client=None,
         ),
     )
     scan = Mock(return_value=())
-    monkeypatch.setattr(application.WorkflowCatalogImporter, "scan", scan)
+    monkeypatch.setattr(plugin.WorkflowCatalogImporter, "scan", scan)
+    comfy = plugin.ComfyPlugin()
+    comfy.prepare(SimpleNamespace(runtime=runtime))
+    monkeypatch.setattr(runtime, '_build_candidate', AsyncMock(return_value=runtime._build(config)))
     try:
         await runtime.start()
+        await comfy.start()
         assert scan.call_args.args[0] == Path(tmp_path)
     finally:
         await runtime.stop()
@@ -127,6 +134,7 @@ async def test_cancelled_shutdown_finishes_draining_and_releases_all_resources(m
         config=runtime.config,
         ai_client=SimpleNamespace(aclose=clients[0]),
         comfy_client=None,
+        comfy_resources=None,
         tts_client=None,
     )
     async with runtime.lease():

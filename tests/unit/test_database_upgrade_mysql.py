@@ -8,13 +8,19 @@ import pymysql
 import pytest
 from tests.unit.test_database_upgrade import legacy_database, query, resource  # noqa: F401
 
+from agent_bot import __version__
 from agent_bot.database_upgrade import MIGRATIONS, Migration, UpgradeError, upgrade_database
 from agent_bot.settings import DatabaseParams
+from agent_bot.sql_scripts import split_sql
 from agent_bot.sqlite_database import SqliteConnection
 
 
 def mysql_factory(params, *, lock=1, fail_once=False):
-    """只翻译两份已知 MySQL 建表 SQL，其余读写由真实 SQLite 事务执行。"""
+    """只翻译登记脚本的协议差异，其余读写由真实 SQLite 事务执行。"""
+    comfy_translations = dict(zip(
+        split_sql(resource('2026-10-28-comfy-plugin.sql')),
+        split_sql(resource('2026-10-28-comfy-plugin.sqlite.sql')), strict=True,
+    ))
     with sqlite3.connect(":memory:") as parser:
         parser.executescript(resource("startup-versioning.sqlite.sql"))
         parser.executescript(resource("bilibili-init.sqlite.sql"))
@@ -73,6 +79,7 @@ def mysql_factory(params, *, lock=1, fail_once=False):
             """模拟元数据、一次性故障及 MySQL DDL 隐式提交。"""
             state.events.append(sql)
             self.rows = None
+            sql = comfy_translations.get(sql, sql)
             if "GET_LOCK" in sql:
                 self.rows = [{"acquired": lock}]
                 return
@@ -127,7 +134,7 @@ def test_mysql_failed_nonreentrant_step_keeps_old_version_and_stops_replay(
     params = DatabaseParams(backend="mysql", database="offline")
     connect, state = mysql_factory(legacy_database)
     upgrade_database(params, connect=connect, read_resource=resource)
-    bad = Migration("0.5.8", "mysql-broken", "bad.sql", "bad.sql")
+    bad = Migration("0.6.0", "mysql-broken", "bad.sql", "bad.sql")
 
     def read(name):
         """第一个 DDL 成功后，第二条语句失败。"""
@@ -142,10 +149,12 @@ def test_mysql_failed_nonreentrant_step_keeps_old_version_and_stops_replay(
             params,
             connect=connect,
             read_resource=read,
-            target_version="0.5.8",
+            target_version="0.6.0",
             migrations=(*MIGRATIONS, bad),
         )
-    assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [("0.5.7",)]
+    assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [
+        (__version__,),
+    ]
     assert query(legacy_database, "SELECT name FROM sqlite_master WHERE name='partial_test'")
     assert query(
         legacy_database,
@@ -156,7 +165,7 @@ def test_mysql_failed_nonreentrant_step_keeps_old_version_and_stops_replay(
             params,
             connect=connect,
             read_resource=read,
-            target_version="0.5.8",
+            target_version="0.6.0",
             migrations=(*MIGRATIONS, bad),
         )
     assert state.closed == 3
@@ -170,7 +179,7 @@ def test_mysql_known_idempotent_step_resumes_after_partial_ddl(legacy_database):
         upgrade_database(params, connect=connect, read_resource=resource)
     assert not query(legacy_database, "SELECT version FROM agent_bot_schema_version")
     result = upgrade_database(params, connect=connect, read_resource=resource)
-    assert result.applied == ("bilibili-v1",)
+    assert result.applied == ("bilibili-v1", "comfy-plugin-v1")
     assert state.closed == 2
     assert sum("GET_LOCK" in event for event in state.events) == 2
 

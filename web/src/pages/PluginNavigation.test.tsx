@@ -8,8 +8,9 @@ function setup(running = true) {
   const fetcher = vi.fn(async (url, options) => {
     const path = String(url);
     if (path.endsWith('/auth')) return Response.json({ password_required: false });
-    if (path.endsWith('/plugins')) return Response.json(['qqbot', 'bilibili'].map(id => ({
-      id, name: id === 'qqbot' ? 'QQBot' : 'B站', version: 'offline', description: '内置平台插件',
+    if (path.endsWith('/plugins')) return Response.json(['qqbot', 'bilibili', 'comfy'].map(id => ({
+      id, name: id === 'qqbot' ? 'QQBot' : id === 'comfy' ? 'ComfyUI' : 'B站',
+      version: 'offline', description: '内置平台插件',
       enabled: running, saved_enabled: true, status: running ? 'running' : 'disabled', restart_required: !running,
     })));
     if (path.endsWith('/settings')) return Response.json({ database_revision: 1, applied_revision: 1,
@@ -20,6 +21,8 @@ function setup(running = true) {
           read_only: true, nullable: false, secret_is_set: false, restart_required: true },
         { name: 'chat_cooldown_seconds', description: '自动回复冷却', value: 2, kind: 'number', scope: 'runtime',
           nullable: false, secret_is_set: false, restart_required: false },
+        { name: 'chat_local_workflow_base_url', description: 'Comfy 服务地址', value: 'http://127.0.0.1:8188',
+          kind: 'string', scope: 'runtime', nullable: false, secret_is_set: false, restart_required: false },
       ] });
     if (path.endsWith('/napcat/plugin')) return Response.json({ available: false, plugin_enabled: true,
       status: { mode: 'external', state: 'not_started', webui_ready: false, error_code: null } });
@@ -72,6 +75,24 @@ it('保存待启用但尚未运行时，不显示独立配置二级菜单', asyn
   await screen.findByRole('switch', { name: '启用 B站' });
   expect(within(nav).queryByRole('button', { name: 'B站配置' })).not.toBeInTheDocument();
   expect(within(nav).queryByRole('button', { name: 'QQ 配置' })).not.toBeInTheDocument();
+  expect(within(nav).queryByRole('button', { name: 'Comfy 配置' })).not.toBeInTheDocument();
+});
+
+it('Comfy 连接与工作流归属插件配置，离开返回保留连接草稿', async () => {
+  setup();
+  render(<App />);
+  const nav = await screen.findByLabelText('主导航');
+  fireEvent.click(await within(nav).findByText('Comfy 配置', { selector: 'button' }));
+  const address = await screen.findByLabelText('Comfy 服务地址');
+  fireEvent.change(address, { target: { value: 'http://127.0.0.1:9000' } });
+  expect(screen.getByText('工作流管理', { selector: '[role="tab"]' })).toBeVisible();
+  fireEvent.click(within(nav).getByText('机器人配置', { selector: 'button' }));
+  const settingsPage = screen.getByText('机器人配置', { selector: 'h1' }).closest<HTMLElement>('.page-content')!;
+  expect(within(settingsPage).queryByText('Comfy', { selector: 'button' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Comfy 服务地址')).not.toBeVisible();
+  fireEvent.click(await within(nav).findByText('Comfy 配置', { selector: 'button' }));
+  await waitFor(() => expect(screen.getByLabelText('Comfy 服务地址')).toBeVisible());
+  expect(screen.getByLabelText('Comfy 服务地址')).toHaveValue('http://127.0.0.1:9000');
 });
 
 it('插件状态刷新保留当前 QQ 设置草稿，不把状态检查当作丢弃修改', async () => {

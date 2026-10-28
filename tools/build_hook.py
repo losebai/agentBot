@@ -15,7 +15,8 @@ class CustomBuildHook(BuildHookInterface):
         # Git 忽略不能导致发布缺少升级资源；缺失时在打包前明确失败。
         for filename in ('bilibili-init.sql', 'bilibili-init.sqlite.sql', 'UPGRADE-BILIBILI.md',
                          'startup-versioning.sql', 'startup-versioning.sqlite.sql',
-                         'UPGRADE-AUTOMATIC.md'):
+                         'UPGRADE-AUTOMATIC.md', '2026-10-28-comfy-plugin.sql',
+                         '2026-10-28-comfy-plugin.sqlite.sql'):
             if not (Path(self.root) / 'sql' / filename).is_file():
                 raise FileNotFoundError(f'required database resource missing: {filename}')
         if version != "editable":

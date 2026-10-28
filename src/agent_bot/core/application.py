@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from agent_bot.bootstrap import database_params, load_bootstrap_config
@@ -21,7 +20,6 @@ from agent_bot.media.config import MediaConfig
 from agent_bot.media.resources import MediaResources
 from agent_bot.runtime_fields import RESTART_REQUIRED_FIELDS
 from agent_bot.runtime_reload import SettingsReloader
-from agent_bot.services.workflows import WorkflowCatalogImporter
 from agent_bot.settings import (
     DatabaseParams,
     SettingsStore,
@@ -34,6 +32,7 @@ if TYPE_CHECKING:
     from nonebot.drivers import Driver
 
     from agent_bot.agent.tools.chat import ChatToolBridge
+    from agent_bot.plugins.comfy.plugin import ComfyResources
     from agent_bot.plugins.manager import PluginManager
 
 
@@ -141,6 +140,7 @@ class ApplicationRuntime:
         self._bridge: ChatToolBridge | None = None
         # 插件独立持有此服务，工具提供者在每次调用读取当前值。
         self.bilibili_service = None
+        self.comfy_plugin = None
         self._participant: RuntimeRefreshParticipant | None = None
         self._started = False
         self._closed = False
@@ -191,7 +191,9 @@ class ApplicationRuntime:
             raise RuntimeError("refresh participant already bound")
         self._participant = participant
 
-    def _build(self, config: RuntimeConfig) -> CoreRuntimeState:
+    def _build(
+        self, config: RuntimeConfig, *, comfy_resources: ComfyResources | None = None,
+    ) -> CoreRuntimeState:
         """媒体和存储按进程共享，只有调用客户端随配置替换。"""
         from agent_bot.plugins.bilibili.tools import BilibiliTools
 
@@ -201,6 +203,8 @@ class ApplicationRuntime:
             database_pool=self.database_pool,
             media_resources=self.media_resources,
             workflow_store=self.workflow_store,
+            comfy_resources=comfy_resources,
+            comfy_owner=self.comfy_plugin,
             chat_bridge=self._bridge,
             knowledge_store=self.knowledge_store,
             bilibili_tools=BilibiliTools(
@@ -208,24 +212,25 @@ class ApplicationRuntime:
             ),
         )
 
+    async def _build_candidate(self, config: RuntimeConfig) -> CoreRuntimeState:
+        """插件先分配本代资源，公共构建失败时立即归还未发布的客户端。"""
+        if self.comfy_plugin is None:
+            return self._build(config)
+        resources = self.comfy_plugin.build_resources(config)
+        try:
+            return self._build(config, comfy_resources=resources)
+        except BaseException:
+            await self.comfy_plugin.release(resources)
+            raise
+
     async def start(self) -> None:
-        """公共媒体和工作流准备完成后再允许渠道插件启动。"""
+        """公共媒体先准备，目录和执行能力由各自插件启动。"""
         if self._started:
             return
         if self._closed:
             raise RuntimeError("公共运行时已关闭")
-        self._state = self._build(self._config)
+        self._state = await self._build_candidate(self._config)
         await self.media_resources.start()
-        if self.config.chat_local_workflow_enabled:
-            # 已有部署不能因启用插件执行 ALTER；目录升级由离线迁移命令明确触发。
-            await asyncio.to_thread(self.workflow_store.list_all, limit=1)
-            directory = self.config.chat_local_workflow_directory
-            if directory is not None:
-                definitions = await asyncio.to_thread(
-                    WorkflowCatalogImporter().scan,
-                    Path(directory),
-                )
-                await asyncio.to_thread(self.workflow_store.upsert, definitions)
         self._started = True
 
     def start_producers(self) -> None:
@@ -248,14 +253,14 @@ class ApplicationRuntime:
         config, _ = effective_runtime_config(stored.config, self.config)
         if config == self.config:
             return
-        replacement = self._build(config)
+        replacement = await self._build_candidate(config)
         participant = self._participant
         old_core = self.state
         old_qq: Any = participant.state if participant is not None else None
         new_qq = None
         published = False
-        await self.gate.begin_refresh()
         try:
+            await self.gate.begin_refresh()
             if participant is not None:
                 await participant.pause()
             await self.gate.wait_until_idle()

@@ -103,9 +103,9 @@ function patchValue(field: SettingField, value: DraftValue): JsonValue {
 }
 
 /** 按页面指定的分类编辑配置，跨分类保留草稿，提交时排除所属范围以外的字段。 */
-export function Settings({ token, onPlugins, categoryKeys, embedded = false, title = '机器人配置', description }: {
+export function Settings({ token, onPlugins, categoryKeys, embedded = false, title = '机器人配置', description, active = true }: {
   token: string; onPlugins?: () => void; categoryKeys?: readonly Category[];
-  embedded?: boolean; title?: string; description?: string;
+  embedded?: boolean; title?: string; description?: string; active?: boolean;
 }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [snapshot, setSnapshot] = useState<SettingsSnapshot>();
@@ -212,7 +212,8 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
           { key: 'workflows', label: '工作流管理', disabled: loading || saving },
         ]} />}
         {currentCategory === 'comfy' && comfyTab === 'workflows'
-          ? <ComfyWorkflows token={token} disabled={loading || saving || settingsRefreshing}
+          // 离开插件页取消工作流读取，连接表单仍挂载以保留未保存草稿。
+          ? active && <ComfyWorkflows token={token} disabled={loading || saving || settingsRefreshing}
             onSettingsChanged={workflowSettingsChanged} onBusyChange={setWorkflowBusy} />
           : <>
     {currentCategory === 'basic' && onPlugins && <Button type="link" onClick={onPlugins}>管理内置插件</Button>}

@@ -17,6 +17,7 @@ from agent_bot.integrations.comfy import ComfyClient
 from agent_bot.integrations.gpt_sovits import GptSoVitsClient
 from agent_bot.integrations.naraka import NarakaClient
 from agent_bot.integrations.onebot.auto_speak import AutoSpeakBot, AutoSpeakService
+from agent_bot.integrations.workflow_store import WorkflowStore
 from agent_bot.media.resources import MediaResources
 from agent_bot.memory.summary_filter import MemorySummaryFilter
 from agent_bot.memory_store import (
@@ -106,10 +107,18 @@ def build_runtime_state(
         audio_model=config.chat_tts_model,
     )
     owns_core = core_state is None
-    core_state = core_state or build_core_state(
-        config, database=database, database_pool=database_pool,
-        media_resources=media_resources, chat_bridge=chat_tool_bridge,
-    )
+    if core_state is None:
+        # 直接加载旧 NoneBot 入口时显式构造兼容资源；正式宿主始终提供公共快照。
+        from agent_bot.plugins.comfy.plugin import ComfyResources
+
+        comfy_resources = ComfyResources(
+            config, WorkflowStore(database, connect=database_pool.connect),
+        ) if config.chat_local_workflow_enabled else None
+        core_state = build_core_state(
+            config, database=database, database_pool=database_pool,
+            media_resources=media_resources, chat_bridge=chat_tool_bridge,
+            comfy_resources=comfy_resources,
+        )
     ai_client, model_guard = core_state.ai_client, core_state.model_guard
     comfy_client, workflow_service = core_state.comfy_client, core_state.workflow_service
     tts_client = core_state.tts_client
@@ -283,7 +292,7 @@ async def close_runtime_state(state: RuntimeState) -> None:
         state.chat_service.aclose,
         *([state.ai_client.aclose] if state.owns_core else []),
         *([state.naraka_client.aclose] if state.naraka_client is not None else []),
-        *([state.comfy_client.aclose]
-          if state.owns_core and state.comfy_client is not None else []),
+        *([state.core_state.comfy_resources.aclose]
+          if state.owns_core and state.core_state.comfy_resources is not None else []),
         *([state.tts_client.aclose] if state.owns_core and state.tts_client is not None else []),
     ])

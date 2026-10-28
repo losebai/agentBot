@@ -1,4 +1,5 @@
--- 用途：显式初始化 agentBot 0.5.7 SQLite 的业务表与可选本地队列表。
+-- 用途：显式初始化 agentBot 0.5.9 SQLite 的业务表与可选本地队列表。
+-- Comfy 插件沿用配置及工作流表，无新增结构；新库默认不启用，旧库由 comfy-plugin-v1 流水保留原启用选择。
 -- 执行顺序：由 agent-bot database init 在启用外键的事务中执行，再运行 settings init。
 -- 数据影响：仅创建缺失结构，不清空数据、不写入配置或密钥。
 -- 统一会话仅建 chat_session_context；既有部署校验迁移与备份后使用 2026-10-20-retire-legacy-session-context.sqlite.sql 清理旧表。

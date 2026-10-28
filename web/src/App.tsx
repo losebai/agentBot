@@ -37,10 +37,10 @@ const workspaceTheme = {
 };
 
 const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置', plugins:'已安装插件',
-  'plugin-center':'插件中心', 'plugin-qqbot':'QQ 配置', 'plugin-bilibili':'B站配置',
+  'plugin-center':'插件中心', 'plugin-qqbot':'QQ 配置', 'plugin-bilibili':'B站配置', 'plugin-comfy':'Comfy 配置',
   chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理', knowledge:'标签与知识库'};
 
-/** 按服务端登录模式进入工作台；QQ 表单保留草稿，离开配置页撤销账号读取和扫码。 */
+/** 按服务端登录模式进入工作台；插件设置保留草稿，离开配置页取消专属读取。 */
 export function App() {
   // null 表示尚未登录，空字符串表示后端明确启用了免登录。
   const [token, setToken] = useState<string | null>(null);
@@ -104,7 +104,7 @@ export function App() {
         <main className="main-area"><header className="topbar"><span className="topbar-title">{titles[page]}</span><span className="workspace-label">AgentBot</span></header>
           <section hidden={page !== 'overview'}>{visited.includes('overview') && <Overview token={token} />}</section>
           <section hidden={page !== 'settings'}>{visited.includes('settings') && <Settings token={token}
-            categoryKeys={['basic', 'llm', 'reply', 'comfy']} onPlugins={() => navigate('plugin-center')} />}</section>
+            categoryKeys={['basic', 'llm', 'reply']} onPlugins={() => navigate('plugin-center')} />}</section>
           <section hidden={page !== 'plugins' && page !== 'plugin-center'}>
             {(visited.includes('plugins') || visited.includes('plugin-center')) && <Plugins token={token}
               view={page === 'plugin-center' ? 'center' : 'installed'} onInstalled={() => navigate('plugins')}
@@ -114,6 +114,8 @@ export function App() {
             active={page === 'plugin-qqbot'} onInstalled={() => navigate('plugins')} />}
           {page === 'plugin-bilibili' && <PluginConfiguration token={token} pluginId="bilibili"
             onInstalled={() => navigate('plugins')} />}
+          {visited.includes('plugin-comfy') && <PluginConfiguration token={token} pluginId="comfy"
+            active={page === 'plugin-comfy'} onInstalled={() => navigate('plugins')} />}
           <section hidden={page !== 'chat'}>{page === 'chat' && <Chat token={token} />}</section>
           <section hidden={page !== 'providers'}>{visited.includes('providers') && <Providers token={token} />}</section>
           <section hidden={page !== 'sessions'}>{page === 'sessions' && <Sessions token={token} />}</section>

@@ -42,6 +42,8 @@ class Migration:
 
 MIGRATIONS = (
     Migration("0.5.7", "bilibili-v1", "bilibili-init.sql", "bilibili-init.sqlite.sql", True),
+    Migration("0.5.9", "comfy-plugin-v1", "2026-10-28-comfy-plugin.sql",
+              "2026-10-28-comfy-plugin.sqlite.sql", True),
 )
 
 

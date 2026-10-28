@@ -7,9 +7,13 @@ import sys
 import pytest
 
 
-@pytest.mark.parametrize("enabled", [False, True], ids=["without-qq", "with-qq"])
-def test_application_lifecycle_uses_one_core_and_only_enabled_channel(tmp_path, enabled):
-    """使用临时 SQLite 和无外联 OneBot 验证启停、快照共享和退出。"""
+@pytest.mark.parametrize('enabled,comfy_enabled', [
+    (False, False), (True, False), (False, True), (True, True),
+], ids=['core-only', 'qq-only', 'comfy-only', 'qq-and-comfy'])
+def test_application_lifecycle_uses_one_core_and_only_enabled_channel(
+    tmp_path, enabled, comfy_enabled,
+):
+    """临时 SQLite 与无外联 OneBot 验证插件组合、快照共享及退出。"""
     environment = {key: value for key, value in os.environ.items()
                    if not key.upper().startswith(("CHAT_", "ONEBOT_", "AGENT_BOT_"))}
     environment.update({
@@ -30,13 +34,19 @@ from agent_bot.database import initialize_database
 from agent_bot.settings import DatabaseParams, SettingsStore
 
 enabled = sys.argv[1] == "yes"
-config = RuntimeConfig(driver="~fastapi", app_enabled_plugins=["qqbot"] if enabled else [],
+comfy_enabled = sys.argv[2] == "yes"
+selection = (["qqbot"] if enabled else []) + (["comfy"] if comfy_enabled else [])
+config = RuntimeConfig(driver="~fastapi", app_enabled_plugins=selection,
+                       chat_local_workflow_enabled=comfy_enabled,
+                       chat_mcp_enabled=comfy_enabled, chat_image_generation_enabled=comfy_enabled,
                        onebot_v11_access_token="offline-onebot-" + "o" * 32,
                        chat_session_secret="offline-session-" + "s" * 32)
 Path(".env").write_text("DRIVER=~fastapi\\nONEBOT_V11_ACCESS_TOKEN="
                        + config.onebot_v11_access_token.get_secret_value()
                        + "\\nCHAT_SESSION_SECRET="
-                       + config.chat_session_secret.get_secret_value() + "\\n", encoding="utf-8")
+                       + config.chat_session_secret.get_secret_value()
+                       + "\\nCHAT_MCP_ENABLED=" + str(comfy_enabled).lower() + "\\n",
+                       encoding="utf-8")
 params = DatabaseParams(backend="sqlite", sqlite_path="bot.sqlite3")
 initialize_database(params)
 stored = SettingsStore(params, static_config=config).initialize(config)
@@ -65,11 +75,15 @@ async def check():
         assert await runtime.is_ready() and await plugins.is_ready()
         assert runtime.state.ai_client.agent_service is not None
         assert runtime.state.ai_client.media_service is not None
+        assert (runtime.state.comfy_client is not None) == comfy_enabled
+        assert (runtime.state.workflow_service is not None) == comfy_enabled
         if enabled:
             from agent_bot.plugin import application as qq
             assert qq.get_runtime_state().ai_client is runtime.state.ai_client
             assert not qq.get_runtime_state().owns_core
             assert qq._database_pool is runtime.database_pool
+            assert qq.get_runtime_state().comfy_client is runtime.state.comfy_client
+            assert qq.get_runtime_state().workflow_service is runtime.state.workflow_service
             assert qq._settings_refresh_task is None and qq._ai_job_runner_task is None
             assert qq.conversation_queue.running and qq.image_queue.running
         else:
@@ -79,19 +93,26 @@ async def check():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                      base_url="http://offline.test") as client:
             assert (await client.get("/health/ready")).status_code == 200
-            info = (await client.get("/api/v1/plugins")).json()[0]
+            items = (await client.get("/api/v1/plugins")).json()
+            plugin_info = {item['id']: item for item in items}
+            info = plugin_info['qqbot']
             assert info["enabled"] == enabled
             assert info["status"] == ("running" if enabled else "disabled")
+            assert plugin_info['comfy']['enabled'] == comfy_enabled
+            workflows = await client.get('/api/v1/workflows')
+            assert workflows.status_code == (200 if comfy_enabled else 503)
             assert (await client.get("/api/v1/bots")).json() == []
             response = await client.patch("/api/v1/settings", json={
                 "expected_revision": stored.revision,
-                "values": {"app_enabled_plugins": [] if enabled else ["qqbot"],
+                "values": {"app_enabled_plugins": (["comfy"] if comfy_enabled else [])
+                           + ([] if enabled else ["qqbot"]),
                            "chat_system_prompt": "offline new prompt"}})
             assert response.status_code == 200, response.text
             await runtime.refresh_once()
             assert runtime.config.app_enabled_plugins == config.app_enabled_plugins
             assert runtime.config.chat_system_prompt == "offline new prompt"
-            assert (await client.get("/api/v1/plugins")).json()[0]["restart_required"]
+            assert next(item for item in (await client.get("/api/v1/plugins")).json()
+                        if item['id'] == 'qqbot')["restart_required"]
             if enabled:
                 assert qq.get_runtime_state().ai_client is runtime.state.ai_client
                 assert qq.conversation_queue.running
@@ -100,7 +121,8 @@ async def check():
 
 asyncio.run(check())
 '''
-    result = subprocess.run([sys.executable, "-c", code, "yes" if enabled else "no"],
+    result = subprocess.run([sys.executable, "-c", code, "yes" if enabled else "no",
+                             "yes" if comfy_enabled else "no"],
                             cwd=tmp_path, env=environment, capture_output=True, text=True,
                             encoding="utf-8", errors="replace", timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr

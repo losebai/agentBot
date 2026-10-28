@@ -1,5 +1,6 @@
 """用 LangChain 统一普通对话和 Agent，协议、权限与连接由项目显式管理。"""
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
 
@@ -22,6 +23,8 @@ from agent_bot.ai.providers.langchain_messages import to_langchain_messages, to_
 from agent_bot.ai.providers.transport import ProviderTransport
 from agent_bot.models import LlmRequestOptions
 from agent_bot.services.request_deadline import remaining_timeout
+
+logger = logging.getLogger(__name__)
 
 OPTIONS = {
     "openai-chat": {
@@ -91,6 +94,7 @@ class LangChainProvider:
             self.options[key]: value
             for key, value in call.options.model_dump(exclude_none=True).items()
         }
+        stage = "model_initialize"
         try:
             if self.protocol == "ollama":
                 # Ollama 公开注入点只接收 HTTPX 参数；无连接的包装传输借用公共池。
@@ -143,9 +147,35 @@ class LangChainProvider:
                     ]
                 )
             with tracing_context(enabled=False):
+                stage = "model_execute"
                 yield model, invoke_options, state
         except Exception as error:
-            raise map_model_error(error) from error
+            mapped = map_model_error(error)
+            if mapped.code == "AI_RESPONSE_INVALID":
+                trace = error.__traceback__
+                while trace is not None and trace.tb_next is not None:
+                    trace = trace.tb_next
+                source = (
+                    f"{trace.tb_frame.f_globals.get('__name__', 'unknown')}."
+                    f"{trace.tb_frame.f_code.co_name}:{trace.tb_lineno}"
+                    if trace is not None else "none"
+                )
+                # 上游事件名也不可信，只允许已知协议枚举进入日志，不记录异常正文或负载。
+                last_event = (state.last or {}).get("type")
+                if last_event not in (
+                    "response.failed", "response.incomplete", "error", "response.completed", None,
+                ):
+                    last_event = "other"
+                logger.warning(
+                    "模型响应处理失败：protocol=%s model_id=%s stage=%s code=%s "
+                    "error=%s cause=%s source=%s upstream_status=%s terminal=%s last_event=%s",
+                    self.protocol, call.resolved.model.id, stage, mapped.code,
+                    type(error).__name__,
+                    type(error.__cause__).__name__ if error.__cause__ else "none",
+                    source, state.response.status_code if state.response is not None else None,
+                    state.terminal, last_event or "none",
+                )
+            raise mapped from error
         finally:
             await http.aclose()
             await wire.aclose()

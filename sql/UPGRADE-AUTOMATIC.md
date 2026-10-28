@@ -19,6 +19,18 @@
 请先完成原版本升级说明中的模型身份、会话及记忆数据迁移；不能为了通过检测而手填版本号。
 当前版本不会自动执行 `sql/legacy/dispatch_chat_setting.sql` 等历史破坏性脚本。
 
+## Comfy 插件兼容选择（0.5.9）
+
+完整 0.5.5–0.5.9 起点通过结构核验后，先完成 B站结构步骤，再执行
+`2026-10-28-comfy-plugin.sql` / `2026-10-28-comfy-plugin.sqlite.sql`。
+该步骤无结构变化：仅旧 `chat_local_workflow_enabled=true` 时，在原有插件列表补入 `comfy`；
+列表缺失时保留原默认 `qqbot`，显式空列表只添加 `comfy`。变更同时增加配置 revision，
+工作流、默认选择、连接配置及密钥保留。新库默认不启用 Comfy。
+
+`comfy-plugin-v1` 流水保证只执行一次。用户以后停用不会被再次开启；
+不要脱离迁移流水重复手工执行这份数据 SQL。SQLite 与 MySQL 均在同一数据事务内更新，
+失败回滚并停止启动，不读取部分升级的运行配置。
+
 ## 版本、校验和与失败
 
 - `agent_bot_schema_version` 记录最终核验成功的程序版本；升级前后可查询该表核对。

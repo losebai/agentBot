@@ -6,7 +6,9 @@ const pendingState = { runningPlugins: new Set<string>() as ReadonlySet<string>,
   pluginsLoading: true, pluginsError: '' };
 
 // 独立配置页由本地组件明确实现，服务端目录不能让页面加载任意模块。
-export const pluginConfigurationLabels = { qqbot: 'QQ 配置', bilibili: 'B站配置' } as const;
+export const pluginConfigurationLabels = {
+  qqbot: 'QQ 配置', bilibili: 'B站配置', comfy: 'Comfy 配置',
+} as const;
 export type ConfigurablePlugin = keyof typeof pluginConfigurationLabels;
 
 /** 只有已实现配置组件的插件才提供配置跳转。 */

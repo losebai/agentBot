@@ -90,6 +90,9 @@ class AgentChatProbe:
         bilibili = getattr(self.service().tool_runtime, 'bilibili_tools', None)
         if bilibili is not None:
             names += tuple(sorted(bilibili.allowed_tools))
+        stickers = getattr(self.service().tool_runtime, "sticker_tools", None)
+        if stickers is not None:
+            names += tuple(sorted(stickers.allowed_tools))
         host = getattr(self.service().tool_runtime, 'host_tools', None)
         if host is not None:
             names += tuple(sorted(host.allowed_tools))

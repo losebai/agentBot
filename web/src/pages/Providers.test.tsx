@@ -42,10 +42,10 @@ it.each([false, true])('保存供应商后自动同步，无需二次导入；�
   fireEvent.change(screen.getByLabelText('API 密钥'), { target: { value: 'second-key' } });
   fireEvent.click(screen.getByRole('button', { name: '保存供应商' }));
   if (fail) {
-    expect(await screen.findByText(/供应商已保存.*获取失败/)).toBeVisible();
+    expect(await screen.findByText(/模型同步失败.*获取失败/)).toBeVisible();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     failDiscovery = false;
-    fireEvent.click(screen.getByRole('button', { name: '刷新模型' }));
+    fireEvent.click(screen.getByRole('tab', { name: /服务乙/ }));
   }
   expect(await screen.findByRole('switch', { name: '启用 same-model' })).not.toBeChecked();
   expect(screen.getByRole('switch', { name: '启用 other-model' })).not.toBeChecked();
@@ -80,13 +80,64 @@ it('模型同步版本冲突后刷新供应商信息，再次点击使用新版�
     return Response.json({ items: String(url).includes('/ai/providers?') ? [provider] : models, next_cursor: null });
   }));
   render(<Providers token="offline" />);
-  await waitFor(() => expect(screen.getByRole('button', { name: '刷新模型' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: '刷新模型' }));
   expect(await screen.findByRole('heading', { name: '已更新名称 的模型' })).toBeVisible();
   expect(await screen.findByText(/供应商配置已重新加载/)).toBeVisible();
   expect(revisions).toEqual([1]);
   expect(models).toHaveLength(0);
-  fireEvent.click(screen.getByRole('button', { name: '刷新模型' }));
+  fireEvent.click(screen.getByRole('tab', { name: /已更新名称/ }));
   expect(await screen.findByRole('switch', { name: '启用 fresh' })).not.toBeChecked();
   expect(revisions).toEqual([1, 2]);
+});
+
+it('每次选择供应商自动同步，同一供应商可再次选择且没有刷新模型按钮', async () => {
+  const reads: number[] = [];
+  const providers = [1, 2].map(id => ({ id, revision: 1, name: `供应商${id}`, protocol: 'ollama',
+    base_url: 'http://offline.invalid', credential_set: false, credential_available: true, enabled: true, description: '' }));
+  vi.stubGlobal('fetch', vi.fn(async url => {
+    const path = String(url);
+    if (path.includes('upstream-models')) {
+      const id = Number(path.split('/')[5]); reads.push(id);
+      return Response.json({ provider_id: id, revision: 1, models: [] });
+    }
+    return Response.json({ items: path.includes('/ai/providers?') ? providers : [], next_cursor: null });
+  }));
+  render(<Providers token="offline" />);
+  await waitFor(() => expect(reads).toEqual([1]));
+  expect(screen.queryByRole('button', { name: /刷新模型/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: /供应商2/ }));
+  await waitFor(() => expect(reads).toEqual([1, 2]));
+  fireEvent.click(screen.getByRole('tab', { name: /供应商2/ }));
+  await waitFor(() => expect(reads).toEqual([1, 2, 2]));
+});
+
+it('保存当前页供应商后立即使用新版本同步，不等待列表重读或使用旧快照', async () => {
+  let provider = { id: 1, revision: 1, name: '供应商', protocol: 'ollama', base_url: 'http://offline.invalid',
+    credential_set: false, credential_available: true, enabled: true, description: '' };
+  const revisions: number[] = [];
+  let finishList!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+    const path = String(url);
+    if (init?.method === 'PATCH') {
+      provider = { ...provider, revision: 2, name: '已修改' };
+      return Response.json(provider);
+    }
+    if (path.includes('upstream-models')) {
+      revisions.push(Number(new URL(path, 'http://offline.test').searchParams.get('expected_revision')));
+      return Response.json({ provider_id: 1, revision: provider.revision, models: [] });
+    }
+    if (path.includes('/ai/providers?')) {
+      if (provider.revision === 2) return new Promise<Response>(resolve => { finishList = resolve; });
+      return Response.json({ items: [provider], next_cursor: null });
+    }
+    return Response.json({ items: [], next_cursor: null });
+  }));
+  render(<Providers token="offline" />);
+  await waitFor(() => expect(revisions).toEqual([1]));
+  fireEvent.click(screen.getByRole('button', { name: '编辑供应商' }));
+  fireEvent.change(screen.getByLabelText('供应商名称'), { target: { value: '已修改' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存供应商' }));
+  await waitFor(() => expect(revisions).toHaveLength(2));
+  finishList(Response.json({ items: [provider], next_cursor: null }));
+  expect(revisions).toEqual([1, 2]);
+  expect(await screen.findByRole('heading', { name: '已修改 的模型' })).toBeVisible();
 });

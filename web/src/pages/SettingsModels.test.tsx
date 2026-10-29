@@ -78,7 +78,7 @@ it('目录读取失败明确报错，保留原别名和草稿，刷新恢复后�
   fireEvent.change(await screen.findByLabelText('系统提示词'), { target: { value: '未保存提示词' } });
   expect(await screen.findByText('模型列表读取失败：模型目录暂不可用')).toBeVisible();
   for (const [, label, value] of modelFields) expect(selectDisplay(screen.getByLabelText(label))).toHaveTextContent(value === 'retired-private' && reads > 1 ? '测试供应商 / retired-private（已停用）' : value);
-  fireEvent.click(screen.getByRole('button', { name: '刷新模型列表' }));
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '聊天模型' }));
   await waitFor(() => expect(screen.queryByText('模型列表读取失败：模型目录暂不可用')).not.toBeInTheDocument());
   expect(screen.queryByText('模型列表读取失败：模型目录暂不可用')).not.toBeInTheDocument();
   for (const [, label, value] of modelFields) expect(selectDisplay(screen.getByLabelText(label))).toHaveTextContent(value === 'retired-private' && reads > 1 ? '测试供应商 / retired-private（已停用）' : value);

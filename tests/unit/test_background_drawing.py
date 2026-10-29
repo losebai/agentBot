@@ -454,7 +454,8 @@ async def test_image_is_sent_before_llm_completion_and_requester_mention(
         assert bot.call_api.await_count == 1
         assert [part.type for part in bot.call_api.await_args.kwargs["message"]] == ["image"]
         assert args[0] != "qq_session_agent"
-        assert args[1] == "画一只猫"
+        assert "图片已生成并已发送" in args[1]
+        assert "画一只猫" not in args[1]
         assert "WORKFLOW_STATUS" in kwargs["instruction"]
         assert "completed" in kwargs["instruction"]
         assert kwargs["use_agent"] is True
@@ -595,11 +596,14 @@ async def test_completion_delivery_restart_reuses_llm_text_without_resending_ima
     workflow.generate.assert_awaited_once()
 
 
-@pytest.mark.parametrize("failure", [None, ChatAiUnavailableError("private detail")])
+@pytest.mark.parametrize("failure,text", [
+    (None, "  "), (ChatAiUnavailableError("private detail"), "  "),
+    (None, '"图没生成出来，我先用嘴给你描述一张吧"'),
+])
 async def test_completion_llm_failure_keeps_delivered_image_without_fixed_text(
-    monkeypatch, chat_plugin, image_stores, failure,
+    monkeypatch, chat_plugin, image_stores, failure, text,
 ) -> None:
-    """完成文案为空或模型失败时保留已送达图片，不发送固定成功或失败话术。"""
+    """完成文案为空、模型失败或否认实际成功时保留图片，不误报失败或重画。"""
 
     store = image_stores[1]
     monkeypatch.setattr(chat_plugin, "_redis_client", store._redis)
@@ -607,7 +611,7 @@ async def test_completion_llm_failure_keeps_delivered_image_without_fixed_text(
     monkeypatch.setattr(chat_plugin, "workflow_service", SimpleNamespace(generate=AsyncMock(
         return_value=GeneratedWorkflowImage(media_type="image/png", data=b"\x89PNG\r\n\x1a\nimage"),
     )))
-    completion = AsyncMock(return_value="  ", side_effect=failure)
+    completion = AsyncMock(return_value=text, side_effect=failure)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", completion)
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
@@ -619,9 +623,35 @@ async def test_completion_llm_failure_keeps_delivered_image_without_fixed_text(
     )
     await queue.process_entry(entry)
     assert await store.source_length() == 0
+    assert await store.dead_letter_length() == 0
+    chat_plugin.workflow_service.generate.assert_awaited_once()
     assert bot.call_api.await_count == 1
     assert [part.type for part in bot.call_api.await_args.kwargs["message"]] == ["image"]
     completion.assert_awaited_once()
+
+
+async def test_restored_false_completion_text_is_not_delivered(
+    monkeypatch, chat_plugin, image_stores,
+):
+    """重启前已缓存的错误完成文案也不再发送，不重新调用模型或重画已送达图片。"""
+    monkeypatch.setattr(chat_plugin, "_redis_client", image_stores[1]._redis)
+    operation_store = RedisToolOperationStore(
+        image_stores[1]._redis, key_prefix=chat_plugin._redis_bootstrap.key_prefix,
+        ttl_seconds=60,
+    )
+    job = background_job()
+    signature = hashlib.sha256(job.request_id.encode("utf-8")).hexdigest()
+    await operation_store.begin(job.job_id, "image_completion_reply", signature)
+    await operation_store.complete(job.job_id, "image_completion_reply", signature,
+                                   ReplyEffect(text="图没生成出来，我先描述一张吧"))
+    completion = AsyncMock()
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", completion)
+    bot = onebot_mock()
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
+    processor = chat_plugin._ConversationProcessor()
+    await processor._deliver_image_completion(job)
+    bot.call_api.assert_not_awaited()
+    completion.assert_not_awaited()
 
 
 async def test_slow_completion_llm_does_not_block_same_session_chat(

@@ -20,10 +20,11 @@ export function selectedModel(models: AiModel[], value: string) {
 
 /** 供应商分组和搜索共用完整名称，同名上游模型仍以记录 ID 区分。 */
 export function ModelSelect({ id, models, value, onChange, disabled, loading, placeholder = '选择模型',
-  nullable = false, numeric = false, vision = false, required = false, describedBy, ariaLabel }: {
+  nullable = false, numeric = false, vision = false, required = false, describedBy, ariaLabel, onOpen }: {
   id?: string; models: AiModel[]; value: string | number | null; onChange: (value: string | number | null) => void;
   disabled?: boolean; loading?: boolean; placeholder?: string; nullable?: boolean; numeric?: boolean;
   vision?: boolean; required?: boolean; describedBy?: string; ariaLabel?: string;
+  onOpen?: () => void;
 }) {
   const selected = numeric ? models.find(model => model.id === value) : selectedModel(models, String(value ?? ''));
   const generatedId = useId();
@@ -35,7 +36,7 @@ export function ModelSelect({ id, models, value, onChange, disabled, loading, pl
     if (!groups.has(model.provider_id)) groups.set(model.provider_id, { label: model.provider_name, options: [] });
     groups.get(model.provider_id)!.options.push({ value: numeric ? model.id : model.reference,
       label: `${model.provider_name} / ${model.upstream_model}`,
-      disabled: vision && !model.media?.vision_enabled, search: `${model.provider_name} ${model.upstream_model}` });
+      disabled: !!loading || vision && !model.media?.vision_enabled, search: `${model.provider_name} ${model.upstream_model}` });
   }
   const options = [...groups.values()];
   if (current && !selected) {
@@ -50,6 +51,7 @@ export function ModelSelect({ id, models, value, onChange, disabled, loading, pl
   return <span ref={root} className="choice-control"><Select id={id ?? generatedId} className="model-select" value={current} disabled={disabled} loading={loading}
     showSearch allowClear={nullable} placeholder={placeholder} aria-required={required || undefined}
     aria-label={ariaLabel} aria-describedby={describedBy} options={options} virtual={false}
+    onOpenChange={open => { if (open) onOpen?.(); }}
     filterOption={(search, option) => !!option && 'search' in option && typeof option.search === 'string' && option.search.toLowerCase().includes(search.toLowerCase())}
     onChange={next => onChange(next ?? (numeric ? null : ''))} /></span>;
 }

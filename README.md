@@ -119,6 +119,18 @@ QQ 对话会把当前插件已授予的 B站工具传入 Agent，不再被聊天
 
 同一请求相同参数的成功写操作会返回已保存结果；最终发布响应丢失、无效或 HTTP 5xx 时保留待核对记录，不自动重发。结果未知时请先去 B站动态、投稿管理或评论区核对。平台额外验证、限流和权限错误会直接报告。本功能自动验证使用离线 HTTP / 数据库替身，真实扫码及账号发布需要在用户自己的账号验收。
 
+### 表情包插件
+
+在“插件管理 → 插件中心”启用“表情包”并手动重启后端，然后进入“表情包配置”。插件默认停用；普通QQ用户只能检索和发送已启用条目，图库上传、标签和元数据维护仅允许通过已认证的管理页面操作。
+
+支持PNG、JPEG、WEBP、GIF，单张不超过10MiB，支持GIF、WEBP和PNG动画。类型以实际解码结果为准，不因文件后缀或浏览器声明错误拒绝合法图片。原件保留动画；识图仅使用独立生成的静态代表帧预览。可维护名称、自定义标签、画面含义、情绪、适用场景，并单独停用、删除或重新识图。自定义标签最多16个，每个1–32字符，识图不会覆盖管理员标签；修改和重新识图均校验条目修订，冲突后保留草稿并重新加载。
+
+“表情包视觉与语境检索模型”可独立选择现有供应商目录中已启用的视觉模型。自定义Provider地址、协议和密钥仍在“供应商与模型”中保存，不读取环境变量，也不借用聊天模型。上传会先保存原件；已配置模型时自动识图，识图失败明确保留失败状态，管理员可重试。未配置模型时允许先上传并人工维护说明和标签。
+
+机器人可按对话语气自主调用 `sticker_search` 检索，再调用 `sticker_send` 选择本轮推荐的一张表情包，无须用户明确说“发图”。语境匹配使用同一独立模型读取已保存的说明、情绪、场景和标签，不反复上传原图；图库较大时分批遍历并共用总超时。没有合适结果时不随机发图。使用命名Agent时须勾选这两项工具，QQ聊天MCP须启用；管理页也可试用语境检索。
+
+QQ发送使用现有持久图片投递链，动图不会转换成静态图，也不会作为聊天模型的视觉输入。表情包原件和预览放在 `AGENT_BOT_MEDIA_DIRECTORY` 下的 `stickers/` 子目录，不随发布包分发。新库完整初始化及既有库自动迁移均包含 `stickers-v1`；升级沿用所选SQLite/MySQL，不重建已有库或覆盖密钥，详情见[自动升级说明](sql/UPGRADE-AUTOMATIC.md)。
+
 ## 机器人主人与配置工具
 
 在“插件管理 → QQ 配置”中填写 `superusers`（机器人主人 QQ 号列表），格式如 `["123456789"]`，保存后手动重启后端。空列表不授权任何人。主人身份由真实 QQ 消息和服务端工具会话验证，聊天中的昵称、自称主人或模型参数不能授予权限。
@@ -158,15 +170,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1
 ```
 
 脚本读取项目版本，完成测试、安装器与 SQL 包构建、上传校验及公网验证。
-也可加 `-Version 0.5.10` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.5.10.md`。
+也可加 `-Version 0.5.11` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.5.11.md`。
 参数与环境要求见 [发布说明](deploy/README.md#一键构建并发布)。
 
-当前 Windows 发布版本：**0.5.10**。后续安装与更新以下载站的
+当前 Windows 发布版本：**0.5.11**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。
 
-0.5.10 更新：拆分插件配置、将 Comfy 独立为插件，增加素材分类和标签、调用记录页码分页，改进回复解析及 B站凭据保护。
-从 0.5.9 更新前停服备份，启动时自动执行 Comfy 插件选择和素材分类增量；详见 [0.5.10 升级说明](sql/UPGRADE-0.5.10.md)。
-[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.10-sql.zip) 同时提供完整初始化与历史适用增量。
+0.5.11 更新：Agent 管理改为内联编辑，新增独立人格、本机目录与终端工具，以及表情包图库插件。
+从 0.5.10 更新前停服备份，启动时自动执行人格字段和表情包表增量；详见 [0.5.11 升级说明](sql/UPGRADE-0.5.11.md)。
+[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.11-sql.zip) 同时提供完整初始化与历史适用增量。
 
 适用于 Windows 10/11 x64，无需安装 Python、uv 或 Node.js。
 
@@ -539,7 +551,7 @@ Windows 独立桌面版可执行 `powershell -ExecutionPolicy Bypass -File tools
 ```powershell
 npm --prefix web run build
 uv build
-uv run python tools/check_package.py dist/agent_bot-0.5.10-py3-none-any.whl
+uv run python tools/check_package.py dist/agent_bot-0.5.11-py3-none-any.whl
 ```
 
 wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行模块、静态界面和 SQL 资源，并排除凭据、缓存、日志及媒体文件。
@@ -548,7 +560,7 @@ wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行�
 
 ```powershell
 uv venv --python 3.12
-uv pip install "D:\packages\agent_bot-0.5.10-py3-none-any.whl"
+uv pip install "D:\packages\agent_bot-0.5.11-py3-none-any.whl"
 .venv\Scripts\agent-bot.exe --help
 ```
 

@@ -103,6 +103,11 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
                     "vision_model_id BIGINT UNSIGNED NULL DEFAULT NULL,"
                     "fallback_model_id BIGINT UNSIGNED NULL DEFAULT NULL,",
                 )
+                # 人格增量新增独立字段，不能通过删除既有角色列来满足结构比较。
+                expected = expected.replace(
+                    'CONSTRAINT fk_agent_model',
+                    'personality_prompt MEDIUMTEXT NOT NULL,CONSTRAINT fk_agent_model',
+                )
                 expected += (
                     ",CONSTRAINT fk_agent_vision_model FOREIGN KEY(vision_model_id)"
                     "REFERENCES agent_bot_ai_model(id),"
@@ -137,6 +142,7 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
         "chat_memory_operation", "chat_memory_embedding",
         "agent_bot_bilibili_account", "agent_bot_bilibili_operation",
         "agent_bot_schema_version", "agent_bot_schema_migration",
+        "chat_material_category", "chat_material_tag", "agent_bot_sticker",
     }
     # 插件既有库增量和新库完整脚本必须得到相同字段、默认值及约束。
     bilibili = definitions((ROOT / 'sql/bilibili-init.sql').read_text('utf-8'))
@@ -145,6 +151,9 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
     versioning = definitions((ROOT / 'sql/startup-versioning.sql').read_text('utf-8'))
     for name, declarations in versioning.items():
         assert normalized(','.join(tables[name])) == normalized(','.join(declarations)), name
+    for filename in ('material-classification.sql', 'stickers-init.sql'):
+        for name, declarations in definitions((ROOT / 'sql' / filename).read_text('utf-8')).items():
+            assert normalized(','.join(tables[name])) == normalized(','.join(declarations)), name
     from agent_bot.memory.schema import MYSQL_ADDITIONAL
 
     # 新辅助表同样核对完整字段、主键、来源索引和外键，不能只增加预期表数量。

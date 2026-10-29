@@ -13,7 +13,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 from agent_bot.models import ChatContext
 from agent_bot.services.chat import ChatService
 from agent_bot.services.multi_reply import join_reply_array
-from agent_bot.services.reply_text import clean_internal_reply_text, contains_tool_call_markup
+from agent_bot.services.reply_text import (
+    clean_internal_reply_text,
+    contains_tool_call_markup,
+    contradicts_image_completion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +248,7 @@ class LlmReplyComposer:
         self._semaphore = asyncio.Semaphore(4)
 
     async def compose(self, intent: ReplyIntent) -> GeneratedReply | None:
-        """通知生成后先解码 JSON 正文，再交给单条投递和缓存；无效输出保持静默。"""
+        """成功通知只表达既定事实，不重放原请求；矛盾或无效文案不交给投递和缓存。"""
 
         if self._semaphore.locked():
             logger.warning(
@@ -254,13 +258,21 @@ class LlmReplyComposer:
             )
             return None
         stage = "model"
+        image_completed = (
+            isinstance(intent.facts, WorkflowStatusFacts) and intent.facts.status == "completed"
+        )
         try:
             # asyncio 的未锁定 acquire 不会挂起；检查和占用之间没有让出执行权。
             async with self._semaphore:
                 text = await asyncio.wait_for(
                     self._chat_service_provider().generate_reply_queued(
                         intent.session_id,
-                        intent.original_prompt or "请根据已确定事实回复用户。",
+                        (
+                            "图片已生成并已发送给用户。请按人设简短表达绘图完成，"
+                            "只做成功通知，不描述失败或等待，不重新执行或判断原画图请求。"
+                            if image_completed
+                            else intent.original_prompt or "请根据已确定事实回复用户。"
+                        ),
                         request_id=intent.request_id,
                         instruction=self._prompt_builder.build(intent),
                         untrusted_facts=(
@@ -284,6 +296,8 @@ class LlmReplyComposer:
                 normalized = join_reply_array(text).strip() if text is not None else ""
                 if not normalized:
                     return None
+                if image_completed and contradicts_image_completion(normalized):
+                    raise ValueError("image completion text contradicts confirmed delivery")
                 return GeneratedReply(text=normalized, requestId=intent.request_id)
         except asyncio.CancelledError:
             raise

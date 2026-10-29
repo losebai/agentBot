@@ -24,6 +24,7 @@ HISTORY_TABLE = "agent_bot_schema_migration"
 METADATA_TABLES = frozenset({VERSION_TABLE, HISTORY_TABLE})
 MATERIAL_CLASSIFICATION_TABLES = frozenset({"chat_material_category", "chat_material_tag"})
 BILIBILI_TABLES = frozenset({"agent_bot_bilibili_account", "agent_bot_bilibili_operation"})
+STICKER_TABLES = frozenset({"agent_bot_sticker"})
 
 
 class UpgradeError(SettingsError):
@@ -49,6 +50,7 @@ MIGRATIONS = (
               "material-classification.sqlite.sql", True),
     Migration("0.5.10", "agent-personality-v1", "agent-personality.sql",
               "agent-personality.sqlite.sql", True),
+    Migration("0.5.10", "stickers-v1", "stickers-init.sql", "stickers-init.sqlite.sql", True),
 )
 
 
@@ -286,7 +288,8 @@ def upgrade_database(
                     }
                     _validate(
                         actual, baseline,
-                        exclude=METADATA_TABLES | BILIBILI_TABLES | MATERIAL_CLASSIFICATION_TABLES,
+                        exclude=(METADATA_TABLES | BILIBILI_TABLES | MATERIAL_CLASSIFICATION_TABLES
+                                 | STICKER_TABLES),
                     )
                     _validate_model_baseline(connection, params.backend)
                 if not METADATA_TABLES <= actual.keys():

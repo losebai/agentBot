@@ -150,10 +150,14 @@ class OutgoingRecorder:
     async def _material(
         self, scope: DeliveryScope, data: bytes, mime: str, name: str,
     ) -> Any:
-        """先归档真实会话的原件，平台发送失败或回执未知时不能标记已发送。"""
+        """先归档真实原件；出站动图走独立逐帧校验，平台失败不能标记已发送。"""
+        options = (
+            {"allow_animation": True} if mime in {"image/gif", "image/webp", "image/png"} else {}
+        )
         return await self.materials_provider().put(
             owner=MediaOwner(entry="qq", session_id=scope.session_id),
             name=name, mime_type=mime, data=data,
+            **options,
         )
 
     async def _mark_sent(self, scope: DeliveryScope, ids: Iterable[str]) -> None:

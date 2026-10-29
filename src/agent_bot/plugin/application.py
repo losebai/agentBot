@@ -351,12 +351,18 @@ if _context is not None:
 
 
 def _plugin_tool_names() -> tuple[ChatToolName, ...]:
-    """只有宿主已启动的 B站服务提供工具；停用时不沿用配置列表授予能力。"""
-    if _context is None or _context.runtime.bilibili_service is None:
+    """宿主实时服务授予B站及表情工具，停用插件不能沿用保存的启用列表。"""
+    if _context is None:
         return ()
     from agent_bot.plugins.bilibili.contracts import BILIBILI_TOOLS
+    from agent_bot.plugins.stickers.tool_contracts import STICKER_TOOLS
 
-    return tuple(sorted(BILIBILI_TOOLS))
+    names = set()
+    if _context.runtime.bilibili_service is not None:
+        names.update(BILIBILI_TOOLS)
+    if getattr(_context.runtime, "sticker_service", None) is not None:
+        names.update(STICKER_TOOLS)
+    return tuple(sorted(names))
 
 
 _tool_session_manager = ChatToolSessionManager(

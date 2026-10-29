@@ -70,6 +70,7 @@ def build_core_state(
     chat_bridge: ChatToolBridge | None = None,
     knowledge_store: KnowledgeStore | None = None,
     bilibili_tools=None,
+    sticker_tools=None,
     comfy_resources: ComfyResources | None = None,
     comfy_owner: ComfyPlugin | None = None,
 ) -> CoreRuntimeState:
@@ -144,6 +145,7 @@ def build_core_state(
                 mcp_connector,
                 chat_tool_bridge,
                 bilibili_tools=bilibili_tools,
+                sticker_tools=sticker_tools,
                 # 配置热刷新会排空旧请求再发布新核心，调用始终复核本代主人集合。
                 host_tools=HostTools(lambda: config.superusers),
                 knowledge_store=(knowledge_store if knowledge_store is not None else

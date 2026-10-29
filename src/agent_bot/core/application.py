@@ -140,6 +140,7 @@ class ApplicationRuntime:
         self._bridge: ChatToolBridge | None = None
         # 插件独立持有此服务，工具提供者在每次调用读取当前值。
         self.bilibili_service = None
+        self.sticker_service = None
         self.comfy_plugin = None
         self.standalone_plugin_id: str | None = None
         self._participant: RuntimeRefreshParticipant | None = None
@@ -199,6 +200,7 @@ class ApplicationRuntime:
     ) -> CoreRuntimeState:
         """媒体和存储按进程共享，只有调用客户端随配置替换。"""
         from agent_bot.plugins.bilibili.tools import BilibiliTools
+        from agent_bot.plugins.stickers.tools import StickerTools
 
         return build_core_state(
             config,
@@ -213,6 +215,7 @@ class ApplicationRuntime:
             bilibili_tools=BilibiliTools(
                 lambda: self.bilibili_service, lambda: self.config.superusers,
             ),
+            sticker_tools=StickerTools(lambda: self.sticker_service),
         )
 
     async def _build_candidate(self, config: RuntimeConfig) -> CoreRuntimeState:

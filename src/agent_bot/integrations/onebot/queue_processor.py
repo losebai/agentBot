@@ -57,7 +57,7 @@ from agent_bot.services.replies import (
     TaskFailedFacts,
     WorkflowStatusFacts,
 )
-from agent_bot.services.reply_text import clean_internal_reply_text
+from agent_bot.services.reply_text import clean_internal_reply_text, contradicts_image_completion
 from agent_bot.services.tool_images import capture_tool_images, current_tool_images
 from agent_bot.services.tool_operations import (
     ImageEffect,
@@ -619,7 +619,7 @@ class ConversationQueueProcessor:
         )
 
     async def _deliver_image_completion(self, job: ConversationJob) -> None:
-        """图片送达后通知原创建人；保存模型文案供重试复用，群聊始终原生 @。"""
+        """图片送达后通知原创建人；重用前复核缓存文案，错误通知不能变成任务失败。"""
 
         store = self._operation_store_provider()
         signature = hashlib.sha256(job.request_id.encode("utf-8")).hexdigest()
@@ -640,6 +640,12 @@ class ConversationQueueProcessor:
             await store.complete(job.job_id, "image_completion_reply", signature, saved)
         if not isinstance(saved, ReplyEffect):
             raise ChatAiProtocolError("image completion reply is invalid")
+        # 升级前可能已经缓存了错误文案；跳过通知，不重画、不重发图片或改写完成状态。
+        if contradicts_image_completion(saved.text):
+            logger.warning(
+                "绘图完成通知跳过：request_id=%s category=contradictory_text", request_id,
+            )
+            return
         if (execution := active_image_task.get()) is not None:
             await execution.check_cancelled()
         await self._reply_gateway.send_bot_exact_part(

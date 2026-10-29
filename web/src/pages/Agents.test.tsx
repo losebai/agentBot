@@ -204,7 +204,7 @@ it('模型翻页保留已选 ID，刷新失败明确报错而不把未知状态�
   }
   expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent(/90|测试供应商 \/ qwen/);
   failed = true;
-  fireEvent.click(screen.getByRole('button', { name: '刷新模型状态' }));
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '聊天模型' }));
   expect(await screen.findByText(/模型列表读取失败：目录暂时不可用/)).toBeVisible();
   expect(screen.queryByRole('option', { name: /停用/ })).not.toBeInTheDocument();
   expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent(/90|测试供应商 \/ qwen/);

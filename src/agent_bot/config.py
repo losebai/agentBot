@@ -332,6 +332,11 @@ class PluginConfig(BaseModel):
         le=300,
     )
 
+    # 表情视觉与语境匹配使用同一独立目录模型，未选择时不借用聊天模型。
+    chat_sticker_model: str = Field(default="", max_length=255)
+    chat_sticker_vision_prompt: str = Field(default="", max_length=4000)
+    chat_sticker_timeout_seconds: float = Field(default=60, gt=0, le=300, allow_inf_nan=False)
+
     @field_validator("chat_mcp_services", "chat_mcp_allowed_hosts", mode="before")
     @classmethod
     def parse_mcp_json_lists(cls, value: object) -> object:
@@ -790,6 +795,9 @@ class RuntimeConfig(PluginConfig):
 
 
 CONFIG_DESCRIPTIONS: dict[str, str] = {
+    "chat_sticker_model": "表情包视觉与语境检索模型",
+    "chat_sticker_vision_prompt": "表情包自定义识图要求",
+    "chat_sticker_timeout_seconds": "表情包识图与检索超时 (秒)",
     "app_enabled_plugins": "启用的内置插件 (重启生效)",
     "agent_bot_napcat_mode": "NapCat 静态模式 (插件启动仅作用于当前实例)",
     "agent_bot_napcat_webui_port": "NapCat 登录页端口 (启动配置，重启生效)",

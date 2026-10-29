@@ -49,7 +49,7 @@ class ToolRuntime:
 
     def __init__(self, connector, chat_bridge=None, reader=None, *, admin_media_tools=None,
                  job_tools=None, knowledge_store=None, material_store=None, media_store=None,
-                 bilibili_tools=None, host_tools=None):
+                 bilibili_tools=None, host_tools=None, sticker_tools=None):
         """本地适配器引用当前运行时的客户端与任务存储。"""
         self.connector, self.chat_bridge = connector, chat_bridge
         self.reader = reader or PublicPageReader()
@@ -59,6 +59,7 @@ class ToolRuntime:
         self.material_store = material_store
         self.media_store = media_store
         self.bilibili_tools = bilibili_tools
+        self.sticker_tools = sticker_tools
         self.host_tools = host_tools
 
     @asynccontextmanager
@@ -117,6 +118,16 @@ class ToolRuntime:
                 for definition in session.definitions:
                     if definition.name in handlers:
                         raise AgentError('AGENT_TOOL_NAME_CONFLICT', status_code=409)
+                    definitions.append(definition)
+                    handlers[definition.name] = session.call
+            if self.sticker_tools is not None:
+                # 表情原件只交给可信会话的附件投递，不加入聊天模型视觉输入。
+                session = self.sticker_tools.bind(
+                    request, authority, media_scope, self.media_store, self.chat_bridge,
+                )
+                for definition in session.definitions:
+                    if definition.name in handlers:
+                        raise AgentError("AGENT_TOOL_NAME_CONFLICT", status_code=409)
                     definitions.append(definition)
                     handlers[definition.name] = session.call
             if self.host_tools is not None:

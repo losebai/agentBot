@@ -1,8 +1,9 @@
-import { Alert, Button, Spin } from 'antd';
+import { Alert, Button, Spin, Tabs } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { BilibiliPlugin } from '../components/BilibiliPlugin';
 import { NapCatPlugin } from '../components/NapCatPlugin';
+import { StickerPlugin } from '../components/StickerPlugin';
 import { isPluginRunning, pluginConfigurationLabels } from '../plugin-runtime';
 import type { ConfigurablePlugin } from '../plugin-runtime';
 import type { PluginInfo } from '../types';
@@ -18,6 +19,7 @@ export function PluginConfiguration({ token, pluginId, active = true }: {
   const [activationValidated, setActivationValidated] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [stickerTab, setStickerTab] = useState('list');
   useEffect(() => {
     if (!active) { setActivationValidated(false); return; }
     const controller = new AbortController();
@@ -48,6 +50,17 @@ export function PluginConfiguration({ token, pluginId, active = true }: {
         ? <Alert type="info" showIcon message="插件未运行，请在插件中心启用并手动重启后端。" />
         : pluginId === 'bilibili' ? active && activationValidated
           && <div className="settings-card"><BilibiliPlugin api={api} enabled /></div>
+          : pluginId === 'stickers'
+            ? <div hidden={!activationValidated}>
+              {/* 配置面板首次打开才加载，之后保留草稿；离开列表卸载图库以取消媒体与上传请求。 */}
+              <Tabs activeKey={stickerTab} onChange={setStickerTab} items={[
+                { key: 'list', label: '列表', children: active && activationValidated
+                  && stickerTab === 'list' && <StickerPlugin token={token} /> },
+                { key: 'config', label: '配置', children: <Settings token={token}
+                  categoryKeys={['stickers']} embedded
+                  active={active && activationValidated && stickerTab === 'config'} /> },
+              ]} />
+            </div>
           : pluginId === 'comfy'
             ? <div hidden={!activationValidated}><Settings token={token} categoryKeys={['comfy']} embedded
               active={active && activationValidated} /></div>

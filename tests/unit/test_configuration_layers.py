@@ -15,6 +15,16 @@ from agent_bot.database import connect_database, initialize_database
 from agent_bot.settings import DatabaseParams, SettingsRevisionConflictError, SettingsStore
 
 
+@pytest.fixture
+def source_sql_resources(monkeypatch):
+    """配置测试使用本次源码SQL，发布资源布局另由真实wheel隔离安装测试验证。"""
+    directory = Path(__file__).resolve().parents[2] / "sql"
+    monkeypatch.setattr(
+        "agent_bot.database_upgrade.read_sql_resource",
+        lambda name: (directory / name).read_text(encoding="utf-8"),
+    )
+
+
 def config(**values) -> RuntimeConfig:
     """使用不同的测试密钥构造有效快照。"""
     return RuntimeConfig(
@@ -122,7 +132,7 @@ def test_concurrent_revision_writers_do_not_overwrite_each_other(tmp_path: Path)
 
 
 def test_startup_static_environment_and_database_dynamic_values(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, source_sql_resources,
 ) -> None:
     """启动只读取静态环境，动态环境不能覆盖已保存模型。"""
     from agent_bot.bootstrap import load_startup_settings
@@ -145,7 +155,7 @@ def test_startup_static_environment_and_database_dynamic_values(
 
 
 def test_onebot_connection_addresses_load_from_database_not_environment(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path, monkeypatch, source_sql_resources,
 ) -> None:
     """正向 WS 和 HTTP 地址由数据库保存，旧环境中的空地址不能清除已保存连接。"""
     from agent_bot.bootstrap import load_startup_settings

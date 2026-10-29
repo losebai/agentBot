@@ -30,7 +30,7 @@ export function Models({ token, provider, onReloadProvider }: {
     const current = new AbortController();
     controller.current = current;
     setBusy(true); setError('');
-    void readPage(current.signal)
+    void (cursor ? readPage(current.signal) : sync(current.signal))
       .catch(failure => { if (!current.signal.aborted) setError(errorMessage(failure)); })
       .finally(() => { if (!current.signal.aborted) setBusy(false); });
     return () => current.abort();
@@ -43,7 +43,7 @@ export function Models({ token, provider, onReloadProvider }: {
       && onReloadProvider && !signal.aborted) {
       try {
         await onReloadProvider(signal);
-        message += '。供应商配置已重新加载，请确认后再次刷新模型';
+        message += '。供应商配置已重新加载，请确认后重新选择该供应商';
       } catch (refreshFailure) {
         message += '；供应商读取失败：' + errorMessage(refreshFailure);
       }
@@ -51,24 +51,22 @@ export function Models({ token, provider, onReloadProvider }: {
     return message;
   }
 
-  /** 刷新自动同步全部上游模型；部分批次已保存时仍显示实际目录，并保留失败提示。 */
-  async function sync() {
-    const current = controller.current;
-    if (busy || !current || current.signal.aborted) return;
-    setBusy(true); setError(''); setNotice('');
+  /** 选择供应商或返回首页时自动同步；失败仍读取已保存目录，不自动重试写入。 */
+  async function sync(signal: AbortSignal) {
+    setNotice('');
     let failureMessage = '';
     try {
-      const result = await api.syncModels(provider.id, provider.revision, current.signal);
-      if (!current.signal.aborted) {
+      const result = await api.syncModels(provider.id, provider.revision, signal);
+      if (!signal.aborted) {
         setNotice('已检查 ' + result.total + ' 个上游模型，新增 ' + result.added + ' 个。新模型默认停用。');
       }
     } catch (failure) {
-      failureMessage = '模型同步失败：' + await syncFailure(failure, current.signal) + '。已保存的模型会保留。';
+      failureMessage = '模型同步失败：' + await syncFailure(failure, signal) + '。已保存的模型会保留。';
     }
-    if (current.signal.aborted) return;
-    try { await readPage(current.signal); }
+    if (signal.aborted) return;
+    try { await readPage(signal); }
     catch (failure) { failureMessage += ' 列表读取失败：' + errorMessage(failure); }
-    if (!current.signal.aborted) { setError(failureMessage); setBusy(false); }
+    if (!signal.aborted) { setError(failureMessage); setBusy(false); }
   }
 
   /** 仅提交目标字段及版本；冲突重新读取状态，不以失败操作覆盖数据库配置。 */
@@ -82,7 +80,7 @@ export function Models({ token, provider, onReloadProvider }: {
         setPage(value => ({
           ...value, items: value.items.map(model => model.id === saved.id ? saved : model),
         }));
-        if (changes.media) setNotice('媒体能力配置已保存。回到 Agent 管理后点击“刷新模型状态”即可选择。');
+        if (changes.media) setNotice('媒体能力配置已保存。重新打开模型选择框即可获取最新状态。');
       }
     } catch (failure) {
       let message = errorMessage(failure);
@@ -110,8 +108,7 @@ export function Models({ token, provider, onReloadProvider }: {
 
   return <div className="provider-models">
     <div className="page-heading"><div><p className="eyebrow">MODEL CATALOG</p>
-      <h2>{provider.name} 的模型</h2><p>{provider.protocol} · {provider.base_url}</p></div>
-      <Button loading={busy} onClick={() => void sync()}>刷新模型</Button></div>
+      <h2>{provider.name} 的模型</h2><p>{provider.protocol} · {provider.base_url}</p></div></div>
     {error && <Alert className="notice" showIcon type="error" message={error} />}
     {notice && <Alert className="notice" showIcon type="success" message={notice} />}
     <p className="field-help">“图片理解”开关会立即保存。请为供应商实际支持识图的模型开启，并同时启用模型与供应商。</p>
@@ -133,7 +130,7 @@ export function Models({ token, provider, onReloadProvider }: {
         <option value="none">不启用</option><option value="gpt-image">GPT Image</option>
         <option value="legacy-b64">兼容 Base64（PNG）</option>
       </ChoiceSelect></td>
-    </tr>)}</tbody></table>{!page.items.length && <p className="empty-list">{busy ? '正在加载模型…' : '暂无模型，点击“刷新模型”获取供应商的全部模型。'}</p>}</div>
+    </tr>)}</tbody></table>{!page.items.length && <p className="empty-list">{busy ? '正在加载模型…' : '暂无模型。每次选择供应商时自动同步全部模型。'}</p>}</div>
     <div className="catalog-pagination">
       <Button disabled={!previous.length || busy} onClick={() => { setCursor(previous.at(-1)); setPrevious(previous.slice(0, -1)); }}>上一页</Button>
       <Button disabled={!page.next_cursor || busy} onClick={() => { setPrevious([...previous, cursor]); setCursor(page.next_cursor!); }}>下一页</Button>

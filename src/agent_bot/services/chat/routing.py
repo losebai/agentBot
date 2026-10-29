@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from agent_bot.agent.tools.host_contracts import HOST_TOOLS
 from agent_bot.models import ChatToolName
 from agent_bot.plugins.bilibili.contracts import BILIBILI_TOOLS
+from agent_bot.plugins.stickers.tool_contracts import STICKER_TOOLS
 
 _NARAKA_REQUEST = re.compile(r"永劫|战绩|段位|角色\s*ID|玩家|naraka", re.IGNORECASE)
 
@@ -54,6 +55,7 @@ class ChatRouteSelector:
         )
         # B站工具由插件生命周期和会话授权提供，不能被旧的固定工具名单提前过滤。
         selected.update(BILIBILI_TOOLS)
+        selected.update(STICKER_TOOLS)
         # 仅保留入口已批准的宿主能力，定义由 HostTools 提供而非 Chat MCP 注册表。
         selected.update(HOST_TOOLS)
         tools = tuple(tool for tool in dict.fromkeys(available_tools) if tool in selected)

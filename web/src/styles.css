@@ -406,6 +406,39 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 /* 插件页沿用外层标题，表单仅保留工具栏；单分类不再占用重复导航列。 */
 .settings-toolbar { display: flex; justify-content: flex-end; margin-bottom: 16px; }
 .settings-layout-single { grid-template-columns: minmax(0, 1fr); }
+/* 图库按卡片浏览，预览固定尺寸避免加载跳动；原件独立展示保留动画。 */
+.sticker-library { margin-top: 28px; }
+.sticker-trial { padding: 20px; margin: 18px 0; }
+.sticker-upload-title { display: block; cursor: move; user-select: none; }
+.sticker-dropzone { display: grid; gap: 12px; padding: 20px; margin: 16px 0; border: 1px dashed var(--border); border-radius: 8px; background: #f8f8fb; }
+.sticker-dropzone.is-over { border-color: #7471d8; background: #efedff; }
+.sticker-dropzone label { display: grid; gap: 8px; }
+.sticker-dropzone small { color: var(--text-secondary); }
+.sticker-upload-queue { display: grid; gap: 12px; max-height: 320px; overflow-y: auto; }
+.sticker-upload-item { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.sticker-upload-item > span { color: var(--text-secondary); font-size: 12px; }
+.sticker-upload-item > .ant-tag, .sticker-upload-item > .ant-btn { justify-self: start; }
+.sticker-upload-item p { margin: 0; }
+.sticker-form { display: grid; gap: 12px; border: 0; padding: 0; min-width: 0; }
+.sticker-form legend { font-size: 16px; font-weight: 600; margin-bottom: 14px; }
+.sticker-form label { display: grid; gap: 6px; font-size: 13px; }
+.sticker-form input:not([type=checkbox]), .sticker-form textarea { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: inherit; background: white; }
+.sticker-form textarea { resize: vertical; }
+.sticker-form .sticker-enabled { display: flex; align-items: center; gap: 8px; }
+.sticker-form > .ant-btn { justify-self: start; }
+.sticker-form small { color: var(--text-secondary); }
+.sticker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 16px; }
+.sticker-card { padding: 16px; min-width: 0; }
+.sticker-card h3 { margin: 14px 0 8px; overflow-wrap: anywhere; }
+.sticker-preview { height: 180px; display: grid; place-items: center; background: #f8f8fb; border-radius: 8px; overflow: hidden; }
+.sticker-preview img { max-width: 100%; max-height: 180px; object-fit: contain; }
+.sticker-original { display: grid; justify-items: center; gap: 12px; margin: 12px 0; }
+.sticker-original img { max-width: 100%; max-height: 360px; object-fit: contain; }
+.sticker-description { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 3em; }
+.sticker-analysis-error { color: #b94b4b; overflow-wrap: anywhere; }
+.sticker-pagination { justify-content: flex-end; align-items: center; margin-top: 16px; }
+.sticker-match { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 16px; }
+.sticker-match > span { margin-left: 12px; color: var(--text-secondary); }
 @media (max-width: 700px) {
   .plugin-navigation { display: flex; flex: 0 0 auto; align-items: center; }
   .plugin-navigation > button { width: auto; }

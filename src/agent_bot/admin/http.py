@@ -44,6 +44,7 @@ class ManagementMiddleware:
 
         is_upload = scope["method"] == "POST" and scope["path"] in {
             "/api/v1/media/uploads", "/api/v1/materials/uploads",
+            "/api/v1/stickers/uploads",
         }
         is_workflow_import = (
             scope["method"] == "POST" and scope["path"] == "/api/v1/workflows/import"

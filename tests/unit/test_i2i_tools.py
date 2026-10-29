@@ -10,6 +10,7 @@ from test_workflow_inputs import i2i_definition, uploaded_image
 
 from agent_bot.services.chat_tools import (
     ChatToolContext,
+    ChatToolError,
     WorkflowGenerateArguments,
     build_chat_tool_registry,
 )
@@ -17,9 +18,69 @@ from agent_bot.services.tool_operations import ImageTaskEffect
 from agent_bot.services.workflow_execution import (
     WorkflowExecutionService,
     WorkflowImageCollector,
+    WorkflowImageRequest,
     WorkflowSummary,
 )
 from agent_bot.services.workflow_inputs import workflow_input_scope
+
+
+@pytest.mark.parametrize("urls,materials,with_source", [
+    ((), (), False), (("https://image.invalid/a",), (), True),
+    (("https://image.invalid/a", "https://image.invalid/a"), (), True),
+    (("https://image.invalid/a", "https://image.invalid/b"), (), False),
+    ((), ("a" * 32,), True), (("https://image.invalid/a",), ("a" * 32,), False),
+])
+async def test_workflow_catalog_only_offers_usable_image_inputs(urls, materials, with_source):
+    """工作流列表按本次真实输入过滤，无原图仍保留固定底图且不暴露不可执行的双图流程。"""
+    summaries = (
+        WorkflowSummary("text", "文生图", ""),
+        WorkflowSummary("fixed", "固定底图", "", "fixed_reference", False),
+        WorkflowSummary("dual", "双图参考", "", "image_to_image", True),
+        WorkflowSummary("video", "图生视频", "", "image_to_video", True),
+    )
+    context = ChatToolContext(
+        session_id="s", user_id="1", allowed_tools=frozenset({"local_workflow_list"}),
+        workflow_service=SimpleNamespace(list_workflows=AsyncMock(return_value=summaries)),
+        image_urls=urls, image_material_ids=materials,
+    )
+    result = await build_chat_tool_registry().call("local_workflow_list", {}, context)
+    keys = [item["key"] for item in json.loads(result.content)["workflows"]]
+    assert keys == (["text", "fixed", "dual", "video"] if with_source else ["text", "fixed"])
+
+
+async def test_missing_original_is_rejected_before_effect_and_keeps_generation_allowance():
+    """错误选择不上传、不占绘图额度或持久副作用，模型随后仍可明确选取固定底图。"""
+    summaries = {
+        "dual": WorkflowSummary("dual", "双图参考", "", "image_to_image", True),
+        "fixed": WorkflowSummary("fixed", "固定底图", "", "fixed_reference", False),
+    }
+    service = SimpleNamespace(
+        describe_workflow=AsyncMock(side_effect=lambda key: summaries[key]),
+        prepare_request=AsyncMock(return_value=WorkflowImageRequest(
+            workflow_key="fixed", positive_prompt="人物坐姿", fixed_reference=True,
+            workflow_sha256="c" * 64,
+        )),
+    )
+    operations = SimpleNamespace(begin=AsyncMock(return_value=None), complete=AsyncMock())
+    collector = WorkflowImageCollector()
+    collector.submit = AsyncMock(return_value="image-task")
+    context = ChatToolContext(
+        session_id="s", user_id="1", job_id="parent", operation_store=operations,
+        allowed_tools=frozenset({"local_workflow_generate_image"}),
+        workflow_service=service, workflow_collector=collector,
+    )
+    registry = build_chat_tool_registry()
+    args = {"workflow_key": "dual", "positive_prompt": "人物坐姿", "start_reply": "我来画。"}
+    with pytest.raises(ChatToolError) as failure:
+        await registry.call("local_workflow_generate_image", args, context)
+    assert failure.value.code == "WORKFLOW_INPUT_REQUIRED"
+    service.prepare_request.assert_not_awaited()
+    operations.begin.assert_not_awaited()
+    collector.submit.assert_not_awaited()
+    result = await registry.call("local_workflow_generate_image", {**args, "workflow_key": "fixed"},
+                                 context)
+    assert json.loads(result.content) == {"status": "queued", "task_id": "image-task"}
+    collector.submit.assert_awaited_once()
 
 
 @pytest.mark.asyncio

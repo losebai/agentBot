@@ -18,6 +18,7 @@ const categories = [
   { key: 'reply', label: '自动回复设置', description: '关键词回复、回复限制、群聊上下文、主动发言与定时任务。' },
   { key: 'games', label: '游戏资讯设置', description: '永劫无间账号凭据、服务器、赛季与查询限制。' },
   { key: 'comfy', label: 'Comfy', description: '本地 ComfyUI 连接和工作流。' },
+  { key: 'stickers', label: '表情包设置', description: '图库识图模型、自定义识图要求与语境匹配超时。' },
 ] as const;
 type Category = typeof categories[number]['key'];
 // null 仅表示显式清除可空密钥，空字符串仍是表单输入或静态密钥的保留操作。
@@ -57,6 +58,7 @@ function fieldCategory(field: SettingField): Category {
   if (name === 'chat_tagged_memory_enabled'
     || ['chat_memory_', 'chat_history_'].some(prefix => name.startsWith(prefix))) return 'memory';
   if (name.startsWith('chat_naraka_')) return 'games';
+  if (name.startsWith('chat_sticker_')) return 'stickers';
   if (replySettingNames.has(name) || [
     'chat_auto_', 'chat_group_', 'chat_user_message_', 'chat_job_', 'chat_multi_reply_',
   ].some(prefix => name.startsWith(prefix))) return 'reply';
@@ -129,9 +131,10 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
   const [pluginsRevision, setPluginsRevision] = useState(0);
   const { runningPlugins, pluginsError } = useRunningPlugins(token, pluginsRevision);
   const qqRunning = runningPlugins.has('qqbot');
-  // 仅 QQ 接入与游戏查询依赖插件；通用自动回复设置不受 QQ 运行状态限制。
+  // 插件配置跟随实际进程状态；已保存启用选择不能授予图库管理能力。
   const visibleCategories = categories.filter(item => (!categoryKeys || categoryKeys.includes(item.key))
-    && (qqRunning || !['qq', 'games'].includes(item.key)));
+    && (qqRunning || !['qq', 'games'].includes(item.key))
+    && (item.key !== 'stickers' || runningPlugins.has('stickers')));
   const currentCategory = visibleCategories.some(item => item.key === category) ? category : visibleCategories[0]?.key;
   const [comfyTab, setComfyTab] = useState('connection');
   const [workflowBusy, setWorkflowBusy] = useState(false);
@@ -241,7 +244,6 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
     {showModels && <>
       {models.error && <Alert message={`模型列表读取失败：${models.error}`} type="error" showIcon className="notice" />}
       <div className="heading-actions">
-        <Button loading={models.busy} onClick={() => void models.load()}>刷新模型列表</Button>
         {models.page.next_cursor && <Button disabled={models.busy}
           onClick={() => void models.load(models.page.next_cursor!)}>加载更多模型</Button>}
       </div>
@@ -262,8 +264,8 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
           });
         };
         const id = `setting-${field.name}`;
-        // 向量模型用空字符串表示未配置，允许清空选择，但不将服务端字符串字段改成 null。
-        const modelCanClear = field.nullable || field.name === 'chat_memory_embedding_model';
+        // 可选模型用空字符串表示未配置，清空选择不会把字符串字段改成 null。
+        const modelCanClear = field.nullable || ['chat_memory_embedding_model', 'chat_sticker_model'].includes(field.name);
         return <div className="setting-row" key={field.name}>
           <div className="setting-description"><label htmlFor={id}>{field.description}</label>{field.restart_required && <Tag>重启生效</Tag>}<code>{field.name}</code></div>
           <div className="setting-control">
@@ -277,7 +279,7 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
             </ChoiceSelect>
               : modelSettingNames.has(field.name) ? <SettingsModelSelect id={id} value={String(value)}
               readOnly={readOnly} nullable={modelCanClear}
-              directory={models} onChange={change} />
+              directory={models} onChange={change} vision={field.name === 'chat_sticker_model'} />
               : field.name === 'nickname' ? <Input.TextArea id={id} disabled={readOnly}
               value={String(value)} placeholder="每行填写一个名称或别名，如：桃桃"
               autoSize={{minRows: 2, maxRows: 6}} onChange={event => change(event.target.value)} />
@@ -287,9 +289,11 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
             </ChoiceSelect>
               : kind === 'boolean' ? <Switch id={id} disabled={readOnly} checked={value === true} onChange={change} />
               : kind === 'secret' ? <Input.Password id={id} disabled={readOnly} value={String(value)} placeholder={field.secret_is_set ? readOnly ? '已设置' : '已设置 · 留空保持原值' : '未设置'} autoComplete="new-password" onChange={event => change(event.target.value)} />
-              : kind === 'json' || ['chat_auto_speak_llm_prompt', 'chat_auto_speak_prompt', 'chat_multi_reply_prompt'].includes(field.name) || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
+              : kind === 'json' || ['chat_auto_speak_llm_prompt', 'chat_auto_speak_prompt', 'chat_multi_reply_prompt', 'chat_sticker_vision_prompt'].includes(field.name) || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
               : <Input id={id} disabled={readOnly} type={kind === 'number' ? 'number' : 'text'} step="any" value={String(value)} onChange={event => change(event.target.value)} />}
             {field.name === 'nickname' && <small>每行一个名称或别名，保存后热更新；留空关闭名字触发。</small>}
+            {field.name === 'chat_sticker_model' && <small>独立选择已启用且开启视觉能力的模型，用于图片说明和文字语境匹配。留空可先维护图库，手动填写说明。</small>}
+            {field.name === 'chat_sticker_vision_prompt' && <small>可补充希望识别的细节或表达风格；留空使用默认识图要求，自定义标签不会被识图覆盖。</small>}
             {field.name === 'superusers' && <small>填写主人 QQ 号的 JSON 数组，如 ["123456789"]；保存后手动重启后端生效。仅主人可使用配置查询和修改工具，留空数组不授权任何人；密钥请在管理页面编辑。</small>}
             {field.name === 'chat_agent_max_steps' && <small>按实际工具调用次数计数，所有 Agent 和联网请求共用。默认 5，可填写任意正整数；留空不限次数，仍遵守请求超时。</small>}
             {field.name === 'chat_auto_speak_llm_prompt' && <small>使用独立决策模型和此提示词，结合当前收到的消息及近期群聊进行单次普通调用；不读取会话记忆、历史轮次或 Agent 人设。仅返回 {`{"choice":"speak"}`} 或 {`{"choice":"silent"}`}。</small>}

@@ -39,6 +39,7 @@ const workspaceTheme = {
 
 const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置',
   'plugin-center':'插件中心', 'plugin-qqbot':'QQ 配置', 'plugin-bilibili':'B站配置', 'plugin-comfy':'Comfy 配置',
+  'plugin-stickers':'表情包配置',
   chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'角色和人格',
   'remote-services':'远程服务', knowledge:'标签与知识库'};
 
@@ -118,6 +119,9 @@ export function App() {
           {page === 'plugin-bilibili' && <PluginConfiguration token={token} pluginId="bilibili" />}
           {visited.includes('plugin-comfy') && <PluginConfiguration token={token} pluginId="comfy"
             active={page === 'plugin-comfy'} />}
+          {/* 表情图库按当前页面启停读取，已访问的模型配置保留未保存草稿。 */}
+          {visited.includes('plugin-stickers') && <PluginConfiguration token={token} pluginId="stickers"
+            active={page === 'plugin-stickers'} />}
           <section hidden={page !== 'chat'}>{page === 'chat' && <Chat token={token} />}</section>
           <section hidden={page !== 'providers'}>{visited.includes('providers') && <Providers token={token} />}</section>
           <section hidden={page !== 'sessions'}>{page === 'sessions' && <Sessions token={token} />}</section>

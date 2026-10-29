@@ -30,6 +30,47 @@ function managementResponse(url: string) {
       ai_backend: 'python-ordinary' });
 }
 
+it.each(['侧边菜单', '插件中心'])('%s 可以进入真实表情包配置并保留未保存草稿', async entry => {
+  const fetcher = vi.fn(async (url, _options?: RequestInit) => {
+    const path = String(url);
+    if (path.endsWith('/auth')) return Response.json({ password_required: false });
+    if (path.endsWith('/plugins')) return Response.json([{
+      id: 'stickers', name: '表情包', version: 'offline', description: '表情图库',
+      enabled: true, saved_enabled: true, status: 'running', restart_required: false,
+    }]);
+    if (path.endsWith('/settings')) return Response.json({
+      database_revision: 1, applied_revision: 1, restart_required_fields: [], fields: [{
+        name: 'chat_sticker_vision_prompt', description: '表情包识图要求', kind: 'string',
+        value: '', nullable: false, secret_is_set: false, restart_required: false,
+      }],
+    });
+    if (path.includes('/stickers?')) return Response.json({ items: [], total: 0, next_offset: null });
+    return managementResponse(path);
+  });
+  vi.stubGlobal('fetch', fetcher);
+  render(<App />);
+  const navigation = await screen.findByLabelText('主导航');
+  if (entry === '插件中心') {
+    fireEvent.click(await within(navigation).findByText('插件中心', { selector: 'button' }));
+    fireEvent.click(await screen.findByLabelText('配置 表情包'));
+  } else {
+    fireEvent.click(await within(navigation).findByText('表情包配置', { selector: 'button' }));
+  }
+  expect(await screen.findByText('表情包配置', { selector: 'h1' })).toBeVisible();
+  expect(screen.getByText('表情包配置', { selector: '.topbar-title' })).toBeVisible();
+  expect(await screen.findByLabelText('表情包图库')).toBeVisible();
+  expect(getVisibleButton('添加表情包')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: '配置' }));
+  fireEvent.change(await screen.findByLabelText('表情包识图要求'), {
+    target: { value: '说明适合表达的语气' },
+  });
+  fireEvent.click(getVisibleButton(/运行概览$/, navigation));
+  fireEvent.click(await within(navigation).findByText('表情包配置', { selector: 'button' }));
+  await waitFor(() => expect(screen.getByLabelText('表情包识图要求')).toBeVisible());
+  expect(screen.getByLabelText('表情包识图要求')).toHaveValue('说明适合表达的语气');
+  expect(fetcher.mock.calls.every(([, options]) => options?.method !== 'PATCH')).toBe(true);
+});
+
 it('主导航可进入标签与知识库，离开后不保留详情页', async () => {
   vi.stubGlobal('fetch', vi.fn(async url => {
     const path = String(url);

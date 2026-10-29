@@ -15,6 +15,7 @@ from agent_bot.services.replies import (
     GeneratedReply,
     LlmReplyComposer,
     ReplyIntent,
+    WorkflowStatusFacts,
 )
 
 
@@ -90,7 +91,7 @@ def test_generated_reply_rejects_fake_mention_without_body() -> None:
 
 @dataclass(frozen=True)
 class ReplyCall:
-    """Capture one fake reply-generation call without exposing a generic mapping."""
+    """记录回复事实、身份和 Agent 开关，验证通知不会重放原请求。"""
 
     session_id: str
     prompt: str
@@ -100,6 +101,7 @@ class ReplyCall:
     user: str | None
     user_name: str | None
     chat_context: ChatContext | None
+    use_agent: bool = False
 
 
 class FakeReplyChatService:
@@ -128,8 +130,9 @@ class FakeReplyChatService:
         user: str | None = None,
         user_name: str | None = None,
         chat_context: ChatContext | None = None,
+        use_agent: bool = False,
     ) -> str | None:
-        """Record the request, then return or raise the configured outcome."""
+        """记录模型输入和路由方式，再返回离线结果或抛出预设异常。"""
 
         self.calls.append(
             ReplyCall(
@@ -141,6 +144,7 @@ class FakeReplyChatService:
                 user=user,
                 user_name=user_name,
                 chat_context=chat_context,
+                use_agent=use_agent,
             )
         )
         if self.error is not None:
@@ -200,6 +204,42 @@ async def test_notification_composer_normalizes_json_model_text(result, expected
     )
     reply = await composer.compose(valid_usage_intent())
     assert (reply.text if reply is not None else None) == expected
+
+
+@pytest.mark.parametrize("result,expected", [
+    ('"图没生成出来，我先用嘴给你描述一张吧"', None),
+    ('["图片生成失败了。"]', None),
+    ('["图片还没发送，稍等一下。"]', None),
+    ('["正在生成，请稍等。"]', None),
+    ('["喏，画好并发给你啦。"]', "喏，画好并发给你啦。"),
+    ('"没想到这次这么好看，给你啦。"', "没想到这次这么好看，给你啦。"),
+])
+async def test_image_completion_uses_confirmed_facts_and_suppresses_false_failure(result, expected):
+    """完成通知不重放画图请求，模型否认成功事实时不发送错误通知或重试生成。"""
+    chat = FakeReplyChatService(result=result)
+    composer = LlmReplyComposer(lambda: chat, timeout_seconds_provider=lambda: 300)
+    original = "原请求私有标记：给我画一张猫，不许画狗"
+    intent = ReplyIntent(
+        requestId="image-completed", sessionId="image:job", code="WORKFLOW_STATUS",
+        facts=WorkflowStatusFacts(status="completed"), originalPrompt=original,
+    )
+    reply = await composer.compose(intent)
+    assert (reply.text if reply else None) == expected
+    assert len(chat.calls) == 1
+    assert original not in chat.calls[0].prompt
+    assert "图片已生成并已发送" in chat.calls[0].prompt
+    assert chat.calls[0].use_agent is True
+
+
+async def test_failed_image_notification_can_still_explain_actual_failure():
+    """误报拦截仅适用于已完成图片，真正失败的状态仍允许模型解释失败事实。"""
+    chat = FakeReplyChatService(result="图片生成失败了。")
+    composer = LlmReplyComposer(lambda: chat, timeout_seconds_provider=lambda: 300)
+    reply = await composer.compose(ReplyIntent(
+        requestId="image-failed", sessionId="image:job", code="WORKFLOW_STATUS",
+        facts=WorkflowStatusFacts(status="failed"), originalPrompt="画一张猫",
+    ))
+    assert reply is not None and reply.text == "图片生成失败了。"
 
 
 @pytest.mark.asyncio

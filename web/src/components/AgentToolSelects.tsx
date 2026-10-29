@@ -16,6 +16,7 @@ const builtinTools = [
   ['ls', '目录浏览（仅管理员/主人）'], ['bash', '终端命令（仅管理员/主人）'],
   ['knowledge_search', '知识库检索'],
   ['material_search', '素材查询'], ['material_get', '素材读取'],
+  ['sticker_search', '表情包检索'], ['sticker_send', '表情包发送'],
   ['memory', '标签记忆（QQ）'], ['naraka_query', '永劫无间查询（QQ）'],
   ['bot_config_get', '查询机器人配置（仅主人）'],
   ['bot_config_update', '修改机器人配置（仅主人）'],
@@ -31,6 +32,8 @@ const pluginTools: Record<string, string> = {
   bilibili_login_status: 'bilibili', bilibili_get_my_videos: 'bilibili', bilibili_get_comments: 'bilibili',
   bilibili_reply_comment: 'bilibili', bilibili_publish_video: 'bilibili',
   bilibili_publish_dynamic: 'bilibili',
+  // 图库工具只由已启动的表情包插件提供，停用时保留已有选择。
+  sticker_search: 'stickers', sticker_send: 'stickers',
   memory: 'qqbot', naraka_query: 'qqbot', naraka_search: 'qqbot', mention_member: 'qqbot',
   // 配置工具的可见性随 QQ 插件运行，实际执行还须服务端校验主人身份。
   bot_config_get: 'qqbot', bot_config_update: 'qqbot',

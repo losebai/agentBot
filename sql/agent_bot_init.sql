@@ -734,3 +734,38 @@ CREATE TABLE IF NOT EXISTS agent_bot_schema_migration (
     last_error VARCHAR(64) NULL COMMENT '仅保存固定错误码，不记录业务值或原始数据库异常',
     CONSTRAINT chk_schema_migration_status CHECK (status IN ('applying', 'applied', 'failed'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='启动迁移流水，不设业务外键以保留失败审计';
+
+-- 表情包图库增量，适用完整 0.5.5 至 0.5.10 业务库；按登记清单在既有增量后执行。
+-- 仅新增独立表与索引，不改写已有配置、凭据或业务数据；可重入，不自动启用插件。
+CREATE TABLE IF NOT EXISTS agent_bot_sticker (
+    id CHAR(32) NOT NULL COMMENT '服务端随机32位十六进制标识，不接受客户端路径',
+    name VARCHAR(255) NOT NULL COMMENT '管理员命名',
+    tags_json TEXT NOT NULL COMMENT '管理员维护的有序标签JSON数组',
+    description TEXT NOT NULL COMMENT '识图或管理员维护的画面说明',
+    emotion VARCHAR(100) NOT NULL COMMENT '主要情绪',
+    usage_hint TEXT NOT NULL COMMENT '适用聊天场景',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE COMMENT '停用后禁止机器人发送',
+    revision BIGINT NOT NULL DEFAULT 1 COMMENT '乐观更新修订',
+    mime_type VARCHAR(32) NOT NULL COMMENT '已验证原件容器的媒体类型',
+    size_bytes BIGINT NOT NULL COMMENT '原件字节数',
+    sha256 CHAR(64) NOT NULL COMMENT '原件完整性摘要，墓碑仍保留',
+    active_sha256 CHAR(64) NULL COMMENT '只对活跃原件去重，删除设NULL允许再次上传',
+    width INT NOT NULL COMMENT '原件画布宽',
+    height INT NOT NULL COMMENT '原件画布高',
+    frame_count INT NOT NULL COMMENT '已解码验证帧数',
+    animated BOOLEAN NOT NULL COMMENT '原件是否为GIF动画',
+    analysis_status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT '识图生命周期pending、ready或failed',
+    analysis_error VARCHAR(100) NULL COMMENT '仅保存安全错误码，不保存供应商正文',
+    storage_key CHAR(32) NOT NULL COMMENT '原件服务端私有文件键',
+    preview_key CHAR(32) NOT NULL COMMENT '静态PNG预览服务端私有文件键',
+    preview_size_bytes BIGINT NOT NULL COMMENT '预览完整性大小',
+    preview_sha256 CHAR(64) NOT NULL COMMENT '预览完整性摘要',
+    deleted BOOLEAN NOT NULL DEFAULT FALSE COMMENT '删除墓碑先阻止访问再清理文件',
+    created_at DATETIME(6) NOT NULL COMMENT 'UTC创建时间',
+    updated_at DATETIME(6) NOT NULL COMMENT 'UTC最后修订时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_sticker_active_sha256 (active_sha256) COMMENT '活跃原件去重，墓碑允许空值',
+    UNIQUE KEY uq_sticker_storage_key (storage_key) COMMENT '原件文件键只归属一条记录',
+    UNIQUE KEY uq_sticker_preview_key (preview_key) COMMENT '预览文件键只归属一条记录',
+    KEY ix_sticker_active_created (deleted, enabled, created_at, id) COMMENT '按活跃状态与创建时间分页'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='独立表情包图库，文件位置仅服务端可见';

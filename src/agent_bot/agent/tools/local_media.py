@@ -9,6 +9,7 @@ from agent_bot.agent.tools.host_contracts import BashArguments, LsArguments
 from agent_bot.jobs.contracts import JobArguments
 from agent_bot.materials.contracts import MaterialGetArguments, MaterialSearchArguments
 from agent_bot.plugins.bilibili.contracts import TOOL_MODELS
+from agent_bot.plugins.stickers.tool_contracts import StickerSearchArguments, StickerSendArguments
 from agent_bot.services.bot_config_tools import BotConfigGetArguments, BotConfigUpdateArguments
 from agent_bot.services.chat_tools import (
     ImageGenerateArguments,
@@ -25,6 +26,8 @@ ARGUMENT_MODELS = {
     "ls": LsArguments,
     "bash": BashArguments,
     **TOOL_MODELS,
+    "sticker_search": StickerSearchArguments,
+    "sticker_send": StickerSendArguments,
     "bot_config_get": BotConfigGetArguments,
     "bot_config_update": BotConfigUpdateArguments,
     "image_generate": ImageGenerateArguments,

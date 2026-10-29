@@ -7,6 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# 仅此本地业务码可由 Agent 桥接公开；异常正文不能代替该固定提示。
+WORKFLOW_INPUT_REQUIRED_MESSAGE = (
+    "所选工作流需要本次消息或引用消息中的恰好一张用户原图，当前输入不满足要求。"
+    "请调用 local_workflow_list 重新选择适用工作流；"
+    "无原图时选择文生图或固定底图工作流，或请用户提供原图，不要虚构图片输入。"
+)
+
 
 def workflow_input_scope(source_job_id: str) -> str:
     """与后台 image 任务 ID 共用请求摘要，避免同 session 并行串图。"""

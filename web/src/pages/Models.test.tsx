@@ -1,12 +1,18 @@
 import { chooseSelect, selectDisplay } from '../test-select';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
+import { AiApi } from '../ai-api';
 import { Models } from './Models';
 import type { AiModel, Provider } from '../ai-types';
 
 const provider: Provider = { id: 1, revision: 1, name: '本机', enabled: true,
   protocol: 'openai-chat', base_url: 'https://offline.invalid/v1', description: '',
   credential_set: false, credential_available: true };
+
+// 媒体开关测试仅验证本地配置；专门的同步测试恢复真实接口调用。
+beforeEach(() => {
+  vi.spyOn(AiApi.prototype, 'upstreamModels').mockResolvedValue({ provider_id: 1, revision: 1, models: [] });
+});
 
 it('配置直接生图协议时保留识图和音频能力，使用当前版本保存', async () => {
   let model: AiModel = {provider_name: '测试供应商', reference: `model:${1}`,  id: 1, revision: 3, alias: 'image', upstream_model: 'upstream-image',
@@ -127,19 +133,20 @@ it('切换失败保留真实状态，版本冲突可重新读取后再操作', a
   await waitFor(() => expect(screen.getByRole('switch', { name: '启用 model' })).not.toBeChecked());
 });
 
-it('刷新获取全部模型，失败后保留已保存列表并显示错误', async () => {
+it('选择供应商自动同步全部模型，失败后保留已保存列表并显示错误', async () => {
+  vi.mocked(AiApi.prototype.upstreamModels).mockRestore();
   vi.stubGlobal('fetch', vi.fn(async url => {
     if (String(url).includes('upstream-models')) return Response.json({ message: '上游服务不可用' }, { status: 502 });
     return Response.json({ items: [{provider_name: '测试供应商', reference: `model:${1}`,  id: 1, revision: 1, alias: 'existing', upstream_model: 'model', provider_id: 1, enabled: true }], next_cursor: null });
   }));
   render(<Models token="offline" provider={provider} />);
   await screen.findByText('model');
-  fireEvent.click(screen.getByRole('button', { name: '刷新模型' }));
   expect(await screen.findByText(/上游服务不可用/)).toBeVisible();
   expect(screen.getByRole('switch', { name: '启用 model' })).toBeChecked();
 });
 
 it('同步同名上游模型无需别名，目录只呈现真实身份', async () => {
+  vi.mocked(AiApi.prototype.upstreamModels).mockRestore();
   const models: AiModel[] = [];
   const imports: unknown[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
@@ -153,8 +160,6 @@ it('同步同名上游模型无需别名，目录只呈现真实身份', async (
     return Response.json({ items: models, next_cursor: null });
   }));
   render(<Models token="offline" provider={provider} />);
-  await waitFor(() => expect(screen.getByRole('button', { name: '刷新模型' })).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: '刷新模型' }));
   expect(await screen.findByRole('switch', { name: '启用 shared' })).not.toBeChecked();
   expect(screen.getByRole('switch', { name: '启用 other' })).not.toBeChecked();
   expect(screen.queryByText('模型别名')).not.toBeInTheDocument();

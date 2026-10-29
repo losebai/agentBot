@@ -49,3 +49,18 @@ it.each([null, 'next-page'])('规范格式旧别名指向其他ID时，即使目
   fireEvent.click(await screen.findByText('供应商甲 / shared'));
   expect(changed).toHaveBeenCalledWith('model:1');
 });
+
+it('表情包独立模型仅允许视觉模型，保留失效选择并允许清空', async () => {
+  const changed = vi.fn();
+  render(<SettingsModelSelect id="sticker-model" value="model:1" readOnly={false} nullable vision
+    directory={{ page: { items: [models[0], { ...models[1], media: { vision_enabled: true,
+      image_api_profile: 'none', audio_chat_enabled: false } }], next_cursor: null }, busy: false, error: '', load: vi.fn() }}
+    onChange={changed} />);
+  expect(screen.getByText('当前配置的模型未开启视觉能力，请选择支持识图的模型。')).toBeVisible();
+  expect(changed).not.toHaveBeenCalled();
+  fireEvent.mouseDown(screen.getByRole('combobox'));
+  const textOnly = (await screen.findAllByText('供应商甲 / shared')).find(item => item.closest('.ant-select-item'))!;
+  expect(textOnly.closest('.ant-select-item')).toHaveClass('ant-select-item-option-disabled');
+  fireEvent.click(await screen.findByText('供应商乙 / shared'));
+  expect(changed).toHaveBeenCalledWith('model:2');
+});

@@ -13,6 +13,7 @@ from agent_bot.agent.tools.schema import ToolSchema
 from agent_bot.services.bot_config_tools import BOT_CONFIG_TOOLS, CONFIG_TOOL_ERROR_MESSAGES
 from agent_bot.services.tagged_memory import MEMORY_SOURCE_ERROR_MESSAGE
 from agent_bot.services.tool_sessions import ToolSessionExpiredError
+from agent_bot.services.workflow_inputs import WORKFLOW_INPUT_REQUIRED_MESSAGE
 
 
 class ChatToolBridge:
@@ -57,7 +58,7 @@ class ChatToolBridge:
         )
 
     async def call(self, call, authority):
-        """入口、当前令牌、schema 和原媒体参数都通过后才触发副作用。"""
+        """校验入口与令牌；仅本地固定错误提示可公开，远端异常正文不能扩大模型指令。"""
         server, token = self._access(authority)
         tools = await self.list_tools(authority)
         tool = next((t for t in tools if t.name == call.name), None)
@@ -97,6 +98,20 @@ class ChatToolBridge:
                     call_id=call.call_id, name=call.name, is_error=True,
                     content=json.dumps({"code": "MEMORY_SOURCE_INVALID",
                                         "message": MEMORY_SOURCE_ERROR_MESSAGE},
+                                       ensure_ascii=False),
+                )
+        if (call.name in {"local_workflow_generate_image", "local_workflow_generate_video"}
+                and isinstance(result, types.CallToolResult) and result.is_error
+                and len(result.content) == 1 and isinstance(result.content[0], types.TextContent)):
+            try:
+                body = json.loads(result.content[0].text)
+            except (ValueError, TypeError):
+                body = None
+            if isinstance(body, dict) and body.get("code") == "WORKFLOW_INPUT_REQUIRED":
+                return ToolResult(
+                    call_id=call.call_id, name=call.name, is_error=True,
+                    content=json.dumps({"code": "WORKFLOW_INPUT_REQUIRED",
+                                        "message": WORKFLOW_INPUT_REQUIRED_MESSAGE},
                                        ensure_ascii=False),
                 )
         return convert_result(call, result)

@@ -3,9 +3,9 @@ import { Alert, Button, Input, Tag } from 'antd';
 import { DeleteOutlined, SendOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
-import { AiApi } from '../ai-api';
+import { useModelDirectory } from '../components/useModelDirectory';
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
-import type { AiModel, CompletionMetadata } from '../ai-types';
+import type { CompletionMetadata } from '../ai-types';
 import type { ChatMessage, ServiceStatus } from '../types';
 import { AgentChat } from '../components/AgentChat';
 import { MediaGenerator } from '../components/MediaGenerator';
@@ -18,18 +18,23 @@ export function Chat({token}:{token:string}) {
 }
 /** 普通对话保留默认配置绑定，目录只负责展示供应商和模型名。 */
 function OrdinaryChat({token}:{token:string}) {
-  const api=useMemo(()=>new ApiClient(token),[token]);const ai=useMemo(()=>new AiApi(token),[token]);
+  const api=useMemo(()=>new ApiClient(token),[token]);
   const [session,setSession]=useState(newSession);const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [input,setInput]=useState('');const [error,setError]=useState('');const [sending,setSending]=useState(false);
-  const [status,setStatus]=useState<ServiceStatus>();const [models,setModels]=useState<AiModel[]>([]);
-  const [modelCursor,setModelCursor]=useState<string|null>(null);const [model,setModel]=useState('');const [streaming,setStreaming]=useState(false);
+  const [status,setStatus]=useState<ServiceStatus>();
+  const directory=useModelDirectory(token), models=directory.page.items;
+  const [model,setModel]=useState('');const [streaming,setStreaming]=useState(false);
   const [partial,setPartial]=useState<{prompt:string;content:string;state:string}>();const [metadata,setMetadata]=useState<CompletionMetadata>();
   const controller=useRef<AbortController>();const mounted=useRef(true);
   const configuredModel = selectedModel(models, status?.configured_model ?? '');
-  // 模型目录始终来自本地服务，状态刷新不再切换执行后端。
-  async function refresh(){try{const value=await api.status();if(mounted.current){setStatus(value);const result=await ai.models();if(mounted.current){setModels(result.items);setModelCursor(result.next_cursor);}}}catch(e){if(mounted.current)setError(errorMessage(e));}}
-  useEffect(()=>{mounted.current=true;void refresh();return()=>{mounted.current=false;controller.current?.abort();};},[api]);
-  async function moreModels(){try{const value=await ai.models(modelCursor!);setModels([...models,...value.items]);setModelCursor(value.next_cursor);}catch(e){setError(errorMessage(e));}}
+  // 服务状态与目录独立读取；打开模型选择框只更新目录，不清空对话和测试模型。
+  useEffect(()=>{
+    mounted.current=true;
+    const request=new AbortController();
+    api.status(request.signal).then(value=>{if(!request.signal.aborted)setStatus(value);})
+      .catch(failure=>{if(!request.signal.aborted)setError(errorMessage(failure));});
+    return()=>{mounted.current=false;request.abort();controller.current?.abort();};
+  },[api]);
   async function send(){
     if(!input.trim()||sending)return;
     const prompt=input.trim(), abort=new AbortController();controller.current=abort;
@@ -49,10 +54,11 @@ function OrdinaryChat({token}:{token:string}) {
     }catch(e){if(mounted.current){setPartial({prompt,content,state:abort.signal.aborted?'已停止':'生成失败'});if(!abort.signal.aborted)setError(errorMessage(e));}}
     finally{if(controller.current===abort)controller.current=undefined;if(mounted.current)setSending(false);}
   }
-  return <div className="page-content chat-page"><div className="page-heading"><div><p className="eyebrow">CONVERSATION</p><h1>对话测试</h1><p>验证普通文本回复与流式输出。</p></div><div className="heading-actions"><Button disabled={sending} onClick={()=>void refresh()}>刷新模型状态</Button><Button icon={<DeleteOutlined aria-hidden/>} disabled={sending||(!messages.length&&!partial)} onClick={()=>{setMessages([]);setPartial(undefined);setMetadata(undefined);setSession(newSession());setError('');}}>新会话</Button></div></div>
+  return <div className="page-content chat-page"><div className="page-heading"><div><p className="eyebrow">CONVERSATION</p><h1>对话测试</h1><p>验证普通文本回复与流式输出。</p></div><div className="heading-actions"><Button icon={<DeleteOutlined aria-hidden/>} disabled={sending||(!messages.length&&!partial)} onClick={()=>{setMessages([]);setPartial(undefined);setMetadata(undefined);setSession(newSession());setError('');}}>新会话</Button></div></div>
     <div className="chat-scope"><Tag>普通对话</Tag><span>消息只用于测试，不会发送到 QQ。</span></div>
-    <div className="chat-controls"><><label htmlFor="chat-model">测试模型</label><ModelSelect id="chat-model" models={models} value={model} nullable disabled={sending}
-      placeholder={configuredModel ? `使用配置模型 ${configuredModel.provider_name} / ${configuredModel.upstream_model}` : '使用配置模型'} onChange={next => setModel(String(next ?? ''))} />{modelCursor&&<Button disabled={sending} onClick={()=>void moreModels()}>加载更多模型</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式输出</label></></div>
+    <div className="chat-controls"><><label htmlFor="chat-model">测试模型</label><ModelSelect id="chat-model" models={models} value={model} nullable disabled={sending} loading={directory.busy} onOpen={()=>void directory.load()}
+      placeholder={configuredModel ? `使用配置模型 ${configuredModel.provider_name} / ${configuredModel.upstream_model}` : '使用配置模型'} onChange={next => setModel(String(next ?? ''))} />{directory.page.next_cursor&&<Button disabled={sending||directory.busy} onClick={()=>void directory.load(directory.page.next_cursor!)}>加载更多模型</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式输出</label></></div>
+    {directory.error&&<Alert type="error" showIcon className="notice" message={`模型列表读取失败：${directory.error}`}/>}
     {error&&<Alert type="error" showIcon className="notice" message={error}/>}{metadata&&!metadata.record_saved&&<Alert className="notice" type="warning" showIcon message="回复已生成，但会话记录未保存。请检查数据库，无需重新发送。"/>}
     <div className="conversation" aria-live="polite">{!messages.length&&!partial&&<div className="conversation-empty"><div className="bot-mark">AB</div><h2>开始一段对话</h2><p>发送消息，检查模型配置与服务连接。</p></div>}{messages.map((message,index)=><article className={`message ${message.role}`} key={index}><div className="message-avatar">{message.role==='user'?'你':'AB'}</div><div className="message-body"><span className="message-name">{message.role==='user'?'你':'AgentBot'}</span><MarkdownRenderer content={message.content}/></div></article>)}
       {partial&&<><article className="message user"><div className="message-avatar">你</div><div className="message-body"><MarkdownRenderer content={partial.prompt}/></div></article><article className="message assistant"><div className="message-avatar">AB</div><div className="message-body"><Tag>{partial.state}</Tag><MarkdownRenderer content={partial.content || (sending?'正在等待模型回复…':'此轮没有生成正文。')}/></div></article></>}

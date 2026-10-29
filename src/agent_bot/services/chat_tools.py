@@ -83,7 +83,7 @@ from agent_bot.services.workflow_execution import (
     WorkflowImageRequest,
     WorkflowSummary,
 )
-from agent_bot.services.workflow_inputs import WorkflowInputImage
+from agent_bot.services.workflow_inputs import WORKFLOW_INPUT_REQUIRED_MESSAGE, WorkflowInputImage
 
 _MAX_RESULT_CHARS = 32_000
 _MAX_SEARCH_RESULTS = 10
@@ -644,16 +644,24 @@ async def _local_workflow_cancel(
     return result
 
 
+def _has_unique_workflow_image(context: ChatToolContext) -> bool:
+    """只认可本次可信上下文的唯一原图，工具生成图片或提示词中的引用声明不能充当输入。"""
+    if context.image_material_ids:
+        return len(context.image_material_ids) == 1 and not context.image_urls
+    return len(set(context.image_urls)) == 1
+
+
 async def _local_workflow_list(
     arguments: dict[str, object],
     context: ChatToolContext,
 ) -> object:
-    """返回当前数据库中可执行工作流的有界元数据。"""
+    """只列出与本次原图输入相容的工作流，固定底图不要求用户上传。"""
 
     _StrictArguments.model_validate(arguments)
     if context.workflow_service is None:
         raise ChatToolError("TEMPORARILY_UNAVAILABLE", "本地工作流未配置")
     workflows = await context.workflow_service.list_workflows()
+    has_image = _has_unique_workflow_image(context)
     return {
         "workflows": [
             {
@@ -664,6 +672,7 @@ async def _local_workflow_list(
                 "requires_image": workflow.requires_image,
             }
             for workflow in workflows
+            if not workflow.requires_image or has_image
         ]
     }
 
@@ -704,7 +713,7 @@ async def _save_generated_workflow_image(
 async def _generate_local_workflow(
     arguments: dict[str, object], context: ChatToolContext, *, video: bool = False,
 ) -> object:
-    """图片与视频共享准备和提交额度；视频只通过持久队列投递。"""
+    """图片与视频共用额度；缺少原图在占用额度和副作用前拒绝，供模型明确重新选择。"""
 
     if video:
         arguments = {
@@ -722,6 +731,8 @@ async def _generate_local_workflow(
         raise ChatToolError("INVALID_ARGUMENT", "请使用与工作流类型一致的生成工具")
     if video and context.workflow_collector.submit is None:
         raise ChatToolError("TEMPORARILY_UNAVAILABLE", "视频后台队列未配置")
+    if summary.requires_image and not _has_unique_workflow_image(context):
+        raise ChatToolError("WORKFLOW_INPUT_REQUIRED", WORKFLOW_INPUT_REQUIRED_MESSAGE)
     signature_data = parsed.model_dump_json().encode("utf-8")
     if summary.requires_image:
         source_digest = hashlib.sha256(
@@ -752,8 +763,6 @@ async def _generate_local_workflow(
         context.ensure_active()
         image_options = {}
         if summary.requires_image and context.image_material_ids:
-            if len(context.image_material_ids) != 1 or context.image_urls:
-                raise ChatToolError("INVALID_ARGUMENT", "图生图必须提供唯一原图")
             if context.material_store is None:
                 raise ChatToolError("UNAVAILABLE", "素材存储未初始化")
             id = context.image_material_ids[0]
@@ -996,7 +1005,8 @@ def build_chat_tool_registry() -> ChatToolRegistry:
             ChatToolDefinition(
                 name="local_workflow_list",
                 description=(
-                    "列出本地图片与视频工作流及用途描述；"
+                    "列出当前消息可用的本地图片与视频工作流及用途描述；"
+                    "只有本次提供或引用唯一用户原图时才列出图生图、图生视频，无图仍可用固定底图。"
                     "生成前必须先调用本工具并依据描述选择可用的 workflow_key。"
                 ),
                 input_schema=_StrictArguments.model_json_schema(),
@@ -1008,7 +1018,9 @@ def build_chat_tool_registry() -> ChatToolRegistry:
                     "使用数据库中的本地 Comfy 工作流生成一张图片。"
                     "必须先调用 local_workflow_list，并显式传入与用户需求最匹配的 "
                     "workflow_key，不允许省略或回退默认工作流。"
-                    "单次聊天请求最多生成一张图片，不允许重复调用。"
+                    "需要原图的工作流只能在本次已提供或引用唯一原图时选择，不能在提示词中虚构输入图。"
+                    "单次聊天请求最多生成一张图片，不允许重复提交已成功的任务。"
+                    "收到 WORKFLOW_INPUT_REQUIRED 表示尚未提交，可重新查看列表并更正选择后调用。"
                     "决定绘图时将你面向用户的开画答复写入 start_reply，"
                     "若决定拒绝则直接返回拒绝正文，不调用绘图工具。"
                     "网关先发送 start_reply 再提交后台任务，不另行请求模型；"

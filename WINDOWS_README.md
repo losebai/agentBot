@@ -10,12 +10,12 @@
 
 ## 一键安装
 
-当前发布版本为 **0.5.10**，命令始终读取下载站 `latest.json` 中的可用版本。
+当前发布版本为 **0.5.11**，命令始终读取下载站 `latest.json` 中的可用版本。
 
-0.5.10 拆分插件配置、将 Comfy 独立为插件，增加素材分类和标签、调用记录页码分页，改进回复解析及 B站凭据保护。
-从 0.5.9 更新前停服备份，启动时自动执行 Comfy 插件选择和素材分类增量。
-[本版升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.5.10.md) 与
-[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.10-sql.zip) 提供完整升级信息。
+0.5.11 将 Agent 管理改为内联编辑，新增独立人格、本机目录与终端工具，以及表情包图库插件。
+从 0.5.10 更新前停服备份，启动时自动执行人格字段和表情包表增量。
+[本版升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.5.11.md) 与
+[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.11-sql.zip) 提供完整升级信息。
 
 0.5.5 增加长期记忆版本、来源、冲突与遗忘管理，并统一模型身份与选择界面。
 从 0.5.4 升级前须停服备份，按

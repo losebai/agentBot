@@ -23,10 +23,9 @@ export function Providers({ token }: { token: string }) {
   const [modelRefresh, setModelRefresh] = useState(0);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [noticeType, setNoticeType] = useState<'success' | 'warning'>('success');
   const [busy, setBusy] = useState(false);
   const controller = useRef<AbortController>();
-  // 离开供应商页后停止模型同步，已完成的批次可在下次手动刷新时续接。
+  // 离开供应商页后停止模型同步，已完成的批次可在下次选择供应商时续接。
   useEffect(() => {
     const current = new AbortController(); controller.current = current;
     return () => current.abort();
@@ -70,13 +69,13 @@ export function Providers({ token }: { token: string }) {
   }
   /** 新增和编辑都使用弹窗，打开时清空上次输入和提示。 */
   function edit(item: Provider | null) {
-    setEditing(item); setDraft(item ? fields(item) : { ...empty }); setError(''); setNotice(''); setNoticeType('success');
+    setEditing(item); setDraft(item ? fields(item) : { ...empty }); setError(''); setNotice('');
   }
   /** 关闭时释放未提交的供应商密钥。 */
   function cancel() {
     setEditing(undefined); setDraft({ ...empty }); setError('');
   }
-  /** 供应商保存成功就释放密钥草稿；自动同步失败单独提示，避免重复创建供应商。 */
+  /** 供应商保存成功就释放密钥草稿，再挂载模型面板自动同步，失败不重复创建供应商。 */
   async function save() {
     const current = controller.current;
     if (busy || !current || current.signal.aborted) return;
@@ -88,23 +87,11 @@ export function Providers({ token }: { token: string }) {
         saved = Object.keys(patch).length ? await api.updateProvider(editing.id, editing.revision, patch) : editing;
       } else saved = await api.createProvider(draft);
       if (current.signal.aborted) return;
-      setDraft({ ...empty }); setEditing(undefined); setNoticeType('success'); setNotice('供应商已保存，正在同步全部模型…');
-      let syncError = '';
-      try {
-        const result = await api.syncModels(saved.id, saved.revision, current.signal);
-        if (!current.signal.aborted) {
-          setNoticeType('success');
-          setNotice('供应商已保存，已检查 ' + result.total + ' 个模型，新增 ' + result.added + ' 个。'
-            + '新模型默认停用。');
-        }
-      } catch (failure) {
-        syncError = '供应商已保存，模型同步失败：' + errorMessage(failure) + '。可点击刷新模型继续。';
-        if (!current.signal.aborted) setNotice('');
-      }
-      if (current.signal.aborted) return;
+      setDraft({ ...empty }); setEditing(undefined); setNotice('供应商已保存。');
+      // 先替换当前分页的旧版本，确保新模型面板从保存响应取得同步基线。
+      setPage(value => ({ ...value, items: value.items.map(item => item.id === saved.id ? saved : item) }));
       setSavedSelection(saved); setSelectedId(saved.id); setModelRefresh(value => value + 1);
       await load();
-      if (syncError) setError(syncError);
     } catch (failure) { if (!current.signal.aborted) setError(errorMessage(failure)); }
     finally { if (!current.signal.aborted) setBusy(false); }
   }
@@ -119,9 +106,9 @@ export function Providers({ token }: { token: string }) {
     catch (failure) { setError(errorMessage(failure)); }
     finally { setBusy(false); }
   }
-  /** 切换时卸载旧模型面板，使分页和进行中的请求只属于当前供应商。 */
+  /** 每次选择均重挂载模型面板并自动同步，重复选择同一供应商也能显式重新获取。 */
   function select(item: Provider) {
-    setSelectedId(item.id);
+    setSelectedId(item.id); setModelRefresh(value => value + 1);
   }
 
   return <div className="page-content">
@@ -129,7 +116,7 @@ export function Providers({ token }: { token: string }) {
       <p>在左侧选择供应商，在右侧管理该供应商的模型。</p></div>
       <Button disabled={busy} onClick={() => edit(null)}>新增供应商</Button></div>
     {error && editing === undefined && <Alert type="error" showIcon className="notice" message={error} />}
-    {notice && <Alert type={noticeType} showIcon className="notice" message={notice} />}
+    {notice && <Alert type="success" showIcon className="notice" message={notice} />}
     <div className="provider-layout">
       <aside className="panel provider-list"><h2>供应商</h2>
         <div role="tablist" aria-label="供应商列表" aria-orientation="vertical" className="provider-tabs">

@@ -42,10 +42,23 @@ def _comfy_factory() -> ApplicationPlugin:
     return ComfyPlugin()
 
 
+STICKERS_METADATA = PluginMetadata(
+    "stickers", "表情包", __version__, "上传表情包、自定义标签、独立视觉识别和聊天语境检索发送",
+)
+
+
+def _stickers_factory() -> ApplicationPlugin:
+    """只有显式启用表情插件才加载独立图库及视觉服务。"""
+    from agent_bot.plugins.stickers.plugin import StickersPlugin
+
+    return StickersPlugin()
+
+
 BUILTIN_PLUGINS = (
     # Comfy 先启动，QQ 才能借用完整服务；退出顺序相反。
     BuiltinPlugin(COMFY_METADATA, _comfy_factory),
     BuiltinPlugin(QQBOT_METADATA, _qqbot_factory),
     BuiltinPlugin(BILIBILI_METADATA, _bilibili_factory),
+    BuiltinPlugin(STICKERS_METADATA, _stickers_factory),
 )
 BUILTIN_PLUGIN_IDS = frozenset(plugin.metadata.id for plugin in BUILTIN_PLUGINS)

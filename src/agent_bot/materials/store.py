@@ -151,8 +151,9 @@ class MaterialStore(AiDatabase):
         self, *, owner: MediaOwner, name: str, mime_type: str, data: bytes,
         description: str = "", source_key: str | None = None,
         category: MaterialCategory | None = None, tags: tuple[str, ...] = (),
+        allow_animation: bool = False,
     ) -> MaterialView:
-        """持久素材不设总配额；按会话去重，失败撤销数据库和本次新建文件。"""
+        """按会话去重并事务保存；动画只供已确认的内部出站入口显式开启。"""
         self.require_ready()
         try:
             tags = normalize_material_tags(tags)
@@ -169,7 +170,16 @@ class MaterialStore(AiDatabase):
             raise ValueError("invalid material source")
         kind = "image" if mime_type.startswith("image/") else "file"
         if kind == "image":
-            await finish_database_write(lambda: ImagePreparer().prepare(data, mime_type))
+            if allow_animation:
+                # 不放宽普通上传或模型输入；表情原件必须通过独立的逐帧解码预算。
+                from agent_bot.plugins.stickers.images import prepare_sticker_image
+
+                prepared = await finish_database_write(
+                    lambda: prepare_sticker_image(data, mime_type),
+                )
+                mime_type = prepared.mime_type
+            else:
+                await finish_database_write(lambda: ImagePreparer().prepare(data, mime_type))
         asset = MaterialView(
             id=uuid4().hex, name=name.strip(), kind=kind, mime_type=mime_type,
             size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest(),

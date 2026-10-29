@@ -14,7 +14,7 @@ export class AiApi extends ApiClient {
     const discovered = await this.upstreamModels(id, revision, signal);
     let added = 0;
     const conflicts: ModelImportItem[] = [];
-    // 导入接口每批最多 100 项；中断时停止后续批次，手动刷新可继续同步。
+    // 导入接口每批最多 100 项；中断时停止后续批次，再次选择供应商可继续同步。
     for (let offset = 0; offset < discovered.models.length; offset += 100) {
       signal?.throwIfAborted();
       const models = discovered.models.slice(offset, offset + 100).map(upstream_model => ({

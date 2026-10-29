@@ -11,6 +11,17 @@ _INTERNAL_MENTION = re.compile(
 _TOOL_CALL_MARKUP = re.compile(
     r"</?[|\uff5c]+DSML[|\uff5c]+\s*(?:function_calls|calls|invoke|parameter)\b", re.IGNORECASE,
 )
+# 此规则只用于已确认图片送达后的可选通知；出现失败或未完成措辞时保守跳过。
+_IMAGE_COMPLETION_CONTRADICTION = re.compile(
+    r"失败|报错|出错|(?:没(?:有|能)?|还没|尚未|未能|无法|不能|未)(?:成功)?"
+    r"(?:生成|出图|绘制|画好|画出|画完|完成|发出|发送|发给|送达)"
+    r"|(?:还在|仍在|正在)(?:生成|绘制|画图|绘图|排队|等待)"
+)
+
+
+def contradicts_image_completion(text: str) -> bool:
+    """拦截与已送达图片相冲突的通知措辞，不改变实际任务状态或构造替代话术。"""
+    return _IMAGE_COMPLETION_CONTRADICTION.search(re.sub(r"\s+", "", text)) is not None
 
 
 def contains_tool_call_markup(text: str) -> bool:

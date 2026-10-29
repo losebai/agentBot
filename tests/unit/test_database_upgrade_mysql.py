@@ -39,6 +39,7 @@ def mysql_factory(params, *, lock=1, fail_once=False, fail_personality=None):
         parser.executescript(resource("startup-versioning.sqlite.sql"))
         parser.executescript(resource("bilibili-init.sqlite.sql"))
         parser.executescript(resource("material-classification.sqlite.sql"))
+        parser.executescript(resource("stickers-init.sqlite.sql"))
         translations = dict(parser.execute("SELECT name,sql FROM sqlite_master WHERE type='table'"))
     state = SimpleNamespace(events=[], closed=0, fail_once=fail_once,
                             fail_personality=fail_personality)
@@ -237,6 +238,7 @@ def test_mysql_known_idempotent_step_resumes_after_partial_ddl(legacy_database):
     result = upgrade_database(params, connect=connect, read_resource=resource)
     assert result.applied == (
         "bilibili-v1", "comfy-plugin-v1", "material-classification-v1", "agent-personality-v1",
+        "stickers-v1",
     )
     assert state.closed == 2
     assert sum("GET_LOCK" in event for event in state.events) == 2
@@ -273,7 +275,7 @@ def test_mysql_personality_resumes_partial_ddl_without_touching_roles(
     with sqlite3.connect(legacy_database.sqlite_path) as connection:
         connection.execute("UPDATE agent_bot_agent SET personality_prompt='保留人格' WHERE id=1")
     result = upgrade_database(params, connect=connect, read_resource=resource)
-    assert result.applied == ('agent-personality-v1',)
+    assert result.applied == ('agent-personality-v1', 'stickers-v1')
     assert query(legacy_database, 'SELECT * FROM agent_bot_agent ORDER BY id') == [
         (*before[0], '保留人格'), (*before[1], ''),
     ]

@@ -154,13 +154,13 @@ Inno Setup 6，以及已准备并验证的 `runtime/napcat` Shell 载荷；SSH �
 指定版本发布，例如：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -Version 0.5.11
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -Version 0.6.0
 ```
 
-先准备 `sql/UPGRADE-0.5.11.md`；脚本会同步项目版本及两个发布测试中的固定版本断言，
+先准备 `sql/UPGRADE-0.6.0.md`；脚本会同步项目版本及两个发布测试中的固定版本断言，
 不会修改第三方依赖和历史升级说明。不指定 `-Version` 时沿用现有版本并检查一致性。
 文件同步完成后即使后续构建或发布失败，工作区仍保留指定版本，便于修复后重跑。
-只想同步后在本地构建时使用 `-Version 0.5.11 -BuildOnly`。
+只想同步后在本地构建时使用 `-Version 0.6.0 -BuildOnly`。
 
 手动维护版本时同步 `pyproject.toml`、`src/agent_bot/__init__.py`、`web/package.json`、
 `web/package-lock.json` 和 `uv.lock` 中的项目版本；不要替换第三方依赖的同号版本。

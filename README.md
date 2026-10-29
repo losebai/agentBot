@@ -170,15 +170,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1
 ```
 
 脚本读取项目版本，完成测试、安装器与 SQL 包构建、上传校验及公网验证。
-也可加 `-Version 0.5.11` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.5.11.md`。
+也可加 `-Version 0.6.0` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.6.0.md`。
 参数与环境要求见 [发布说明](deploy/README.md#一键构建并发布)。
 
-当前 Windows 发布版本：**0.5.11**。后续安装与更新以下载站的
+当前 Windows 发布版本：**0.6.0**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。
 
-0.5.11 更新：Agent 管理改为内联编辑，新增独立人格、本机目录与终端工具，以及表情包图库插件。
-从 0.5.10 更新前停服备份，启动时自动执行人格字段和表情包表增量；详见 [0.5.11 升级说明](sql/UPGRADE-0.5.11.md)。
-[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.5.11-sql.zip) 同时提供完整初始化与历史适用增量。
+0.6.0 更新：改进表情包图片格式识别与预览处理、回复和媒体发送，以及工作流必需原图的校验提示。
+从已完成数据库升级的 0.5.11 更新无需新增 SQL 迁移；详见 [0.6.0 升级说明](sql/UPGRADE-0.6.0.md)。
+[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.6.0-sql.zip) 同时提供完整初始化与历史适用增量。
 
 适用于 Windows 10/11 x64，无需安装 Python、uv 或 Node.js。
 
@@ -551,7 +551,7 @@ Windows 独立桌面版可执行 `powershell -ExecutionPolicy Bypass -File tools
 ```powershell
 npm --prefix web run build
 uv build
-uv run python tools/check_package.py dist/agent_bot-0.5.11-py3-none-any.whl
+uv run python tools/check_package.py dist/agent_bot-0.6.0-py3-none-any.whl
 ```
 
 wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行模块、静态界面和 SQL 资源，并排除凭据、缓存、日志及媒体文件。
@@ -560,7 +560,7 @@ wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行�
 
 ```powershell
 uv venv --python 3.12
-uv pip install "D:\packages\agent_bot-0.5.11-py3-none-any.whl"
+uv pip install "D:\packages\agent_bot-0.6.0-py3-none-any.whl"
 .venv\Scripts\agent-bot.exe --help
 ```
 

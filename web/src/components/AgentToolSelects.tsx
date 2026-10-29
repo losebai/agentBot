@@ -12,6 +12,8 @@ const builtinTools = [
   ['bilibili_reply_comment', 'B站回复评论'], ['bilibili_publish_video', 'B站视频投稿'],
   ['bilibili_publish_dynamic', 'B站发布图文动态'],
   ['read_url', '网页读取'],
+  // 宿主工具由公共核心提供，实际执行仍由管理员/主人身份和 Agent 选择共同授权。
+  ['ls', '目录浏览（仅管理员/主人）'], ['bash', '终端命令（仅管理员/主人）'],
   ['knowledge_search', '知识库检索'],
   ['material_search', '素材查询'], ['material_get', '素材读取'],
   ['memory', '标签记忆（QQ）'], ['naraka_query', '永劫无间查询（QQ）'],

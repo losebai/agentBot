@@ -23,6 +23,7 @@ dependencies = [
   "nonebot2[fastapi,websockets]>=2.5.0,<3.0",
   "pillow>=11.0,<13.0",
   "pymysql>=1.1,<2.0",
+  "pywin32>=311; sys_platform == 'win32'",
   "redis>=5.2,<7.0",
   "langchain>=1,<2",
   "langchain-core>=1,<2",
@@ -39,7 +40,6 @@ chat = "agent_bot.bot_cli:main"
 [project.optional-dependencies]
 desktop = [
   "pywebview>=6.0,<7; sys_platform == 'win32'",
-  "pywin32>=311; sys_platform == 'win32'",
 ]
 dev = [
   "nonebug>=0.4.3,<1.0",

@@ -27,6 +27,63 @@ def _private_event() -> PrivateMessageEvent:
     )
 
 
+@pytest.mark.parametrize("is_owner,mcp_enabled,has_store,expected", [
+    (True, True, True, {"ls", "bash"}),
+    (False, True, True, set()),
+    (True, False, True, set()),
+    (True, True, False, set()),
+])
+def test_host_tools_require_owner_and_existing_session_gates(
+    chat_plugin, is_owner, mcp_enabled, has_store, expected,
+):
+    """主人本机能力保留 MCP 和会话存储门禁，自动群聊没有真人身份。"""
+    config = chat_plugin.plugin_config.model_copy(update={
+        "chat_mcp_enabled": mcp_enabled, "superusers": {"10001"} if is_owner else set(),
+    })
+    manager = ChatToolSessionManager(
+        config_provider=lambda: config, store_provider=lambda: object() if has_store else None,
+        naraka_service_provider=lambda: None,
+        group_member_refresher=lambda _bot, _group: None,
+    )
+    assert set(manager.available_tools(_private_event())) & {"ls", "bash"} == expected
+    assert not set(manager.available_group_tools()) & {"ls", "bash"}
+
+
+async def test_queued_host_tools_reject_automatic_or_revoked_owner(chat_plugin, monkeypatch):
+    """队列只恢复真人主人的显式工具，自动来源和已撤销主人均失败。"""
+    from unittest.mock import Mock
+
+    from agent_bot.services.conversation_queue import ConversationJob
+    from agent_bot.services.tool_sessions import ToolSessionStore
+
+    config = chat_plugin.plugin_config.model_copy(update={
+        "chat_mcp_enabled": True, "superusers": {"10001"},
+    })
+    sessions = ToolSessionStore(ttl_seconds=30, max_sessions=2)
+    manager = ChatToolSessionManager(
+        config_provider=lambda: config, store_provider=lambda: sessions,
+        naraka_service_provider=lambda: None,
+        group_member_refresher=lambda _bot, _group: None,
+    )
+    monkeypatch.setattr(manager, "queued_bot", lambda _: Mock(self_id="90001"))
+    job = ConversationJob(
+        job_id="host-tools", request_id="qq-host-tools", created_at=1700000000,
+        session_id="destination", bot_id="90001", scene="private", user_id="10001",
+        prompt="列出目录", memory_source_text="列出目录", chat_tools=("ls", "bash"),
+    )
+    async with manager.open_queued_session(job) as lease:
+        assert set(lease.tools) == {"ls", "bash"}
+        assert (await sessions.resolve(lease.token)).allowed_tools == frozenset({"ls", "bash"})
+    automatic = job.model_copy(update={"request_id": "auto-host-tools"})
+    with pytest.raises(RuntimeError, match="configuration changed"):
+        async with manager.open_queued_session(automatic):
+            pytest.fail("自动任务不能借用主人身份")
+    config = config.model_copy(update={"superusers": set()})
+    with pytest.raises(RuntimeError, match="configuration changed"):
+        async with manager.open_queued_session(job):
+            pytest.fail("已撤销主人不能恢复旧工具授权")
+
+
 @pytest.mark.parametrize("is_owner", [True, False])
 async def test_material_library_access_requires_human_owner_in_direct_and_queue(
     chat_plugin, monkeypatch, is_owner,

@@ -27,13 +27,13 @@ def test_qq_plugin_tools_follow_runtime_provider_instead_of_saved_selection():
         plugin_tools_provider=lambda: available,
     )
     event = SimpleNamespace(user_id=10001)
-    assert manager.available_tools(event) == ()
+    assert manager.available_tools(event) == ('ls', 'bash')
     available = ('bilibili_login_status', 'bilibili_get_comments', 'bilibili_reply_comment')
-    assert manager.available_tools(event) == available
+    assert manager.available_tools(event) == ('ls', 'bash', *available)
     config = config.model_copy(update={'app_enabled_plugins': []})
-    assert manager.available_tools(event) == available
+    assert manager.available_tools(event) == ('ls', 'bash', *available)
     available = ()
-    assert manager.available_tools(event) == ()
+    assert manager.available_tools(event) == ('ls', 'bash')
 
 
 async def test_bilibili_stopping_revokes_previously_bound_tool_session():

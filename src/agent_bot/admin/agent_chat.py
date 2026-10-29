@@ -78,7 +78,7 @@ class AgentChatProbe:
         return service
 
     def authority(self):
-        """运行时真实可用的管理媒体工具才可加入授权。"""
+        """仅授予运行时已装配的管理媒体、平台及宿主工具。"""
         names = ("read_url",)
         if getattr(self.service().tool_runtime, "knowledge_store", None) is not None:
             names += ("knowledge_search",)
@@ -90,6 +90,9 @@ class AgentChatProbe:
         bilibili = getattr(self.service().tool_runtime, 'bilibili_tools', None)
         if bilibili is not None:
             names += tuple(sorted(bilibili.allowed_tools))
+        host = getattr(self.service().tool_runtime, 'host_tools', None)
+        if host is not None:
+            names += tuple(sorted(host.allowed_tools))
         return ExecutionAuthority(entry="admin", allowed_tools=names)
 
     async def complete(self, body, request_id):

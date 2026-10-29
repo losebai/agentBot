@@ -7,6 +7,7 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from agent_bot.agent.tools.host_contracts import HOST_TOOLS
 from agent_bot.models import ChatToolName
 from agent_bot.plugins.bilibili.contracts import BILIBILI_TOOLS
 
@@ -31,7 +32,7 @@ class ChatRouteSelector:
         available_tools: Sequence[ChatToolName] = (),
         web_search_enabled: bool = True,
     ) -> ChatRoute:
-        """搜索、配置和插件工具交由模型选择，主人身份仍由入口和执行层校验。"""
+        """搜索、配置、宿主和插件工具交由模型选择，主人身份仍由入口与执行层校验。"""
 
         text = unicodedata.normalize("NFKC", prompt).strip()[:20_000]
         selected: set[ChatToolName] = set()
@@ -53,5 +54,7 @@ class ChatRouteSelector:
         )
         # B站工具由插件生命周期和会话授权提供，不能被旧的固定工具名单提前过滤。
         selected.update(BILIBILI_TOOLS)
+        # 仅保留入口已批准的宿主能力，定义由 HostTools 提供而非 Chat MCP 注册表。
+        selected.update(HOST_TOOLS)
         tools = tuple(tool for tool in dict.fromkeys(available_tools) if tool in selected)
         return ChatRoute(chat_tools=tools, web_search=web_search_enabled)

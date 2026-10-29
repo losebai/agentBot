@@ -64,7 +64,7 @@ class ChatToolSessionLease:
 
 
 class ChatToolSessionManager:
-    """按消息场景创建最小权限的 MCP 工具会话。"""
+    """按消息场景创建最小权限的聊天工具会话，供独立适配器验证真实身份。"""
 
     def __init__(
         self,
@@ -104,7 +104,7 @@ class ChatToolSessionManager:
         self._bot_config_tools_provider = bot_config_tools_provider
 
     def available_tools(self, event: MessageEvent) -> tuple[ChatToolName, ...]:
-        """按真实事件授予主人配置能力，B站写工具也只授予已有超级用户。"""
+        """按真实事件授予主人配置及宿主能力，B站写工具也仅授予超级用户。"""
 
         from agent_bot.plugins.bilibili.contracts import WRITE_TOOLS
 
@@ -123,12 +123,15 @@ class ChatToolSessionManager:
     def _available_tools(
         self, *, group: bool, user_id: str | None = None,
     ) -> tuple[ChatToolName, ...]:
-        """配置能力还需真人主人身份；无入站身份的自动发言不获得该权限。"""
+        """配置与宿主能力要求真人主人身份，自动发言不获得该权限。"""
 
         config = self._config_provider()
         if not config.chat_mcp_enabled or self._store_provider() is None:
             return ()
         tools: list[ChatToolName] = []
+        if user_id in config.superusers:
+            # 宿主能力属于公共核心，不随平台插件开放；不能从自动任务借用主人账号。
+            tools.extend(("ls", "bash"))
         if user_id in config.superusers and self._bot_config_tools_provider() is not None:
             tools.extend(("bot_config_get", "bot_config_update"))
         if config.chat_job_enabled:
@@ -255,7 +258,7 @@ class ChatToolSessionManager:
         self,
         job: ConversationJob,
     ) -> AsyncIterator[ChatToolSessionLease]:
-        """恢复真实用户授权；自动任务不能借主人账号获得配置及跨会话素材权限。"""
+        """恢复真人授权；自动任务不能借主人账号获得配置、宿主及跨会话素材权限。"""
 
         config = self._config_provider()
         material_library_access = (

@@ -11,6 +11,7 @@ from agent_bot.agent.mcp.credentials import McpCredentials
 from agent_bot.agent.records import AgentRunStore
 from agent_bot.agent.service import AgentService
 from agent_bot.agent.tools.chat import ChatToolBridge
+from agent_bot.agent.tools.host import HostTools
 from agent_bot.agent.tools.media import AdminMediaTools
 from agent_bot.agent.tools.runtime import ToolRuntime
 from agent_bot.ai.catalog import AiCatalog
@@ -143,6 +144,8 @@ def build_core_state(
                 mcp_connector,
                 chat_tool_bridge,
                 bilibili_tools=bilibili_tools,
+                # 配置热刷新会排空旧请求再发布新核心，调用始终复核本代主人集合。
+                host_tools=HostTools(lambda: config.superusers),
                 knowledge_store=(knowledge_store if knowledge_store is not None else
                                  KnowledgeStore(database, connect=database_pool.connect)),
                 job_tools=JobTools(job_store) if config.chat_job_enabled else None,

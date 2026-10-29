@@ -6,6 +6,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ChatToolName = Literal[
+    # 宿主工具独立绑定，仅真人主人会话可携带此授权。
+    "ls", "bash",
     "bot_config_get", "bot_config_update",
     "soloncode",
     "job",
@@ -23,6 +25,7 @@ ChatToolName = Literal[
     "bilibili_reply_comment", "bilibili_publish_video", "bilibili_publish_dynamic",
 ]
 AgentToolName = Literal[
+    "ls", "bash",
     "bot_config_get", "bot_config_update",
     "soloncode",
     "job",

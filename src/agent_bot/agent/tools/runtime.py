@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 
 from agent_bot.agent.errors import AgentError
+from agent_bot.agent.tools.host_contracts import HOST_TOOLS
 from agent_bot.agent.tools.knowledge import KnowledgeSearchTool
 from agent_bot.agent.tools.local_media import validate_local_call
 from agent_bot.agent.tools.materials import MaterialGetTool, MaterialSearchTool
@@ -48,7 +49,7 @@ class ToolRuntime:
 
     def __init__(self, connector, chat_bridge=None, reader=None, *, admin_media_tools=None,
                  job_tools=None, knowledge_store=None, material_store=None, media_store=None,
-                 bilibili_tools=None):
+                 bilibili_tools=None, host_tools=None):
         """本地适配器引用当前运行时的客户端与任务存储。"""
         self.connector, self.chat_bridge = connector, chat_bridge
         self.reader = reader or PublicPageReader()
@@ -58,6 +59,7 @@ class ToolRuntime:
         self.material_store = material_store
         self.media_store = media_store
         self.bilibili_tools = bilibili_tools
+        self.host_tools = host_tools
 
     @asynccontextmanager
     async def open(self, snapshot, request, authority, *, media_scope=None, images=()):
@@ -117,6 +119,14 @@ class ToolRuntime:
                         raise AgentError('AGENT_TOOL_NAME_CONFLICT', status_code=409)
                     definitions.append(definition)
                     handlers[definition.name] = session.call
+            if self.host_tools is not None:
+                # 宿主工具单独绑定真实入口身份，仍由后续策略取 Agent 与入口授权交集。
+                session = self.host_tools.bind(request, authority, self.chat_bridge)
+                for definition in session.definitions:
+                    if definition.name in handlers:
+                        raise AgentError('AGENT_TOOL_NAME_CONFLICT', status_code=409)
+                    definitions.append(definition)
+                    handlers[definition.name] = session.call
             if authority.entry == "qq" and set(authority.allowed_tools) & CHAT_TOOLS:
                 if self.chat_bridge is None:
                     raise AgentError("AGENT_CHAT_TOOLS_UNAVAILABLE", status_code=503)
@@ -163,6 +173,9 @@ class ToolRuntime:
                 tuple(dict.fromkeys((*snapshot.agent.tools, *(t.name for t in remote.tools))))
                 if snapshot.agent else auth.allowed_tools
             )
+            if snapshot.agent is None and self.host_tools is not None:
+                # 主人入口有资格不等于默认授权本机操作；必须在命名 Agent 中显式勾选。
+                configured = tuple(name for name in configured if name not in HOST_TOOLS)
             if remote.warnings and request.tools is None:
                 unavailable = {w.service_code for w in remote.warnings}
                 available = {t.name for t in definitions}

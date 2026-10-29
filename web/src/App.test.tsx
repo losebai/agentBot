@@ -10,13 +10,6 @@ function getVisibleButton(name: string | RegExp, root: HTMLElement = document.bo
   return button;
 }
 
-/** 页签具有直接可读名称，保留可见性校验后再执行切换。 */
-function getVisibleTab(name: string, root: HTMLElement = document.body) {
-  const tab = within(root).getByText(name, { selector: '[role="tab"]' });
-  expect(tab).toBeVisible();
-  return tab;
-}
-
 /** 从弹窗自身标题定位容器，后续表单和操作均限定在该弹窗内。 */
 async function findVisibleDialog(title: string) {
   return waitFor(() => {
@@ -134,62 +127,48 @@ it('查询登录模式失败时显示错误，不能误进入系统', async () =
   expect(screen.queryByLabelText('管理员密码')).not.toBeInTheDocument();
 });
 
-it('Agent 管理中新增共享 Skill 后，切回 Agent 即可关联并保存', async () => {
-  const skills: Record<string, unknown>[] = [];
-  let patch: unknown;
+it('角色和人格直接展示配置，远程服务从一级导航独立创建', async () => {
+  const servers: Record<string, unknown>[] = [];
   const agent = { id: 1, revision: 1, code: 'helper', name: '助手', description: '',
     enabled: true, model_id: 1, vision_model_id: null, fallback_model_id: null,
     tools: [], skill_ids: [], mcp_ids: [], system_prompt: '', max_steps: 3, options: {} };
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
     const path = new URL(String(url), 'http://offline.test').pathname;
     if (path.endsWith('/auth')) return Response.json({ password_required: false });
-    if (path.endsWith('/skills')) {
+    if (path.endsWith('/mcp-servers')) {
       if (init?.method === 'POST') {
-        const skill = { ...JSON.parse(String(init.body)), id: 7, revision: 1 };
-        skills.push(skill);
-        return Response.json(skill, { status: 201 });
+        const server = { ...JSON.parse(String(init.body)), id: 7, revision: 1 };
+        servers.push(server);
+        return Response.json(server, { status: 201 });
       }
-      return Response.json({ items: skills, next_cursor: null });
-    }
-    if (path.endsWith('/agents/1') && init?.method === 'PATCH') {
-      patch = JSON.parse(String(init.body));
-      return Response.json({ ...agent, skill_ids: [7], revision: 2 });
+      return Response.json({ items: servers, next_cursor: null });
     }
     if (path.endsWith('/agents')) return Response.json({ items: [agent], next_cursor: null });
-    if (path.endsWith('/models') || path.endsWith('/mcp-servers')) {
+    if (path.endsWith('/models') || path.endsWith('/skills')) {
       return Response.json({ items: [], next_cursor: null });
     }
     return managementResponse(String(url));
   }));
   render(<App />);
-  const navigation = await screen.findByRole('navigation');
-  expect(within(navigation).queryByRole('button', { name: /Skill 管理$/ })).not.toBeInTheDocument();
-  expect(within(navigation).queryByRole('button', { name: /MCP 服务$/ })).not.toBeInTheDocument();
-  fireEvent.click(getVisibleButton(/Agent 管理$/, navigation));
-  expect(await screen.findByLabelText('编辑助手')).toBeVisible();
-  fireEvent.click(getVisibleTab('Skill'));
-  await waitFor(() => expect(getVisibleButton('新增 Skill')).toBeEnabled());
-  fireEvent.click(getVisibleButton('新增 Skill'));
-  const dialog = await findVisibleDialog('新增 Skill');
-  fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '共享写作' } });
-  fireEvent.click(within(dialog).getByLabelText('启用 Skill'));
-  fireEvent.click(getVisibleButton('保存 Skill', dialog));
+  const navigation = await screen.findByRole('navigation', { name: '主导航' });
+  fireEvent.click(getVisibleButton(/角色和人格$/, navigation));
+  expect(await screen.findByRole('heading', { name: '角色和人格' })).toBeVisible();
+  expect(await screen.findByRole('group', { name: '切换 Agent' })).toBeVisible();
+  expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '新增 Skill' })).not.toBeInTheDocument();
+  fireEvent.click(getVisibleButton(/远程服务$/, navigation));
+  expect(await screen.findByRole('heading', { name: '远程服务' })).toBeVisible();
+  expect(screen.queryByRole('group', { name: '切换 Agent' })).not.toBeInTheDocument();
+  await waitFor(() => expect(getVisibleButton('新增 远程服务')).toBeEnabled());
+  fireEvent.click(getVisibleButton('新增 远程服务'));
+  const dialog = await findVisibleDialog('新增 远程服务');
+  fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '资料服务' } });
+  fireEvent.change(within(dialog).getByLabelText('服务代码'), { target: { value: 'library' } });
+  fireEvent.change(within(dialog).getByLabelText('服务地址'), { target: { value: 'http://localhost:9000/mcp' } });
+  fireEvent.click(getVisibleButton('保存 远程服务', dialog));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
-  expect(await screen.findByText('共享写作')).toBeVisible();
-  fireEvent.click(getVisibleTab('MCP'));
-  expect(await screen.findByText('MCP 服务', { selector: 'h1' })).toBeVisible();
-  await waitFor(() => expect(getVisibleButton('新增 MCP')).toBeEnabled());
-  fireEvent.click(getVisibleButton('新增 MCP'));
-  const mcpDialog = await findVisibleDialog('新增 MCP');
-  await waitFor(() => expect(within(mcpDialog).getByLabelText('服务地址')).toBeVisible());
-  fireEvent.click(getVisibleButton(/取\s*消/, mcpDialog));
-  await waitFor(() => expect(mcpDialog).not.toBeInTheDocument());
-  fireEvent.click(getVisibleTab('Agent'));
-  fireEvent.click(await screen.findByLabelText('编辑助手'));
-  const agentDialog = await findVisibleDialog('编辑 Agent');
-  const sharedSkill = within(agentDialog).getByLabelText('共享写作');
-  expect(sharedSkill).toBeVisible();
-  fireEvent.click(sharedSkill);
-  fireEvent.click(getVisibleButton('保存 Agent', agentDialog));
-  await waitFor(() => expect(patch).toEqual({ expected_revision: 1, skill_ids: [7] }));
+  expect(await screen.findByText('资料服务')).toBeVisible();
+  fireEvent.click(getVisibleButton(/角色和人格$/, navigation));
+  expect(await screen.findByRole('group', { name: '切换 Agent' })).toBeVisible();
+  expect(screen.getByRole('button', { name: /远程服务$/ })).toBeVisible();
 }, 20000);

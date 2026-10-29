@@ -217,6 +217,28 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .catalog-dialog .catalog-form .heading-actions { padding-top: 12px; }
 .catalog-dialog .catalog-form input[readonly] { background: #f3f6fb; color: var(--text-secondary); }
 .catalog-dialog > .ant-modal-content { overflow: hidden; }
+.agent-prompt-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.agent-prompt-columns textarea { min-height: 190px; }
+.agent-prompt-preview { min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+.agent-prompt-preview summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+.agent-prompt-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; font: inherit; font-size: 13px; margin: 12px 0 0; }
+/* Agent 以整页双栏编辑，切换按钮保留固定身份，表单不再受目录弹窗宽度限制。 */
+.agent-switcher { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 20px; }
+.agent-editor.catalog-form { max-width: none; padding: 24px; }
+.agent-editor.catalog-form .agent-editor-fields { border: 0; padding: 0; min-width: 0; gap: 20px; }
+.agent-basics { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 20px; align-items: end; }
+.agent-basics .checkbox-label { padding-bottom: 10px; }
+.agent-editor .agent-prompt-columns textarea { min-height: 360px; }
+.agent-editor .agent-prompt-preview { background: var(--surface-subtle); }
+.agent-save-actions { padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.agent-delete-confirm { padding: 16px; border: 1px solid #eddcdc; border-radius: 8px; background: #fcf5f5; }
+.agent-delete-confirm button + button { margin-left: 10px; }
+@media (max-width: 600px) {
+  .agent-prompt-columns { grid-template-columns: minmax(0, 1fr); }
+  .agent-basics { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .agent-editor.catalog-form { padding: 16px; }
+  .agent-editor .agent-prompt-columns textarea { min-height: 260px; }
+}
 
 /* 供应商列表和模型目录分别承载导航与编辑，窄屏仍保留完整操作。 */
 .provider-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; }

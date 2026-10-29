@@ -452,6 +452,8 @@ CREATE TABLE IF NOT EXISTS agent_bot_agent (
     created_at DATETIME NOT NULL,
     -- 更新时间，协调世界时
     updated_at DATETIME NOT NULL,
+    -- 独立人格设定，空字符串表示仅使用角色设定。
+    personality_prompt TEXT NOT NULL DEFAULT '',
     -- 外键保护引用完整性，保留级联删除规则。
     CONSTRAINT fk_agent_model FOREIGN KEY(model_id) REFERENCES agent_bot_ai_model(id)
 );

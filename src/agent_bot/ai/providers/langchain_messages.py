@@ -7,6 +7,7 @@ from agent_bot.agent.contracts import AgentModelCall, ModelTurn, ToolCall, TurnM
 from agent_bot.agent.errors import AgentError
 from agent_bot.ai.contracts import TokenUsage
 from agent_bot.ai.providers.langchain_http import strict_object
+from agent_bot.services.reply_text import contains_tool_call_markup
 
 
 def to_langchain_messages(messages: tuple[TurnMessage, ...]) -> list[BaseMessage]:
@@ -78,7 +79,7 @@ def to_langchain_messages(messages: tuple[TurnMessage, ...]) -> list[BaseMessage
 
 
 def to_model_turn(message: AIMessage, call: AgentModelCall) -> ModelTurn:
-    """校验文本和工具协议，调用次数由执行层配置控制，不在协议转换时截断。"""
+    """校验原生文本与工具协议，拒绝伪调用正文，实际工具次数仍由执行层控制。"""
     if message.invalid_tool_calls:
         raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
     for raw in message.additional_kwargs.get("tool_calls", []):
@@ -97,6 +98,7 @@ def to_model_turn(message: AIMessage, call: AgentModelCall) -> ModelTurn:
     text = str(message.text)
     if (
         len(text.encode()) > 1048576
+        or contains_tool_call_markup(text)
         or len({item.call_id for item in calls}) != len(calls)
         or (call.final_only and calls)
         or (not calls and not text.strip())

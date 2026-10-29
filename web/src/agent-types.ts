@@ -5,8 +5,8 @@ import type { MediaAsset } from './media-types';
 export interface DirectoryDraft { name: string; description: string; enabled: boolean }
 export interface Versioned { id: number; revision: number; created_at?: string; updated_at?: string }
 /** 聊天模型沿用原绑定，图片和错误转发空值分别表示沿用及关闭。 */
-/** Agent 预设只管理能力与模型，工具调用预算由机器人配置统一提供。 */
-export interface AgentDraft extends DirectoryDraft { code: string; model_id: number; vision_model_id?: number | null; fallback_model_id?: number | null; system_prompt: string; skill_ids: number[]; mcp_ids: number[]; tools: string[]; options: Record<string, JsonValue> }
+/** Agent 分别保存角色和人格；旧响应可省略人格，工具调用预算由机器人配置统一提供。 */
+export interface AgentDraft extends DirectoryDraft { code: string; model_id: number; vision_model_id?: number | null; fallback_model_id?: number | null; system_prompt: string; personality_prompt?: string; skill_ids: number[]; mcp_ids: number[]; tools: string[]; options: Record<string, JsonValue> }
 export interface Agent extends AgentDraft, Versioned {}
 export interface SkillDraft extends DirectoryDraft { category: string; system_prompt: string; sample_prompt: string; tools: string[] }
 export interface Skill extends SkillDraft, Versioned {}

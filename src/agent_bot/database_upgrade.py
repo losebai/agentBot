@@ -47,6 +47,8 @@ MIGRATIONS = (
               "2026-10-28-comfy-plugin.sqlite.sql", True),
     Migration("0.5.9", "material-classification-v1", "material-classification.sql",
               "material-classification.sqlite.sql", True),
+    Migration("0.5.10", "agent-personality-v1", "agent-personality.sql",
+              "agent-personality.sqlite.sql", True),
 )
 
 
@@ -163,6 +165,49 @@ def _execute(connection: Any, script: str) -> None:
             cursor.execute(statement)
 
 
+def _personality_column(connection: Any, backend: str) -> tuple[str, bool, Any] | None:
+    """读取人格列的类型、非空性和默认值，区分完整新库与已提交的中间状态。"""
+    with connection.cursor() as cursor:
+        if backend == "mysql":
+            cursor.execute(
+                "SELECT DATA_TYPE AS data_type,IS_NULLABLE AS is_nullable,"
+                "COLUMN_DEFAULT AS column_default FROM information_schema.columns "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='agent_bot_agent' "
+                "AND COLUMN_NAME='personality_prompt'"
+            )
+            row = cursor.fetchone()
+            if row:
+                return row["data_type"], row["is_nullable"] == "NO", row["column_default"]
+            return None
+        cursor.execute("PRAGMA table_info(agent_bot_agent)")
+        for row in cursor.fetchall():
+            if row["name"] == "personality_prompt":
+                return row["type"].lower(), bool(row["notnull"]), row["dflt_value"]
+    return None
+
+
+def _validate_personality(connection: Any, backend: str) -> None:
+    """同名列仍须符合当前后端完整初始化结构，禁止将未知结构登记为迁移完成。"""
+    expected = ("mediumtext", True, None) if backend == "mysql" else ("text", True, "''")
+    if _personality_column(connection, backend) != expected:
+        raise UpgradeError("Agent 人格字段结构不匹配，停止启动；请核对人格增量及完整初始化结构。")
+
+
+def _upgrade_personality(connection: Any, backend: str, script: str) -> None:
+    """仅按人格列已提交状态恢复增量，不重放 ADD 或改写既有角色与非空人格。"""
+    column = _personality_column(connection, backend)
+    statements = split_sql(script)
+    with connection.cursor() as cursor:
+        if column is None:
+            cursor.execute(statements[0])
+            column = _personality_column(connection, backend)
+        if backend == "mysql" and column == ("mediumtext", False, None):
+            # ADD 已提交时只恢复回填和非空约束；UPDATE 仅触及本次新增列的 NULL。
+            for statement in statements[1:]:
+                cursor.execute(statement)
+    _validate_personality(connection, backend)
+
+
 def upgrade_database(
     params: DatabaseParams,
     *,
@@ -235,8 +280,12 @@ def upgrade_database(
                     )
                 if previous is None:
                     # 有版本记录的旧结构须先跑增量，不能拿新结构提前拒绝它。
+                    baseline = {
+                        name: columns - {"personality_prompt"} if name == "agent_bot_agent"
+                        else columns for name, columns in expected.items()
+                    }
                     _validate(
-                        actual, expected,
+                        actual, baseline,
                         exclude=METADATA_TABLES | BILIBILI_TABLES | MATERIAL_CLASSIFICATION_TABLES,
                     )
                     _validate_model_baseline(connection, params.backend)
@@ -291,7 +340,10 @@ def upgrade_database(
                             )
                     if params.backend == "mysql":
                         connection.commit()
-                    _execute(connection, script)
+                    if item.name == "agent-personality-v1":
+                        _upgrade_personality(connection, params.backend, script)
+                    else:
+                        _execute(connection, script)
                     with connection.cursor() as cursor:
                         cursor.execute(
                             f"UPDATE {HISTORY_TABLE} SET status=%s,"
@@ -304,6 +356,8 @@ def upgrade_database(
                     current_step = None
                     applied.append(item.name)
                 _validate(_schema(connection, params.backend), expected)
+                if any(item.name == "agent-personality-v1" for item in active):
+                    _validate_personality(connection, params.backend)
                 if previous != target:
                     with connection.cursor() as cursor:
                         if previous is None:

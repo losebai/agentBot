@@ -57,7 +57,8 @@ def test_same_software_version_still_applies_new_registered_migration(legacy_dat
     from agent_bot.database_upgrade import MIGRATIONS
 
     upgrade_database(
-        legacy_database, read_resource=resource, migrations=(MIGRATIONS[0], MIGRATIONS[2]),
+        legacy_database, read_resource=resource,
+        migrations=tuple(item for item in MIGRATIONS if item.name != 'comfy-plugin-v1'),
     )
     with sqlite3.connect(legacy_database.sqlite_path) as connection:
         connection.execute("INSERT INTO chat_setting_revision(id,revision) VALUES (1,5)")

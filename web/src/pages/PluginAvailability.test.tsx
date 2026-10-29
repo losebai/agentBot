@@ -57,7 +57,7 @@ it('未运行插件的工具不出现在候选和选中标签，修改通用工�
   const change = vi.fn();
   render(<AgentToolSelects token="offline" tools={['bilibili_reply_comment', 'memory']}
     mcpIds={[]} onToolsChange={change} onMcpsChange={() => {}} />);
-  await waitFor(() => expect(screen.getByRole('combobox', { name: '关联 MCP（最多 3 个）' })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole('combobox', { name: '关联远程服务（最多 3 个）' })).toBeEnabled());
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '允许工具' }));
   expect(screen.queryAllByText(/B站回复评论|bilibili_reply_comment/)).toHaveLength(0);
   expect(screen.queryAllByText(/标签记忆|memory/)).toHaveLength(0);
@@ -71,15 +71,16 @@ it('只展示运行插件的工具，保存待启用状态不等于已经运行'
   servePlugins([plugin('bilibili', 'running'), plugin('qqbot', 'prepared')]);
   render(<AgentToolSelects token="offline" tools={[]} mcpIds={[]}
     onToolsChange={() => {}} onMcpsChange={() => {}} />);
-  await waitFor(() => expect(screen.getByRole('combobox', { name: '关联 MCP（最多 3 个）' })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole('combobox', { name: '关联远程服务（最多 3 个）' })).toBeEnabled());
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '允许工具' }));
   await waitFor(() => expect(screen.getByText('B站视频投稿 · bilibili_publish_video')).toBeVisible());
   expect(screen.queryByText(/标签记忆/)).not.toBeInTheDocument();
 });
 
-it('B站未运行时不显示专属投稿视频上传入口', async () => {
+it('B站未运行时统一文件入口不开放视频类型', async () => {
   servePlugins([plugin('bilibili', 'disabled')]);
   render(<AgentChat token="offline" />);
   await waitFor(() => expect(screen.getByRole('combobox', { name: '选择 Agent' })).toBeVisible());
   expect(screen.queryByLabelText('添加投稿视频')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('添加文件')).not.toHaveAttribute('accept', expect.stringContaining('video/mp4'));
 });

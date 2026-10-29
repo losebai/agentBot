@@ -28,9 +28,9 @@ it('数据库令牌不回填，其他字段更新保留凭据，空集合表示�
   expect(screen.queryByText('actual-secret')).not.toBeInTheDocument();
   fireEvent.click(screen.getByLabelText('必需连接'));
   fireEvent.change(screen.getByLabelText('工具白名单'),{target:{value:''}});
-  expect(getVisibleButton('保存 MCP')).toBeEnabled();
+  expect(getVisibleButton('保存 远程服务')).toBeEnabled();
   fireEvent.change(screen.getByLabelText('工具白名单'),{target:{value:'lookup'}});
-  fireEvent.click(getVisibleButton('保存 MCP'));
+  fireEvent.click(getVisibleButton('保存 远程服务'));
   await waitFor(()=>expect(JSON.parse(fetcher.mock.calls.find(([,init])=>init?.method==='PATCH')![1]!.body)).toEqual({expected_revision:1,required:true}));
 });
 
@@ -44,12 +44,15 @@ it('获取全部工具后可单独关闭工具并保存集合，不执行服务�
   vi.stubGlobal('fetch', fetcher);
   render(<McpServers token="offline" />);
   await openEditor('编辑Windows');
+  expect(screen.getByRole('region', { name: '远程服务工具管理' })).toBeVisible();
   fireEvent.click(getVisibleButton('获取全部工具'));
   await waitFor(() => expect(screen.getByText('读取桌面状态')).toBeVisible());
+  expect(screen.getByRole('table', { name: '远程服务工具列表' })).toBeVisible();
+  expect(screen.getByText(/开关修改在保存远程服务后生效/)).toBeVisible();
   expect(screen.getByLabelText('启用工具 Snapshot')).toBeChecked();
   fireEvent.click(screen.getByLabelText('启用工具 Click'));
   expect(screen.getByLabelText('启用工具 Click')).not.toBeChecked();
-  fireEvent.click(getVisibleButton('保存 MCP'));
+  fireEvent.click(getVisibleButton('保存 远程服务'));
   await waitFor(() => expect(JSON.parse(fetcher.mock.calls.find(([,init])=>init?.method==='PATCH')![1]!.body)).toEqual({expected_revision:3,allowed_tools:['Snapshot']}));
 });
 
@@ -68,7 +71,7 @@ it('工具列表获取失败可重试，关闭全部与启用全部更新草稿'
   expect(await screen.findByLabelText('启用工具 Snapshot')).toBeChecked();
   fireEvent.click(getVisibleButton('关闭全部工具'));
   expect(screen.getByLabelText('工具白名单')).toHaveValue('');
-  expect(getVisibleButton('保存 MCP')).toBeEnabled();
+  expect(getVisibleButton('保存 远程服务')).toBeEnabled();
   fireEvent.click(getVisibleButton('启用全部工具'));
   expect(screen.getByLabelText('工具白名单')).toHaveValue('*');
 });
@@ -100,12 +103,12 @@ it('替换令牌直接写入数据库，清除必须明确勾选',async()=>{
   vi.stubGlobal('fetch',fetcher);render(<McpServers token="offline"/>);
   await openEditor('编辑资料库');
   fireEvent.change(screen.getByLabelText('访问令牌'),{target:{value:'replacement-token'}});
-  fireEvent.click(getVisibleButton('保存 MCP'));
+  fireEvent.click(getVisibleButton('保存 远程服务'));
   await waitFor(()=>expect(JSON.parse(fetcher.mock.calls.find(([,init])=>init?.method==='PATCH')![1]!.body)).toEqual({expected_revision:1,credential:'replacement-token'}));
   await openEditor('编辑资料库');
   expect(screen.getByLabelText('访问令牌')).toHaveValue('');
   fireEvent.click(screen.getByLabelText('清除访问令牌并改为无需鉴权'));
-  fireEvent.click(getVisibleButton('保存 MCP'));
+  fireEvent.click(getVisibleButton('保存 远程服务'));
   await waitFor(()=>expect(fetcher.mock.calls.filter(([,init])=>init?.method==='PATCH')).toHaveLength(2));
   expect(JSON.parse(fetcher.mock.calls.filter(([,init])=>init?.method==='PATCH')[1][1]!.body).credential).toBeNull();
 });

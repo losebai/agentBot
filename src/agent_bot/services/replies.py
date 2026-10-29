@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 from agent_bot.models import ChatContext
 from agent_bot.services.chat import ChatService
 from agent_bot.services.multi_reply import join_reply_array
-from agent_bot.services.reply_text import clean_internal_reply_text
+from agent_bot.services.reply_text import clean_internal_reply_text, contains_tool_call_markup
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ class ReplyIntent(BaseModel):
 
 
 class GeneratedReply(BaseModel):
-    """模型来源正文统一清除内部 @ 标记，文件与明确分条保留原始换行格式。"""
+    """模型正文拒绝伪工具调用并清除内部 @，文件与明确分条保留换行格式。"""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True, extra="forbid")
 
@@ -164,7 +164,9 @@ class GeneratedReply(BaseModel):
     @field_validator("text")
     @classmethod
     def normalize_line_breaks(cls, value: str, info: ValidationInfo) -> str:
-        """内部标记不能回显或升级为真实 @；普通消息另行规范化空白行。"""
+        """伪调用整条拒绝，避免保留虚假的执行声明；普通消息再规范化空白行。"""
+        if contains_tool_call_markup(value):
+            raise ValueError("generated reply contains tool call markup")
         value = clean_internal_reply_text(value)
         if not value.strip():
             raise ValueError("generated reply has no visible text")

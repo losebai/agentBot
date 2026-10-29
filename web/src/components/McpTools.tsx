@@ -42,7 +42,7 @@ export function McpTools({ api, server, connectionChanged, allowedTools, onChang
     onChange(enabled ? Array.from(new Set([...current, name])) : current.filter(tool => tool !== name));
   }
 
-  return <section aria-label="MCP 工具管理">
+  return <section aria-label="远程服务工具管理">
     <div className="heading-actions">
       <Button loading={busy} disabled={!server || connectionChanged} onClick={() => void load()}>获取全部工具</Button>
       <Button disabled={busy || !tools?.length} onClick={() => onChange(['*'])}>启用全部工具</Button>
@@ -51,10 +51,10 @@ export function McpTools({ api, server, connectionChanged, allowedTools, onChang
     {(!server || connectionChanged) && <p>请先保存连接配置，再获取全部工具。</p>}
     {error && <Alert type="error" showIcon message={'工具列表获取失败：' + error} />}
     {tools && <>
-      <p>已获取 {tools.length} 个工具，启用 {tools.filter(tool => allowedTools.includes('*') || allowedTools.includes(tool.name)).length} 个。开关修改在保存 MCP 后生效。</p>
-      {tools.length > 32 && <p>单次执行最多使用 32 个 MCP 工具，请按需选择要启用的工具。</p>}
+      <p>已获取 {tools.length} 个工具，启用 {tools.filter(tool => allowedTools.includes('*') || allowedTools.includes(tool.name)).length} 个。开关修改在保存远程服务后生效。</p>
+      {tools.length > 32 && <p>单次执行最多使用 32 个远程服务工具，请按需选择要启用的工具。</p>}
       <div className="table-wrap" style={{ maxHeight: 360, overflow: 'auto' }}>
-        <table className="data-table" aria-label="MCP 工具列表">
+        <table className="data-table" aria-label="远程服务工具列表">
           <thead><tr><th>工具名称</th><th>说明</th><th>启用</th></tr></thead>
           <tbody>{tools.map(tool => <tr key={tool.name}>
             <td><strong>{tool.name}</strong></td><td>{tool.description || '—'}</td>

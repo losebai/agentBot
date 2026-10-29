@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, create_model, field_validator, model_validator
 
+from agent_bot.agent.persona import MAX_SYSTEM_PROMPT_LENGTH, compose_system_prompt
 from agent_bot.ai.contracts import AiModel, ResolvedModel, TokenUsage
 from agent_bot.credential_values import CredentialSnapshot, CredentialValue
 from agent_bot.media.contracts import MediaAssetView, ModelImage
@@ -44,9 +45,11 @@ class CodedItem(DirectoryItem):
 
 
 class AgentCreate(CodedItem):
-    """Agent 聊天绑定与可选图片、错误转发路由，空值保持既有行为。"""
+    """Agent 独立保存角色、人格及模型路由，兼容旧角色字段。"""
 
-    system_prompt: str = Field(default="", max_length=32000)
+    # 保留既有字段名作为角色，升级不改写原提示词。
+    system_prompt: str = Field(default="", max_length=MAX_SYSTEM_PROMPT_LENGTH)
+    personality_prompt: str = Field(default="", max_length=MAX_SYSTEM_PROMPT_LENGTH)
     model_id: int = Field(ge=1)
     vision_model_id: int | None = Field(default=None, ge=1)
     fallback_model_id: int | None = Field(default=None, ge=1)
@@ -57,6 +60,15 @@ class AgentCreate(CodedItem):
     max_steps: int = Field(default=3, ge=1, deprecated=True,
                            description="已弃用且执行时忽略，工具调用预算统一使用全局配置")
     options: LlmRequestOptions = Field(default_factory=LlmRequestOptions)
+
+    @model_validator(mode="after")
+    def validate_system_prompt_length(self):
+        """创建及合并更新共用组合长度校验，避免保存成功后才执行失败。"""
+        if len(compose_system_prompt(self.system_prompt, self.personality_prompt)) > (
+            MAX_SYSTEM_PROMPT_LENGTH
+        ):
+            raise ValueError("组合后的系统提示词不能超过 32000 字符")
+        return self
 
     @field_validator("skill_ids", "tools", "mcp_ids")
     @classmethod
@@ -175,6 +187,7 @@ class AgentRequest(AiModel):
     session_id: str = Field(min_length=1, max_length=256)
     request_id: str = Field(min_length=1, max_length=256)
     tools: tuple[str, ...] | None = Field(default=None, max_length=256)
+    # None 继承命名 Agent 的远程服务绑定；空元组显式关闭，不能被默认值重新开启。
     mcp_services: tuple[str, ...] | None = Field(default=None, max_length=3)
     # 旧请求字段已弃用，既不收紧也不扩大全局工具调用预算。
     max_steps: int | None = Field(default=None, ge=1, deprecated=True,

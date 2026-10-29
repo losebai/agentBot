@@ -15,8 +15,22 @@ from agent_bot.sql_scripts import split_sql
 from agent_bot.sqlite_database import SqliteConnection
 
 
-def mysql_factory(params, *, lock=1, fail_once=False):
+def mysql_factory(params, *, lock=1, fail_once=False, fail_personality=None):
     """只翻译登记脚本的协议差异，其余读写由真实 SQLite 事务执行。"""
+    # 新库的人格列沿用实际 MySQL 定义，避免替身把错误默认值或类型伪装正确。
+    definition = re.search(r'^  personality_prompt (.+),$', resource('agent_bot_init.sql'), re.M)
+    if definition:
+        native = definition[1].split(' COMMENT ', 1)[0]
+        with sqlite3.connect(params.sqlite_path) as schema_connection:
+            original = schema_connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name='agent_bot_agent'",
+            ).fetchone()[0]
+            changed = original.replace("personality_prompt TEXT NOT NULL DEFAULT ''",
+                                       f'personality_prompt {native}')
+            schema_connection.execute('PRAGMA writable_schema=ON')
+            schema_connection.execute("UPDATE sqlite_master SET sql=? WHERE name='agent_bot_agent'",
+                                      (changed,))
+            schema_connection.execute('PRAGMA writable_schema=OFF')
     comfy_translations = dict(zip(
         split_sql(resource('2026-10-28-comfy-plugin.sql')),
         split_sql(resource('2026-10-28-comfy-plugin.sqlite.sql')), strict=True,
@@ -26,7 +40,8 @@ def mysql_factory(params, *, lock=1, fail_once=False):
         parser.executescript(resource("bilibili-init.sqlite.sql"))
         parser.executescript(resource("material-classification.sqlite.sql"))
         translations = dict(parser.execute("SELECT name,sql FROM sqlite_master WHERE type='table'"))
-    state = SimpleNamespace(events=[], closed=0, fail_once=fail_once)
+    state = SimpleNamespace(events=[], closed=0, fail_once=fail_once,
+                            fail_personality=fail_personality)
 
     class Connection:
         """每次启动独占一个连接，关闭代表会话锁释放。"""
@@ -85,6 +100,14 @@ def mysql_factory(params, *, lock=1, fail_once=False):
                 self.rows = [{"acquired": lock}]
                 return
             if "information_schema.columns" in sql:
+                if "COLUMN_NAME='personality_prompt'" in sql:
+                    columns = self.owner.inner._db.execute('PRAGMA table_info(agent_bot_agent)')
+                    self.rows = [
+                        {"data_type": row[2].lower(), "is_nullable": "NO" if row[3] else "YES",
+                         "column_default": row[4]}
+                        for row in columns if row[1] == 'personality_prompt'
+                    ]
+                    return
                 names = [
                     row[0]
                     for row in self.owner.inner._db.execute(
@@ -103,6 +126,38 @@ def mysql_factory(params, *, lock=1, fail_once=False):
                     for index, value in enumerate(("provider_id", "upstream_model"), 1)
                 ]
                 return
+            if sql.startswith('ALTER TABLE agent_bot_agent'):
+                if 'ADD COLUMN personality_prompt' in sql:
+                    self.inner.execute(sql.split(' COMMENT ', 1)[0], values)
+                    self.owner.commit()
+                    if state.fail_personality == 'after-add':
+                        state.fail_personality = None
+                        raise pymysql.OperationalError(1205, 'offline interrupted after ADD')
+                    return
+                if 'MODIFY COLUMN personality_prompt' in sql:
+                    if state.fail_personality == 'before-not-null':
+                        state.fail_personality = None
+                        self.owner.commit()
+                        raise pymysql.OperationalError(1205, 'offline interrupted before MODIFY')
+                    # SQLite 无 MODIFY COLUMN，测试替身只重现该列的非空元数据变化。
+                    self.owner.commit()
+                    schema = self.owner.inner._db.execute(
+                        "SELECT sql FROM sqlite_master WHERE name='agent_bot_agent'",
+                    ).fetchone()[0]
+                    changed = schema.replace('personality_prompt MEDIUMTEXT NULL',
+                                             'personality_prompt MEDIUMTEXT NOT NULL')
+                    self.owner.inner._db.execute('PRAGMA writable_schema=ON')
+                    self.owner.inner._db.execute(
+                        "UPDATE sqlite_master SET sql=? WHERE name='agent_bot_agent'", (changed,),
+                    )
+                    version = self.owner.inner._db.execute('PRAGMA schema_version').fetchone()[0]
+                    self.owner.inner._db.execute(f'PRAGMA schema_version={version + 1}')
+                    self.owner.inner._db.execute('PRAGMA writable_schema=OFF')
+                    self.owner.commit()
+                    if state.fail_personality == 'after-not-null':
+                        state.fail_personality = None
+                        raise pymysql.OperationalError(1205, 'offline interrupted after MODIFY')
+                    return
             if sql.startswith("CREATE TABLE"):
                 if state.fail_once and "agent_bot_bilibili_operation" in sql:
                     state.fail_once = False
@@ -180,7 +235,9 @@ def test_mysql_known_idempotent_step_resumes_after_partial_ddl(legacy_database):
         upgrade_database(params, connect=connect, read_resource=resource)
     assert not query(legacy_database, "SELECT version FROM agent_bot_schema_version")
     result = upgrade_database(params, connect=connect, read_resource=resource)
-    assert result.applied == ("bilibili-v1", "comfy-plugin-v1", "material-classification-v1")
+    assert result.applied == (
+        "bilibili-v1", "comfy-plugin-v1", "material-classification-v1", "agent-personality-v1",
+    )
     assert state.closed == 2
     assert sum("GET_LOCK" in event for event in state.events) == 2
 
@@ -196,3 +253,44 @@ def test_mysql_lock_timeout_does_not_execute_any_ddl(legacy_database):  # noqa: 
         )
     assert not any(event.startswith("CREATE") for event in state.events)
     assert state.closed == 1
+
+
+@pytest.mark.parametrize('failure', ['after-add', 'before-not-null', 'after-not-null'])
+def test_mysql_personality_resumes_partial_ddl_without_touching_roles(
+    legacy_database, failure,  # noqa: F811
+):
+    """模拟人格 ADD 或回填已隐式提交，重启仅恢复缺失步骤并保留非空人格。"""
+    from tests.unit.test_agent_personality_upgrade import old_agents
+
+    before = old_agents(legacy_database)
+    connect, state = mysql_factory(legacy_database, fail_personality=failure)
+    params = DatabaseParams(backend='mysql', database='offline')
+    with pytest.raises(UpgradeError, match='agent-personality-v1'):
+        upgrade_database(params, connect=connect, read_resource=resource)
+    assert query(legacy_database, 'SELECT status FROM agent_bot_schema_migration '
+                 "WHERE migration_id='agent-personality-v1'") == [('failed',)]
+    assert not query(legacy_database, 'SELECT version FROM agent_bot_schema_version')
+    with sqlite3.connect(legacy_database.sqlite_path) as connection:
+        connection.execute("UPDATE agent_bot_agent SET personality_prompt='保留人格' WHERE id=1")
+    result = upgrade_database(params, connect=connect, read_resource=resource)
+    assert result.applied == ('agent-personality-v1',)
+    assert query(legacy_database, 'SELECT * FROM agent_bot_agent ORDER BY id') == [
+        (*before[0], '保留人格'), (*before[1], ''),
+    ]
+    assert sum('ADD COLUMN personality_prompt' in event for event in state.events) == 1
+    assert upgrade_database(params, connect=connect, read_resource=resource).applied == ()
+
+
+def test_mysql_fresh_personality_schema_skips_alter_and_has_no_text_default(
+    legacy_database,  # noqa: F811
+):
+    """读取实际 MySQL 初始化列定义的新库只登记流水，不使用不兼容的文本默认值。"""
+    connect, state = mysql_factory(legacy_database)
+    result = upgrade_database(DatabaseParams(backend='mysql', database='offline'), connect=connect,
+                              read_resource=resource)
+    assert 'agent-personality-v1' in result.applied
+    assert not any('ALTER TABLE agent_bot_agent' in event for event in state.events)
+    with sqlite3.connect(legacy_database.sqlite_path) as connection:
+        personality = next(row for row in connection.execute('PRAGMA table_info(agent_bot_agent)')
+                           if row[1] == 'personality_prompt')
+    assert (personality[2], personality[3], personality[4]) == ('MEDIUMTEXT', 1, None)

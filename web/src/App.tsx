@@ -8,6 +8,7 @@ import { Chat } from './pages/Chat';
 import { Providers } from './pages/Providers';
 import { Sessions } from './pages/Sessions';
 import { AgentManagement } from './pages/AgentManagement';
+import { McpServers } from './pages/McpServers';
 import { Plugins } from './pages/Plugins';
 import { PluginConfiguration } from './pages/PluginConfiguration';
 import { PluginMenu } from './components/PluginMenu';
@@ -38,7 +39,8 @@ const workspaceTheme = {
 
 const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置',
   'plugin-center':'插件中心', 'plugin-qqbot':'QQ 配置', 'plugin-bilibili':'B站配置', 'plugin-comfy':'Comfy 配置',
-  chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'Agent 管理', knowledge:'标签与知识库'};
+  chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'角色和人格',
+  'remote-services':'远程服务', knowledge:'标签与知识库'};
 
 /** 按服务端登录模式进入工作台；插件设置保留草稿，离开配置页取消专属读取。 */
 export function App() {
@@ -77,6 +79,7 @@ export function App() {
     catch (failure) { setError(errorMessage(failure)); }
     finally { setConnecting(false); }
   }
+  /** 一级导航按需挂载页面，已访问的配置保留当前草稿。 */
   function navigate(next: string) { setPage(next); setVisited(previous => [...new Set([...previous, next])]); }
   return <ConfigProvider theme={workspaceTheme}>
     {access !== 'ready' ? <main className="page-content">{access === 'loading' ? <Spin tip="正在连接管理服务"><div className="loading" /></Spin> : <Alert message={error} type="error" showIcon />}</main>
@@ -98,7 +101,8 @@ export function App() {
         { key: 'providers', label: '供应商与模型', icon: <ApiOutlined /> },
         { key: 'sessions', label: '会话记录', icon: <HistoryOutlined /> },
         { key: 'knowledge', label: '标签与知识库', icon: <TagsOutlined /> },
-        { key: 'agents', label: 'Agent 管理', icon: <RobotOutlined /> },
+        { key: 'agents', label: '角色和人格', icon: <RobotOutlined /> },
+        { key: 'remote-services', label: '远程服务', icon: <ApiOutlined /> },
       ].map(item => item.key === 'plugins' ? <PluginMenu key={item.key} token={token} page={page} onNavigate={navigate} />
         : <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
         <main className="main-area"><header className="topbar"><span className="topbar-title">{titles[page]}</span><span className="workspace-label">AgentBot</span></header>
@@ -119,6 +123,7 @@ export function App() {
           <section hidden={page !== 'sessions'}>{page === 'sessions' && <Sessions token={token} />}</section>
           <section hidden={page !== 'knowledge'}>{page === 'knowledge' && <Knowledge token={token} />}</section>
           <section hidden={page !== 'agents'}>{visited.includes('agents') && <AgentManagement token={token} />}</section>
+          <section hidden={page !== 'remote-services'}>{visited.includes('remote-services') && <McpServers token={token} />}</section>
         </main></div>}
   </ConfigProvider>;
 }

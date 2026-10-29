@@ -40,7 +40,7 @@ export function AgentModelSelect({ token, value, onChange, visionValue, fallback
 
   useEffect(() => {
     void load();
-    // 弹窗关闭即释放读取；草稿所选 ID 由父表单保存，不以加载失败清空它。
+    // 切换 Agent 或离开页面时释放读取，父表单保留草稿中的模型绑定。
     return () => pending.current?.abort();
   }, [load]);
 

@@ -23,6 +23,27 @@ class ChatServiceError(RuntimeError):
 
 
 @pytest.mark.parametrize("context", [None, {"preserve_format": True}, {"file_reply": True}])
+@pytest.mark.parametrize("text", [
+    '<\uff5c\uff5cDSML\uff5c\uff5c calls>'
+    '<\uff5c\uff5cDSML\uff5c\uff5c invoke name="bot_config_set">秘密参数',
+    '已修改。<|DSML|function_calls><|DSML|invoke name="bot_config_set">秘密参数',
+    '已修改。<||DSML|| invoke name="bot_config_set"',
+    '已修改。<\uff5cDSML\uff5cparameter name="updates">秘密参数',
+    '已修改。</\uff5c\uff5cDSML\uff5c\uff5c calls>',
+])
+def test_generated_reply_rejects_dsml_including_mixed_or_incomplete_markup(text, context):
+    """整条拒绝伪调用，不能只删外壳后把未经执行的成功声明发出去。"""
+    with pytest.raises(ValidationError, match="tool call markup"):
+        GeneratedReply.model_validate({"text": text, "requestId": "dsml-reply"}, context=context)
+
+
+def test_generated_reply_preserves_dsml_discussion_without_control_markup():
+    """只讨论 DSML、普通标签或工具名字不等于输出保留的工具控制标记。"""
+    text = 'DSML 不是工具执行回执，bot_config_update 才是配置工具；示例 <invoke name="x">。'
+    assert GeneratedReply(text=text, requestId="dsml-explanation").text == text
+
+
+@pytest.mark.parametrize("context", [None, {"preserve_format": True}, {"file_reply": True}])
 def test_generated_reply_removes_internal_at_markers_without_touching_plain_ids(context) -> None:
     """所有模型文字出口清除历史内部 @ 标记，不删除正文中的普通 QQ 号。"""
     reply = GeneratedReply.model_validate(

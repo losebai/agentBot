@@ -99,7 +99,7 @@ it('Agent 管理只提供预设编辑，不再重复展示运行配置', async (
   expect(screen.queryByRole('tab', { name: '运行配置' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '新增 Agent' }));
   expect(screen.queryByLabelText('工具轮次')).not.toBeInTheDocument();
-  // 此处验证预算入口归属，弹窗动画的临时隐藏状态不影响表单内容断言。
+  // 页内预设表单只说明预算入口，运行配置仍由机器人配置页面管理。
   expect(screen.getByText('工具调用次数在“机器人配置 → LLM设置”中统一调整。')).toBeInTheDocument();
 });
 

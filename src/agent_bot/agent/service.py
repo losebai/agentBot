@@ -20,6 +20,7 @@ from agent_bot.agent.contracts import (
 from agent_bot.agent.engine import AgentEngine, PreparedRun
 from agent_bot.agent.errors import PARTIAL_REPLY_ERRORS, AgentError
 from agent_bot.agent.model_routing import AgentModelRouter
+from agent_bot.agent.persona import compose_system_prompt
 from agent_bot.agent.tools.policy import LEGACY_TOOLS
 from agent_bot.ai.contracts import TokenUsage
 from agent_bot.ai.errors import AiError
@@ -77,8 +78,11 @@ class AgentService:
             s.code == "laya" for s in snapshot.mcps
         ):
             raise AgentError("AGENT_CAPABILITY_NOT_MIGRATED", status_code=422)
-        if authority.entry == "admin":
-            # 管理入口只接受可信快照授予的远端能力，QQ 继续使用原消息授权交集。
+        if authority.entry == "admin" or (
+            snapshot.agent and request.mcp_services is None and request.tools != ()
+        ):
+            # 命名 Agent 的远程授权来自已保存的同事务快照，不再叠加 QQ 全局名单。
+            # 本地 QQ 工具、会话令牌及显式服务请求仍沿用入口授权；通知不会走继承路径。
             authority = authority.model_copy(
                 update={"allowed_mcp_services": tuple(s.code for s in snapshot.mcps)}
             )
@@ -118,7 +122,9 @@ class AgentService:
         if not messages or messages[-1].role != "user":
             messages.append(TurnMessage(role="user", text=request.prompt))
         if snapshot.agent:
-            messages.insert(0, TurnMessage(role="system", text=snapshot.agent.system_prompt))
+            messages.insert(0, TurnMessage(role="system", text=compose_system_prompt(
+                snapshot.agent.system_prompt, snapshot.agent.personality_prompt,
+            )))
         images = ()
         if has_images:
             if len(request.image_urls or request.attachment_ids or request.image_material_ids

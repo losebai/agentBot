@@ -33,24 +33,36 @@ function catalogApi() {
 }
 
 it.each([
-  { button: '新增供应商', field: '供应商名称', secret: 'API 密钥', view: <Providers token="offline" /> },
-  { button: '新增 Agent', field: '名称', secret: '', view: <Agents token="offline" /> },
-  { button: '新增 Skill', field: '名称', secret: '', view: <Skills token="offline" /> },
-  { button: '新增 MCP', field: '名称', secret: '访问令牌', view: <McpServers token="offline" /> },
-])('$button 在弹窗填写，取消后重新打开清空草稿', async ({ button, field, secret, view }) => {
+  { button: '新增供应商', field: '供应商名称', secret: 'API 密钥', inline: false, view: <Providers token="offline" /> },
+  { button: '新增 Agent', field: '名称', secret: '', inline: true, view: <Agents token="offline" /> },
+  { button: '新增 Skill', field: '名称', secret: '', inline: false, view: <Skills token="offline" /> },
+  { button: '新增 远程服务', field: '名称', secret: '访问令牌', inline: false, view: <McpServers token="offline" /> },
+])('$button 取消后重新打开清空草稿', async ({ button, field, secret, inline, view }) => {
   catalogApi();
   render(view);
   await waitFor(() => expect(screen.getByRole('button', { name: button })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: button }));
-  const dialog = await screen.findByRole('dialog', { name: button });
-  fireEvent.change(within(dialog).getByLabelText(field), { target: { value: '取消的草稿' } });
-  if (secret) fireEvent.change(within(dialog).getByLabelText(secret), { target: { value: 'discarded-secret' } });
-  fireEvent.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  const role = inline ? 'form' : 'dialog';
+  const name = inline ? 'Agent 配置' : button;
+  const editor = await screen.findByRole(role, { name });
+  fireEvent.change(within(editor).getByLabelText(field), { target: { value: '取消的草稿' } });
+  if (secret) fireEvent.change(within(editor).getByLabelText(secret), { target: { value: 'discarded-secret' } });
+  // Agent 的新建生命周期归页内表单管理，其余目录继续保留弹窗交互。
+  if (inline) {
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.change(within(editor).getByLabelText('角色'), { target: { value: '取消的角色' } });
+    fireEvent.change(within(editor).getByLabelText('性格'), { target: { value: '取消的性格' } });
+  }
+  fireEvent.click(within(editor).getByRole('button', { name: inline ? '取消新建' : /取\s*消/ }));
+  await waitFor(() => expect(screen.queryByRole(role, { name })).not.toBeInTheDocument());
   fireEvent.click(screen.getByRole('button', { name: button }));
-  const reopened = await screen.findByRole('dialog', { name: button });
+  const reopened = await screen.findByRole(role, { name });
   expect(within(reopened).getByLabelText(field)).toHaveValue('');
   if (secret) expect(within(reopened).getByLabelText(secret)).toHaveValue('');
+  if (inline) {
+    expect(within(reopened).getByLabelText('角色')).toHaveValue('');
+    expect(within(reopened).getByLabelText('性格')).toHaveValue('');
+  }
 });
 
 it('左侧选择供应商只显示当前供应商的模型和启用开关', async () => {

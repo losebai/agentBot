@@ -76,3 +76,27 @@ async def test_disabled_current_agent_does_not_fall_back_to_old_prompt(system_ro
         await client.complete(model="chat", session_id="s", prompt="校验", messages=(),
                               request_id="system-2", use_agent=False, use_web_search=False)
     plain.complete.assert_not_awaited()
+
+
+@pytest.mark.parametrize("vision", [False, True])
+async def test_system_tasks_share_composed_role_and_personality(system_router, vision):
+    """普通通知与图片总结读取同一组合设定，任务指令及工具权限保持独立。"""
+    client, plain, execution, catalog, agent = system_router
+    await catalog.update_agent(agent.id, AgentUpdate(
+        expected_revision=agent.revision, personality_prompt="温和简洁",
+    ))
+    await client.complete(
+        model="vision" if vision else "chat", session_id="s", prompt="总结", request_id="persona",
+        messages=(ChatMessage(role="system", content="只总结事实"),
+                  ChatMessage(role="user", content="总结")),
+        image_urls=("https://gchat.qpic.cn/image",) if vision else (),
+        use_agent=False, use_web_search=False,
+    )
+    request = (execution if vision else plain).complete.await_args.args[0]
+    assert [message.content for message in request.messages if message.role == "system"] == [
+        "【角色设定】\n当前 Agent 的人设\n\n【人格设定】\n温和简洁", "只总结事实",
+    ]
+    if vision:
+        assert request.tools == ()
+    else:
+        execution.complete.assert_not_awaited()

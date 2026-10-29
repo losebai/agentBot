@@ -13,7 +13,9 @@ class CustomBuildHook(BuildHookInterface):
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         """生成标准导入映射并随 editable wheel 发布所需依赖。"""
         # Git 忽略不能导致发布缺少升级资源；缺失时在打包前明确失败。
-        for filename in ('bilibili-init.sql', 'bilibili-init.sqlite.sql', 'UPGRADE-BILIBILI.md',
+        for filename in ('agent_bot_init.sql', 'agent_bot_init.sqlite.sql',
+                         'agent-personality.sql', 'agent-personality.sqlite.sql',
+                         'bilibili-init.sql', 'bilibili-init.sqlite.sql', 'UPGRADE-BILIBILI.md',
                          'startup-versioning.sql', 'startup-versioning.sqlite.sql',
                          'UPGRADE-AUTOMATIC.md', '2026-10-28-comfy-plugin.sql',
                          '2026-10-28-comfy-plugin.sqlite.sql', 'material-classification.sql',

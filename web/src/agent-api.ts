@@ -11,8 +11,9 @@ export class AgentApi extends ApiClient {
   readonly media:MediaApi;
   /** 附件客户端随登录凭据更新，不缓存旧会话令牌。 */
   constructor(token:string){super(token);this.media=new MediaApi(token);}
-  listAgents(cursor?: string) { return this.request<Page<Agent>>(`agents${query(cursor)}`); }
-  getAgent(id: number) { return this.request<Agent>(`agents/${id}`); }
+  /** 页面刷新或离开时取消旧目录查询，避免晚到响应覆盖当前选择。 */
+  listAgents(cursor?: string, signal?: AbortSignal) { return this.request<Page<Agent>>(`agents${query(cursor)}`, 'GET', undefined, signal); }
+  getAgent(id: number, signal?: AbortSignal) { return this.request<Agent>(`agents/${id}`, 'GET', undefined, signal); }
   createAgent(body: AgentDraft) { return this.request<Agent>('agents','POST',body); }
   updateAgent(id: number, revision: number, body: Partial<AgentDraft>) { return this.request<Agent>(`agents/${id}`,'PATCH',{expected_revision:revision,...body}); }
   deleteAgent(id: number, revision: number) { return this.request<void>(`agents/${id}`,'DELETE',{expected_revision:revision}); }

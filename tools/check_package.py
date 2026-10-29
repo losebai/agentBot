@@ -10,6 +10,8 @@ def check(path: Path) -> None:
     with ZipFile(path) as archive:
         names = archive.namelist()
         required = {
+            'agent_bot/resources/agent-personality.sql',
+            'agent_bot/resources/agent-personality.sqlite.sql',
             'agent_bot/database_upgrade.py',
             'agent_bot/resources/material-classification.sql',
             'agent_bot/resources/material-classification.sqlite.sql',

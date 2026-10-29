@@ -11,6 +11,7 @@ from agent_bot.agent.contracts import (
     StepWrite,
 )
 from agent_bot.agent.errors import AgentError
+from agent_bot.agent.persona import compose_system_prompt
 from agent_bot.ai.catalog import AiCatalog
 from agent_bot.ai.contracts import Page, ResolvedModel
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
@@ -211,16 +212,17 @@ class AgentCatalog(AiDatabase):
         return await self._list("mcp", limit, cursor)
 
     async def get_system_prompt(self, code: str) -> str:
-        """系统调用只读取当前启用 Agent 的人设，不加载模型、技能或授予工具能力。"""
+        """系统调用组合当前启用 Agent 的角色与人格，不加载模型、技能或工具。"""
         def read(connection):
             """每次读取最新已提交配置；禁用或不存在的 Agent 必须明确拒绝。"""
-            row = query(connection, "SELECT system_prompt,enabled FROM agent_bot_agent "
+            row = query(connection, "SELECT system_prompt,personality_prompt,enabled "
+                        "FROM agent_bot_agent "
                         "WHERE code=%s", (code,), one=True)
             if row is None:
                 raise AgentError("AGENT_CONFIG_NOT_FOUND", status_code=404)
             if not row["enabled"]:
                 raise AgentError("AGENT_CONFIG_DISABLED", status_code=409)
-            return row["system_prompt"]
+            return compose_system_prompt(row["system_prompt"], row["personality_prompt"])
 
         return await self.run(read)
 

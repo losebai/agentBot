@@ -45,6 +45,22 @@ async def test_agent_crud_requires_admin_and_cas(agent_api):
     assert (await api.get("/api/v1/agents/1", headers=HEADERS)).json()["tools"] == []
 
 
+async def test_personality_patch_checks_merged_length_without_partial_write(agent_api):
+    """只修改人格也须校验存量角色，拒绝时保留版本和原始设定。"""
+    api, _, _ = agent_api
+    response = await api.patch("/api/v1/agents/1", headers=HEADERS, json={
+        "expected_revision": 1, "system_prompt": "角" * 20000, "personality_prompt": "简洁",
+    })
+    assert response.status_code == 200
+    saved = response.json()
+    assert saved["personality_prompt"] == "简洁"
+    response = await api.patch("/api/v1/agents/1", headers=HEADERS, json={
+        "expected_revision": saved["revision"], "personality_prompt": "人" * 20000,
+    })
+    assert response.status_code == 422
+    assert (await api.get("/api/v1/agents/1", headers=HEADERS)).json() == saved
+
+
 async def test_management_accepts_shared_model_roles(agent_api, media_model):
     """管理 API 可保存三种角色共用同一模型，不再返回重复模型错误。"""
     api, _, _ = agent_api

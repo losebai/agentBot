@@ -811,7 +811,7 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "chat_llm_enable_thinking": "是否启用模型深度思考",
     "chat_llm_forward_user_name": "是否额外发送当前 QQ 昵称元数据",
     "chat_agent_max_steps": "Agent 工具调用次数上限 (默认 5，留空不限次数)",
-    "chat_mcp_services": "普通聊天可使用的通用 MCP 服务 code 列表",
+    "chat_mcp_services": "未指定 Agent 时使用的远程服务 code 列表",
     "chat_web_search_enabled": "是否为普通 QQ 对话启用网页读取 (不控制独立 MCP 搜索)",
     "chat_web_search_max_steps": "联网搜索 Agent 最大推理步数",
     "chat_image_recognition_enabled": "是否识别 QQ 消息中的图片素材",

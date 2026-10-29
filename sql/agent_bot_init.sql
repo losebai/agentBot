@@ -287,6 +287,7 @@ CREATE TABLE IF NOT EXISTS agent_bot_agent (
   revision BIGINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '乐观锁版本，每次修改递增',
   created_at DATETIME(6) NOT NULL COMMENT '创建时间，协调世界时',
   updated_at DATETIME(6) NOT NULL COMMENT '更新时间，协调世界时',
+  personality_prompt MEDIUMTEXT NOT NULL COMMENT '独立人格设定，空字符串表示仅使用角色设定',
   -- 外键保证引用存在；级联规则沿用原定义，保持删除语义。
   CONSTRAINT fk_agent_model FOREIGN KEY(model_id) REFERENCES agent_bot_ai_model(id),
   -- 路由引用阻止删除仍被 Agent 使用的模型，不级联删除 Agent。

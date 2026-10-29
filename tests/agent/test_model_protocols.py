@@ -66,11 +66,13 @@ def body(protocol, tool=True):
 
 
 def streamed(protocol, value):
+    """流式测试使用同一终态正文，避免测试替身掩盖文本与终态不一致。"""
     if protocol == "ollama":
         return json.dumps(value).encode() + b"\n"
     if protocol == "openai-responses":
         events = [
-            {"type": "response.output_text.delta", "delta": "先查一下"},
+            {"type": "response.output_text.delta",
+             "delta": value["output"][0]["content"][0]["text"]},
         ]
         for index, item in enumerate(value["output"]):
             if item["type"] == "function_call":
@@ -186,6 +188,45 @@ async def test_final_only_never_accepts_tool_calls(protocol):
     try:
         with pytest.raises(AiError):
             await provider.complete_turn(model_call(protocol, final_only=True))
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.parametrize("protocol", PROVIDERS)
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("final_only", [False, True])
+async def test_dsml_pseudo_tool_call_is_invalid_instead_of_final_text(
+    protocol, streaming, final_only,
+):
+    """原生协议中的 DSML 正文不能冒充真实调用，工具耗尽后的收尾轮也必须拒绝。"""
+    marker = "\uff5c\uff5cDSML\uff5c\uff5c"
+    text = (f'我会修改配置。\n<{marker} calls><{marker} invoke name="bot_config_set">'
+            f'<{marker} parameter name="updates" string="false">'
+            '{"chat_auto_speak_prompt":"规则"}'
+            f'</{marker} parameter></{marker} invoke></{marker} calls>')
+    value = body(protocol, tool=False)
+    if protocol == "openai-chat":
+        value["choices"][0]["message"]["content"] = text
+    elif protocol == "openai-responses":
+        value["output"][0]["content"][0]["text"] = text
+    else:
+        value["message"]["content"] = text
+    raw = ByteStream(streamed(protocol, value)) if streaming else None
+    provider = PROVIDERS[protocol](ProviderTransport(httpx.MockTransport(
+        lambda _: httpx.Response(200, stream=raw) if streaming else httpx.Response(200, json=value),
+    )))
+    try:
+        with pytest.raises(AiError, match="AGENT_MODEL_RESPONSE_INVALID"):
+            if streaming:
+                async with aclosing(provider.stream_turn(model_call(
+                    protocol, final_only=final_only,
+                ))) as events:
+                    async for event in events:
+                        assert event.kind != "turn_end"
+            else:
+                await provider.complete_turn(model_call(protocol, final_only=final_only))
+        if raw is not None:
+            assert raw.closed
     finally:
         await provider.aclose()
 

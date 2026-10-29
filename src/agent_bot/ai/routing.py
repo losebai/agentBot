@@ -200,8 +200,8 @@ class RoutingAiClient:
                             error_code=error.code) from error
 
     def route(self, request: AiRouteRequest) -> RouteDecision:
-        """加入已授权的 MCP 服务，预检和执行共享能力判断。"""
-        if request.agent and self.mcp_services:
+        """仅无命名 Agent 时采用全局服务；预设绑定在执行快照中读取。"""
+        if request.agent and not self.agent_code and self.mcp_services:
             from dataclasses import replace
 
             request = replace(request, mcp_services=tuple(self.mcp_services))
@@ -244,7 +244,7 @@ class RoutingAiClient:
             agent=use_agent,
             web=use_web_search,
             tools=bool(chat_tools),
-            mcp=bool(self.mcp_services and use_agent),
+            mcp=bool(self.mcp_services and use_agent and not self.agent_code),
             laya=laya_decision,
             images=bool(image_urls or image_material_ids),
             videos=bool(video_urls),
@@ -266,7 +266,10 @@ class RoutingAiClient:
                     if vision_only or not allow_tools
                     else tuple(chat_tools) + (("read_url",) if use_web_search else ())
                 )
-                services = (
+                agent_code = None if vision_only else self.agent_code
+                # None 从同一 Agent 快照继承绑定；空元组仍表示明确关闭全部远程服务。
+                # 命名 Agent 不读取全局名单，避免远程服务在 QQ 入口被再次过滤。
+                services = None if agent_code and use_agent and allow_tools else (
                     tuple(self.mcp_services)
                     if use_agent and not vision_only and allow_tools else ()
                 )
@@ -274,7 +277,6 @@ class RoutingAiClient:
                 if (allow_tools and allow_knowledge and use_agent and self.agent_code
                         and not vision_only):
                     names += ("knowledge_search", "material_search", "material_get")
-                agent_code = None if vision_only else self.agent_code
                 request = AgentRequest(
                     agent_code=agent_code,
                     model=None if agent_code else model,
@@ -296,7 +298,7 @@ class RoutingAiClient:
                 authority = ExecutionAuthority(
                     entry="qq",
                     allowed_tools=names,
-                    allowed_mcp_services=services,
+                    allowed_mcp_services=services or (),
                     chat_token=SecretStr(tool_session_token) if tool_session_token else None,
                 )
                 return (await self.agent_service.complete(request, authority)).content

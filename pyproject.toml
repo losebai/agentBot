@@ -90,6 +90,8 @@ dev-mode-dirs = ["."]
 path = "tools/build_hook.py"
 
 [tool.hatch.build.targets.wheel.force-include]
+"sql/agent-personality.sql" = "agent_bot/resources/agent-personality.sql"
+"sql/agent-personality.sqlite.sql" = "agent_bot/resources/agent-personality.sqlite.sql"
 "sql/material-classification.sql" = "agent_bot/resources/material-classification.sql"
 "sql/material-classification.sqlite.sql" = "agent_bot/resources/material-classification.sqlite.sql"
 "sql/2026-10-28-comfy-plugin.sql" = "agent_bot/resources/2026-10-28-comfy-plugin.sql"

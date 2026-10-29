@@ -7,6 +7,15 @@ _INTERNAL_AT = re.compile(r"\[AT\s+(?:[1-9][0-9]{4,19}|all)\]", re.IGNORECASE)
 _INTERNAL_MENTION = re.compile(
     r'''\[/?mention_member\b(?:[^\[\]"']|"[^"]*"|'[^']*')*\]''', re.IGNORECASE,
 )
+# 仅识别保留的 DSML 控制标签；完整、混合正文及被截断的调用均不能冒充回复。
+_TOOL_CALL_MARKUP = re.compile(
+    r"</?[|\uff5c]+DSML[|\uff5c]+\s*(?:function_calls|calls|invoke|parameter)\b", re.IGNORECASE,
+)
+
+
+def contains_tool_call_markup(text: str) -> bool:
+    """识别正文中的伪工具控制标记，不解析参数或把生成文字升级为真实工具调用。"""
+    return _TOOL_CALL_MARKUP.search(text) is not None
 
 
 def clean_internal_reply_text(text: str) -> str:

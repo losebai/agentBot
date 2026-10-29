@@ -49,14 +49,16 @@ def test_unversioned_database_upgrades_and_second_start_has_no_ddl(legacy_databa
     first = upgrade_database(legacy_database, read_resource=resource)
     assert first.current_version == __version__
     assert first.previous_version is None
-    assert first.applied == ("bilibili-v1", "comfy-plugin-v1", "material-classification-v1")
+    assert first.applied == (
+        "bilibili-v1", "comfy-plugin-v1", "material-classification-v1", "agent-personality-v1",
+    )
     assert query(legacy_database, "SELECT value FROM private_business") == [("must-preserve",)]
     assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [
         (__version__,),
     ]
     second = upgrade_database(legacy_database, read_resource=resource)
     assert second.applied == () and second.previous_version == __version__
-    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(3,)]
+    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(4,)]
 
 
 def test_newer_database_is_rejected_without_changing_any_rows(legacy_database):
@@ -148,7 +150,7 @@ def test_two_startups_serialize_and_only_one_applies_migration(legacy_database):
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: start(), range(2)))
-    assert sorted(len(result.applied) for result in results) == [0, 3]
+    assert sorted(len(result.applied) for result in results) == [0, 4]
 
 
 def test_missing_existing_sqlite_file_is_not_created(tmp_path):

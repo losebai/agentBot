@@ -1,4 +1,4 @@
-"""仅向所属回环 WebUI 获取登录二维码，管理凭据始终留在本机后端。"""
+"""桥接所属 WebUI 的扫码与缺省账号保存，管理凭据留在本机后端。"""
 
 import hashlib
 import threading

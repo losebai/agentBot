@@ -93,6 +93,9 @@ def configure_instance(
             network["websocketClients"] = clients
             updates[path] = data
         webui = read_object(folder / "webui.json")
+        account = webui.get("autoLoginAccount")
+        if account and (not isinstance(account, str) or not account.isdecimal()):
+            raise ConfigurationError("NapCat 自动登录账号必须是 QQ 号码。")
         webui.update(host="127.0.0.1", port=config.agent_bot_napcat_webui_port,
                      disableWebUI=False, enableXForwardedFor=False)
         webui.setdefault("token", secrets.token_urlsafe(32))
@@ -128,6 +131,9 @@ def configure_instance(
                         "NAPCAT_WORKDIR": str(folder.parent.resolve()),
                         "NAPCAT_DISABLE_MULTI_PROCESS": "1", "NAPCAT_DISABLE_PIPE": "1",
                         "NAPCAT_FORCE_NODE_PROCESS": "1"})
-    return NapCatLaunch((str(node / "node.exe"), str(node / "agentbot-entry.cjs")),
-                        folder.parent.resolve(), environment,
+    command = (str(node / "node.exe"), str(node / "agentbot-entry.cjs"))
+    # 上游 -q 使用已保存的凭据，并在快速登录失败时提供二维码登录路径。
+    if account:
+        command += ("-q", account)
+    return NapCatLaunch(command, folder.parent.resolve(), environment,
                         config.agent_bot_napcat_webui_port)

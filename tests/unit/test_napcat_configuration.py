@@ -64,7 +64,8 @@ def test_owned_config_inherits_current_token_and_preserves_webui_secret(tmp_path
     webui["autoLoginAccount"] = "654321"
     (folder / "webui.json").write_text(json.dumps(webui))
     (folder / "onebot11_12345.json").write_text(json.dumps(onebot))
-    configure_instance(tmp_path, payload, current, "http://127.0.0.1:8090/")
+    restarted = configure_instance(tmp_path, payload, current, "http://127.0.0.1:8090/")
+    assert restarted.command[-2:] == ("-q", "654321")
     assert json.loads((folder / "webui.json").read_text())["token"] == webui["token"]
     assert json.loads((folder / "webui.json").read_text())["autoLoginAccount"] == "654321"
     assert json.loads((folder / "onebot11_12345.json").read_text())[

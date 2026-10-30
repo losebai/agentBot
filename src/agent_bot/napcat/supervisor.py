@@ -36,7 +36,7 @@ class NapCatSupervisor:
             return self._status
 
     def login(self, *, refresh: bool = False) -> NapCatLogin:
-        """只读取当前所属实例，停机或重启后丢弃旧二维码结果。"""
+        """访问当前所属实例并记住缺省账号，停机后丢弃旧二维码结果。"""
         with self._lock:
             client = self._webui
         if client is None or not self.snapshot().webui_ready:

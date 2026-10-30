@@ -137,12 +137,13 @@ class OutgoingRecorder:
     async def send_file(
         self, *, name: str, data: bytes, text: str, request_id: str,
         sender: Callable[[], Awaitable[Any]],
+        mime_type: str = "text/plain", key: str = "file",
     ) -> Any:
-        """生成文件以真实内容入库，长回复正文和附件引用共同进入上下文。"""
+        """保留原件类型并入库，独立文件回执键支持同一请求发送不同文件。"""
         scope = _scope.get() or await self.scope_provider(request_id)
-        asset = await self._material(scope, data, "text/plain", name)
+        asset = await self._material(scope, data, mime_type, name)
         result = await self._deliver(
-            scope, "file", f"{text}\n{self._reference(asset)}", (asset.id,), sender,
+            scope, key, f"{text}\n{self._reference(asset)}", (asset.id,), sender,
         )
         await self._mark_sent(scope, (asset.id,))
         return result

@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 from agent_bot.services.tool_operations import (
     DeliveryEffect,
     EffectToolName,
+    FileEffect,
     ImageEffect,
     ImageTaskEffect,
     MentionEffect,
@@ -90,7 +91,8 @@ class RedisToolOperationStore:
         """持久结果必须属于授权工具，防止媒体类型在恢复时串用。"""
 
         if (
-            (tool in {"send_reply", "image_start_reply", "image_completion_reply"}
+            (tool == "file_send" and not isinstance(result, FileEffect))
+            or (tool in {"send_reply", "image_start_reply", "image_completion_reply"}
              and not isinstance(result, ReplyEffect))
             or (tool == "mention_member" and not isinstance(result, MentionEffect))
             or (tool == "local_workflow_generate_image"
@@ -111,6 +113,7 @@ class RedisToolOperationStore:
             or len(job_id) > 128
             or tool
             not in {
+                "file_send",
                 "send_reply",
                 "mention_member",
                 "local_workflow_generate_image",

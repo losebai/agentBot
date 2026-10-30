@@ -387,7 +387,7 @@ class ConversationHandler:
         *,
         matcher: type[Matcher],
     ) -> Message | None:
-        """识别自然语言中的单成员提醒，并解析昵称目标。"""
+        """只提前解析可确定的提醒目标；省略或同名目标交回完整Agent对话。"""
 
         if not self._config_provider().chat_auto_mention_enabled:
             return None
@@ -397,9 +397,6 @@ class ConversationHandler:
                 bot_user_id=bot.self_id,
             )
         except InvalidMentionDirectiveError:
-            counter = self._message_counter_provider()
-            if not counter.try_consume(str(event.user_id)):
-                await matcher.finish()
             await self._finish_reply(
                 matcher, bot, event, InvalidInputFacts(
                     subject="群成员提醒", requirement="每次只能指定一名群成员",
@@ -407,9 +404,6 @@ class ConversationHandler:
             )
         if directive is None:
             return None
-        counter = self._message_counter_provider()
-        if not counter.try_consume(str(event.user_id)):
-            await matcher.finish()
 
         command: MentionCommand
         if isinstance(directive, NamedMentionRequest):
@@ -441,14 +435,9 @@ class ConversationHandler:
                         operation="读取群成员", error_type=type(exc).__name__,
                     ),
                 )
-            except AmbiguousMentionTargetError:
-                await self._finish_reply(
-                    matcher, bot, event, InvalidInputFacts(
-                        subject="群成员名称", requirement="存在同名成员，需要直接选择并 @ 对方",
-                    ),
-                )
-            except MentionTargetNotFoundError:
-                return Message(event.get_message().extract_plain_text())
+            except (AmbiguousMentionTargetError, MentionTargetNotFoundError):
+                # 保留原输入、近期上下文和全部已授权工具，由Agent确定目标或继续追问。
+                return None
             except (InvalidGroupMemberDataError, GroupMemberValidationError) as exc:
                 logger.warning("群成员列表返回异常：{}", type(exc).__name__)
                 await self._finish_reply(
@@ -478,16 +467,17 @@ class ConversationHandler:
         message: Message | None = None,
         laya_decision: bool = False,
     ) -> None:
-        """解析自然聊天并写入持久队列；繁忙、限流和过期拒绝仅记日志，保持静默。"""
+        """统一计数后解析聊天并入队；不明确的提醒保留上下文和原有工具授权。"""
 
         config = self._config_provider()
         recent_group_context = await self._recent_context_provider(bot, event)
+        # 一条入站消息只计数一次；提醒解析交回普通聊天时不能再次扣减额度。
+        user_id = str(event.user_id)
+        if not self._message_counter_provider().try_consume(user_id):
+            await matcher.finish()
         mention_message: Message | None = None
         if isinstance(event, GroupMessageEvent) and mention_handler is not None:
             mention_message = await mention_handler(bot, event)
-        user_id = str(event.user_id)
-        if mention_message is None and not self._message_counter_provider().try_consume(user_id):
-            await matcher.finish()
         source_message = message if message is not None else self._restore_original_prefix(
             event,
             mention_message or event.get_message(),
@@ -667,6 +657,8 @@ class ConversationHandler:
             userId=user_id,
             prompt=normalized_prompt,
             memorySourceText=event.original_message.extract_plain_text(),
+            sourceMessageId=event.message_id,
+            sourceMessageTime=event.time,
             memoryQuotedSource=quoted_memory_source(bot.self_id, event, chat_input.quoted_text),
             user=llm_user,
             userName=user_name,

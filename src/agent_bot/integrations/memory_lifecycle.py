@@ -26,6 +26,7 @@ from agent_bot.memory.contracts import (
     MemoryEvidence,
     MemoryMerge,
     MemoryResolve,
+    MemoryStatistics,
     MemoryTarget,
     MemoryUpdate,
 )
@@ -183,9 +184,21 @@ class MemoryLifecycleMixin:
         identity: MemoryIdentity | None,
         records: list[MemoryRecord] | tuple[MemoryRecord, ...],
     ) -> None:
-        """只登记本轮实际返回的授权版本，供平台投递后验证引用采用。"""
+        """计一次已完成召回，再登记返回版本供投递后验引用；不保存查询与正文。"""
         if not identity or not identity.request_id:
             return
+        # 空命中也计入分母；一次返回多条事实仍只生成一个调用计数。
+        operation = f"recall-attempt-{uuid.uuid4().hex}"
+        cursor.execute(
+            "INSERT INTO chat_memory_operation "
+            "(scope_id,request_id,operation_id,arguments_digest,"
+            "operation_kind,result_json,created_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (
+                identity.owner("session", self._secret), identity.request_id,
+                operation, fingerprint(operation), "recall_attempt",
+                _json({"hit_count": len(records)}), utc_now(),
+            ),
+        )
         for record in records:
             owner = identity.owner(record.scope, self._secret)
             operation = f"recall-{record.id}-{record.revision}"
@@ -1100,6 +1113,30 @@ class MemoryLifecycleMixin:
                 items=list(items),
                 next_cursor=encode_cursor(items[-1].id, filters) if len(rows) > limit else None,
             )
+
+    def admin_statistics(self, *, start_time: datetime, end_time: datetime) -> MemoryStatistics:
+        """管理端只聚合数量；事实按当前有效性，召回按 UTC 左闭右开区间计数。"""
+        now = utc_now()
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT COUNT(*) AS memory_count FROM chat_tagged_memory WHERE " + _ACTIVE_SQL,
+                (now, now),
+            )
+            memory_count = cursor.fetchone()["memory_count"]
+            cursor.execute(
+                "SELECT COUNT(*) AS recall_count, "
+                "COUNT(CASE WHEN JSON_EXTRACT(result_json,'$.hit_count') > 0 "
+                "THEN 1 END) AS recall_hit_count FROM chat_memory_operation "
+                "WHERE operation_kind='recall_attempt' AND created_at >= %s AND created_at < %s",
+                (start_time, end_time),
+            )
+            row = cursor.fetchone()
+        return MemoryStatistics(
+            memory_count=memory_count, **row,
+            recall_rate=(
+                row["recall_hit_count"] / row["recall_count"] if row["recall_count"] else None
+            ),
+        )
 
     def admin_tags(
         self, *, scope: str | None = None, scope_id: str | None = None

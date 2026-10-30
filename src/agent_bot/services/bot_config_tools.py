@@ -1,4 +1,4 @@
-"""仅允许真实机器人主人通过聊天工具访问已有配置服务。"""
+"""真实 QQ 会话可查询脱敏配置，仅机器人主人可以修改配置。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from agent_bot.settings import SettingsError, SettingsRevisionConflictError, Set
 BOT_CONFIG_TOOLS = frozenset({"bot_config_get", "bot_config_update"})
 # 只有固定业务提示可跨 Chat MCP 桥公开；不透传数据库、文件或校验异常正文。
 CONFIG_TOOL_ERROR_MESSAGES = {
-    "FORBIDDEN": "只有机器人主人可以查询或修改配置。",
+    "FORBIDDEN": "查询配置需要 QQ 会话，修改配置仅限机器人主人。",
     "CONFIG_CONFLICT": "配置已被修改，请重新查询版本后提交，不要直接重试旧修改。",
     "CONFIG_INVALID": "配置字段或值无效；只能修改查询结果中可编辑的非密钥字段。",
     "CONFIG_UNAVAILABLE": "配置服务不可用，请检查数据库或启动文件权限。",
@@ -51,22 +51,24 @@ def _error(code: str) -> ChatToolError:
 
 
 class BotConfigTools:
-    """复用管理配置服务，身份只来自令牌上下文和当前运行主人名单。"""
+    """复用管理配置服务，查询绑定 QQ 会话，修改还须核对当前主人名单。"""
 
     def __init__(self, settings: SettingsService) -> None:
         """宿主显式注入同一配置服务，不读取第二份启动环境或创建数据库。"""
         self.settings = settings
 
-    def _authorize(self, context: ChatToolContext) -> None:
-        """每次读写复核当前身份，已撤销的主人不能沿用旧令牌授权。"""
+    def _authorize(self, context: ChatToolContext, *, require_owner: bool = True) -> None:
+        """查询不限制主人，修改每次复核当前名单，避免旧令牌保留已撤销权限。"""
         context.ensure_active()
-        if (not context.bot_user_id
-                or context.user_id not in self.settings.runtime.config.superusers):
+        if (
+            not context.bot_user_id
+            or (require_owner and context.user_id not in self.settings.runtime.config.superusers)
+        ):
             raise _error("FORBIDDEN")
 
     async def get(self, arguments: dict[str, object], context: ChatToolContext) -> dict:
-        """读取脱敏快照并分页；秘密只展示设置状态，不能经此工具修改。"""
-        self._authorize(context)
+        """向已授权 QQ 会话提供脱敏快照；秘密只展示设置状态，不限制主人。"""
+        self._authorize(context, require_owner=False)
         args = BotConfigGetArguments.model_validate(arguments)
         try:
             snapshot = await asyncio.to_thread(self.settings.read)

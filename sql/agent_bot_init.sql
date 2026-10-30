@@ -769,3 +769,99 @@ CREATE TABLE IF NOT EXISTS agent_bot_sticker (
     UNIQUE KEY uq_sticker_preview_key (preview_key) COMMENT '预览文件键只归属一条记录',
     KEY ix_sticker_active_created (deleted, enabled, created_at, id) COMMENT '按活跃状态与创建时间分页'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='独立表情包图库，文件位置仅服务端可见';
+
+-- 长期互动演化增量：完整旧业务库先完成已登记历史迁移，再由启动升级器执行本脚本。
+-- 仅新增演化表，不改写原角色、凭据、记忆或历史；新库初始化包含相同结构。
+-- CREATE TABLE IF NOT EXISTS 支持 MySQL 隐式提交后的重入；最终核验失败即停止启动。
+CREATE TABLE IF NOT EXISTS agent_bot_evolution_config (
+    agent_id BIGINT UNSIGNED PRIMARY KEY COMMENT '真实 Agent；随删除级联清理',
+    enabled TINYINT NOT NULL DEFAULT 1 COMMENT '暂停同时停止学习和应用',
+    revision BIGINT NOT NULL DEFAULT 1 COMMENT '管理配置乐观锁版本',
+    -- 外键防止孤立配置或 Agent 删除后身份复用。
+    FOREIGN KEY (agent_id) REFERENCES agent_bot_agent(id) ON DELETE CASCADE,
+    CHECK (enabled IN (0,1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent 演化启停配置；无行时默认启用';
+
+CREATE TABLE IF NOT EXISTS agent_bot_evolution_profile (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '稳定分页和审计标识',
+    agent_id BIGINT UNSIGNED NOT NULL COMMENT '所属 Agent',
+    subject_key CHAR(64) NOT NULL COMMENT '会话密钥命名空间中的匿名用户摘要',
+    traits TEXT NOT NULL COMMENT '四个固定表达维度；档位负三至三',
+    revision BIGINT NOT NULL DEFAULT 1 COMMENT '实际行为变化或重置时递增',
+    -- 唯一键隔离 Agent 与用户，禁止跨用户共享画像。
+    UNIQUE KEY uq_evolution_subject (agent_id,subject_key),
+    -- Agent 删除时释放对应画像，不能保留孤立人格。
+    FOREIGN KEY (agent_id) REFERENCES agent_bot_agent(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='按 Agent 和匿名用户隔离的演化状态';
+
+CREATE TABLE IF NOT EXISTS agent_bot_evolution_event (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '因果引用及分页主键',
+    profile_id BIGINT UNSIGNED NOT NULL COMMENT '所属画像',
+    source_key VARCHAR(64) NOT NULL COMMENT '真实来源匿名摘要；内部操作用随机标识',
+    kind VARCHAR(16) NOT NULL COMMENT 'feedback 反馈、change 变化、reset 重置',
+    dimension VARCHAR(16) NOT NULL COMMENT '固定维度；重置为空串',
+    direction TINYINT NOT NULL COMMENT '反馈方向负一、零或一',
+    excerpt VARCHAR(300) NOT NULL COMMENT '完整明确反馈句或固定原因',
+    observed_at DATETIME(6) NOT NULL COMMENT '真实来源 UTC 时间',
+    consumed TINYINT NOT NULL DEFAULT 0 COMMENT '证据已消费后不能再次推动变化',
+    before_value TINYINT NULL COMMENT '变化前档位',
+    after_value TINYINT NULL COMMENT '变化后档位',
+    evidence_ids TEXT NOT NULL COMMENT '参与本次变化的真实反馈主键数组',
+    -- 去重索引保证请求重放不能虚增独立证据。
+    UNIQUE KEY uq_evolution_source (profile_id,source_key,dimension,kind),
+    -- 按画像和维度检索未消费的近期反馈。
+    KEY idx_evolution_pending (profile_id,dimension,kind,consumed,observed_at),
+    -- 画像删除时一并删除其证据，避免匿名主体跨生命周期复用。
+    FOREIGN KEY (profile_id) REFERENCES agent_bot_evolution_profile(id) ON DELETE CASCADE,
+    CHECK (kind IN ('feedback','change','reset')),
+    CHECK (direction BETWEEN -1 AND 1),
+    CHECK (consumed IN (0,1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='演化原始反馈、因果变化和重置事件';
+
+-- 可选角色关联的完整新库结构；旧三表保留兼容基线，应用使用以下范围、状态和记录表。
+-- 通用范围由首次启动登记的独立增量创建，既有数据复制也仅在独立增量中执行。
+CREATE TABLE IF NOT EXISTS agent_bot_evolution_scope (
+    scope_key VARCHAR(80) COLLATE utf8mb4_bin PRIMARY KEY COMMENT 'global 通用；agent:ID 为可选角色范围',
+    agent_id BIGINT UNSIGNED NULL UNIQUE COMMENT '可选角色关联；删除只解除关联',
+    enabled TINYINT NOT NULL DEFAULT 1 COMMENT '本范围学习和应用开关',
+    revision BIGINT NOT NULL DEFAULT 0 COMMENT '配置乐观锁；零为未显式保存',
+    -- 可选外键保留角色删除后的演化状态与历史。
+    FOREIGN KEY (agent_id) REFERENCES agent_bot_agent(id) ON DELETE SET NULL,
+    CHECK (enabled IN (0,1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='不依赖角色的通用或可选关联演化范围';
+CREATE TABLE IF NOT EXISTS agent_bot_evolution_state (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '保留旧画像 ID',
+    scope_key VARCHAR(80) COLLATE utf8mb4_bin NOT NULL COMMENT '所属演化范围',
+    subject_key CHAR(64) NOT NULL COMMENT '真实用户匿名命名空间',
+    traits TEXT NOT NULL COMMENT '固定表达维度的有界档位',
+    revision BIGINT NOT NULL DEFAULT 1 COMMENT '行为变化和重置版本',
+    -- 唯一索引防止同范围同用户产生多个状态。
+    UNIQUE KEY uq_evolution_state_subject (scope_key,subject_key),
+    -- 范围为状态的持久身份，不随角色删除。
+    FOREIGN KEY (scope_key) REFERENCES agent_bot_evolution_scope(scope_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通用或可选角色范围内的用户演化状态';
+CREATE TABLE IF NOT EXISTS agent_bot_evolution_record (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY COMMENT '保留旧事件主键和因果引用',
+    profile_id BIGINT UNSIGNED NOT NULL COMMENT '所属演化状态',
+    source_key VARCHAR(64) NOT NULL COMMENT '真实来源匿名摘要',
+    kind VARCHAR(16) NOT NULL COMMENT 'feedback 反馈、change 变化、reset 重置',
+    dimension VARCHAR(16) NOT NULL COMMENT '固定维度；重置为空',
+    direction TINYINT NOT NULL COMMENT '有界方向',
+    excerpt VARCHAR(300) NOT NULL COMMENT '真实原话或固定原因',
+    observed_at DATETIME(6) NOT NULL COMMENT '真实 UTC 来源时间或变化时间',
+    consumed TINYINT NOT NULL DEFAULT 0 COMMENT '防止旧证据重复生效',
+    before_value TINYINT NULL COMMENT '变化前档位',
+    after_value TINYINT NULL COMMENT '变化后档位',
+    evidence_ids TEXT NOT NULL COMMENT '真实反馈主键数组，迁移不重编号',
+    -- 同状态同来源同维度去重，重放不能虚增证据。
+    UNIQUE KEY uq_evolution_record_source (profile_id,source_key,dimension,kind),
+    -- 状态机按维度、消费标记和来源时间选取证据。
+    KEY idx_evolution_record_pending (profile_id,dimension,kind,consumed,observed_at),
+    -- 管理列表按类型倒序分页。
+    KEY idx_evolution_record_kind (kind,id),
+    -- 外键保留状态与因果记录的归属，应用不提供删除审计入口。
+    FOREIGN KEY (profile_id) REFERENCES agent_bot_evolution_state(id),
+    CHECK (kind IN ('feedback','change','reset')),
+    CHECK (direction BETWEEN -1 AND 1),
+    CHECK (consumed IN (0,1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='跨演化范围可查询的因果记录';

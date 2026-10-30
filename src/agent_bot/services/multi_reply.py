@@ -1,4 +1,4 @@
-"""QQ 多条回复的提示词与严格 JSON 协议，不改变模型工具调用协议。"""
+"""QQ 回复的 JSON 正文解码与严格分条协议，不改变模型工具调用协议。"""
 
 import json
 from typing import TYPE_CHECKING
@@ -49,7 +49,7 @@ def parse_multi_reply(text: str, maximum: int) -> tuple[str, ...]:
 
 
 def join_reply_array(text: str) -> str:
-    """关闭分条时解码单条 JSON 字符串或合并数组；普通正文及其他结构保持原样。"""
+    """关闭分条时解码字符串、数组及已确认的单字段包装，其他结构保持原样。"""
     try:
         messages = json.loads(text)
     except (ValueError, RecursionError):
@@ -58,6 +58,10 @@ def join_reply_array(text: str) -> str:
     if isinstance(messages, str):
         # 人设允许单条 JSON 字符串，解析一层即可恢复换行，不能再替换正文中的反斜杠。
         return messages
+    if (isinstance(messages, dict) and messages.keys() == {"消息内容"}
+            and isinstance(messages["消息内容"], str)):
+        # 兼容已出现的模型包装；只取明确的单个文本字段，不递归解码或猜测其他对象。
+        return messages["消息内容"]
     if isinstance(messages, list) and all(isinstance(message, str) for message in messages):
         return "".join(messages)
     return text

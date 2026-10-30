@@ -43,6 +43,7 @@ from agent_bot.mentions import (
 from agent_bot.models import ChatContext
 from agent_bot.multimodal import DownloadedImage
 from agent_bot.services.chat_reply import ChatReplyCollector
+from agent_bot.services.file_send import FileSendArguments, file_send
 from agent_bot.services.image_tasks import (
     ImageTaskCancellation,
     ImageTaskError,
@@ -68,6 +69,7 @@ from agent_bot.services.tagged_memory import (
 )
 from agent_bot.services.tool_operations import (
     EffectToolName,
+    FileEffect,
     ImageEffect,
     ImageTaskEffect,
     ReplyEffect,
@@ -232,6 +234,9 @@ class ChatToolContext:
     image_urls: tuple[str, ...] = field(default=(), repr=False)
     image_material_ids: tuple[str, ...] = field(default=(), repr=False)
     material_store: Any = field(default=None, repr=False)
+    file_sender: Callable[..., Awaitable[object]] | None = field(default=None, repr=False)
+    file_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    file_operations: dict[str, FileEffect | None] = field(default_factory=dict, repr=False)
     # 仅真实主人入站事件签发；不从群消息、模型参数或自动任务继承。
     material_library_access: bool = False
     workflow_request_scope: str = field(default_factory=lambda: secrets.token_hex(16))
@@ -906,7 +911,7 @@ async def _memory(arguments: dict[str, object], context: ChatToolContext) -> Mem
 
 
 def build_chat_tool_registry() -> ChatToolRegistry:
-    """装配受会话授权约束的工具，主人配置能力仍须在执行时复核身份。"""
+    """装配受会话授权约束的工具，修改配置仍须在执行时复核主人身份。"""
     from agent_bot.services.bot_config_tools import (
         BotConfigGetArguments,
         BotConfigUpdateArguments,
@@ -918,7 +923,7 @@ def build_chat_tool_registry() -> ChatToolRegistry:
         [
             ChatToolDefinition(
                 name="bot_config_get",
-                description=("仅机器人主人可用。查询机器人配置、字段用途和版本；"
+                description=("QQ 会话可用，无需主人身份。查询机器人配置、字段用途和版本；"
                              "可按 names 或 query 筛选，用 offset 分页。密钥仅展示设置状态。"
                              "修改前先查询字段、只读状态和版本，不得猜测配置名称。"),
                 input_schema=BotConfigGetArguments.model_json_schema(),
@@ -962,12 +967,27 @@ def build_chat_tool_registry() -> ChatToolRegistry:
                 description=(
                     "为最终回复登记当前 QQ 群的原生 @ 目标，工具本身不会发送消息。"
                     "目标可使用 QQ 号、群名片或昵称，也可以是当前消息发送者。"
+                    "用户使用他、她或刚才那位等指代时，先结合上下文确定真实QQ号或唯一姓名；"
+                    "无法唯一确定时在当前对话追问，不猜测目标或把指代词直接作为target。"
                     "根据对话自主决定是否 @ 成员，无须用户每次明确要求。"
                     "text 表达提醒意图，工具执行后仍必须返回完整的最终回复正文。"
                     "网关把目标的原生 @ 与最终正文合并发送一次；不要用普通文本模拟 @。"
                 ),
                 input_schema=MentionArguments.model_json_schema(),
                 handler=_mention_member,
+            ),
+            ChatToolDefinition(
+                name="file_send",
+                description=(
+                    "主动向当前QQ群或私聊发送文件，不必等正文超长。"
+                    "文本或代码使用name和content生成UTF-8文件；保留缩进和换行，最多16000字符。"
+                    "发送现有PDF、压缩包等原文件时，先用material_search查询真实ID，再传material_id；"
+                    "name可选，仅用于重命名。两种来源只能选一种，素材最大20MiB，沿用素材访问权限。"
+                    "不接受本地路径、URL或接收人。成功返回sent表示文件已上传，"
+                    "record_warning只表示发送后的记录保存有告警，不能因此声称上传失败或再次发文件。"
+                    "不要重复发送同一份文件；之后可以继续自然回复用户。"
+                ),
+                input_schema=FileSendArguments.model_json_schema(), handler=file_send,
             ),
             ChatToolDefinition(
                 name="local_workflow_tasks",

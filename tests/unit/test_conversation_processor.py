@@ -216,11 +216,13 @@ def multi_reply_session(monkeypatch, chat_plugin):
 @pytest.mark.parametrize(("answer", "expected"), [
     ('["第一句。", "第二句。", "第三句。", "第四句。"]', "第一句。第二句。第三句。第四句。"),
     ('"核心差别：\\n1. 交互\\n2. 能力"', "核心差别：\n1. 交互\n2. 能力"),
+    ('{"消息内容":"92都快九块了，加满一箱心都在滴血，95这是要奔十去啊\uff08笑\uff09"}',
+     "92都快九块了，加满一箱心都在滴血，95这是要奔十去啊\uff08笑\uff09"),
 ])
 async def test_disabled_multi_reply_sends_decoded_messages_without_json_wrapping(
     monkeypatch, chat_plugin, tools, multi_reply_session, answer, expected,
 ):
-    """单个 JSON 字符串和数组均在投递前解码，真实 OneBot 消息包含换行而非转义文本。"""
+    """JSON字符串、数组及已确认包装在投递前解码，工具和普通回复均只发送正文。"""
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_max_messages", 1)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(return_value=answer))
@@ -264,11 +266,14 @@ async def test_auto_reply_removes_internal_at_before_length_limit_and_delivery(
 
 
 @pytest.mark.asyncio
-async def test_disabled_multi_reply_applies_auto_speak_limit_after_join(monkeypatch, chat_plugin):
-    """主动发言的专用上限按合并后正文计算，不先截断数组包装。"""
+@pytest.mark.parametrize("answer", ['["第一条", "第二条"]', '{"消息内容":"第一条第二条"}'])
+async def test_disabled_multi_reply_applies_auto_speak_limit_after_join(
+    monkeypatch, chat_plugin, answer,
+):
+    """主动发言的专用上限按解码后正文计算，不先截断JSON包装。"""
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
-        return_value='["第一条", "第二条"]',
+        return_value=answer,
     ))
     result = await chat_plugin._ConversationProcessor().generate(queued_job(
         chatTools=(), autoSpeakMaxReplyChars=5,
@@ -281,6 +286,7 @@ async def test_disabled_multi_reply_applies_auto_speak_limit_after_join(monkeypa
     ('["你好", "呀"]', "你好呀", False),
     ('["第一条", "第二条"]', "第一条第二条", True),
     ('"第一\\n第二"', "第一\n第二", False),
+    ('{"消息内容":"第一\\n第二"}', "第一\n第二", False),
 ])
 async def test_disabled_multi_reply_uses_decoded_length_for_file_choice(
     monkeypatch, chat_plugin, answer, expected, as_file,

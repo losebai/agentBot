@@ -16,7 +16,8 @@ function Editor({ initialTools = [] as string[], initialMcps = [] as number[] })
 
 it.each([
   ['知识库检索', 'knowledge_search'], ['素材读取', 'material_get'],
-  ['查询机器人配置（仅主人）', 'bot_config_get'],
+  ['查询机器人配置（QQ）', 'bot_config_get'],
+  ['发送文件（QQ）', 'file_send'],
   ['修改机器人配置（仅主人）', 'bot_config_update'],
   ['目录浏览（仅管理员/主人）', 'ls'],
   ['终端命令（仅管理员/主人）', 'bash'],
@@ -40,6 +41,18 @@ it('QQ 插件未运行时仍能明确选择宿主工具，并保留已有 Agent 
   fireEvent.change(screen.getByRole('combobox', { name: '允许工具' }), { target: { value: 'bash' } });
   fireEvent.click(await screen.findByText('终端命令（仅管理员/主人） · bash'));
   expect(screen.getByLabelText('工具草稿')).toHaveTextContent('["read_url","bash"]');
+});
+
+it('QQ 文件工具随插件隐藏，修改其他工具仍保留已有文件发送授权草稿', async () => {
+  vi.mocked(ApiClient.prototype.plugins).mockResolvedValue([]);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ items: [], next_cursor: null })));
+  render(<Editor initialTools={['file_send']} />);
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '允许工具' }));
+  fireEvent.change(screen.getByRole('combobox', { name: '允许工具' }), { target: { value: 'file_send' } });
+  expect(screen.queryByText('发送文件（QQ） · file_send')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole('combobox', { name: '允许工具' }), { target: { value: 'read_url' } });
+  fireEvent.click(await screen.findByText('网页读取 · read_url'));
+  expect(screen.getByLabelText('工具草稿')).toHaveTextContent('["file_send","read_url"]');
 });
 
 it('远程服务下拉覆盖所有分页，关联后自动使用工具而无需逐个勾选', async () => {

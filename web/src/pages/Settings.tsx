@@ -294,7 +294,7 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
             {field.name === 'nickname' && <small>每行一个名称或别名，保存后热更新；留空关闭名字触发。</small>}
             {field.name === 'chat_sticker_model' && <small>独立选择已启用且开启视觉能力的模型，用于图片说明和文字语境匹配。留空可先维护图库，手动填写说明。</small>}
             {field.name === 'chat_sticker_vision_prompt' && <small>可补充希望识别的细节或表达风格；留空使用默认识图要求，自定义标签不会被识图覆盖。</small>}
-            {field.name === 'superusers' && <small>填写主人 QQ 号的 JSON 数组，如 ["123456789"]；保存后手动重启后端生效。仅主人可使用配置查询和修改工具，留空数组不授权任何人；密钥请在管理页面编辑。</small>}
+            {field.name === 'superusers' && <small>填写主人 QQ 号的 JSON 数组，如 ["123456789"]；保存后手动重启后端生效。QQ 用户均可使用配置查询工具，配置修改工具仅主人可用，留空数组不授权修改；密钥请在管理页面编辑。</small>}
             {field.name === 'chat_agent_max_steps' && <small>按实际工具调用次数计数，所有 Agent 和联网请求共用。默认 5，可填写任意正整数；留空不限次数，仍遵守请求超时。</small>}
             {field.name === 'chat_auto_speak_llm_prompt' && <small>使用独立决策模型和此提示词，结合当前收到的消息及近期群聊进行单次普通调用；不读取会话记忆、历史轮次或 Agent 人设。仅返回 {`{"choice":"speak"}`} 或 {`{"choice":"silent"}`}。</small>}
             {field.name === 'chat_auto_speak_trigger_mode' && <small>定时模式按周期检查；消息模式由群消息触发检查。两种模式分别保留时间配置。</small>}

@@ -46,6 +46,7 @@ class ChatRouteSelector:
                 "job",
                 "soloncode",
                 "mention_member",
+                "file_send",
                 "local_workflow_list",
                 "local_workflow_generate_image", "local_workflow_generate_video",
                 "local_workflow_tasks",

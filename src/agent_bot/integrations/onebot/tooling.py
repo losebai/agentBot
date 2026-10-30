@@ -85,8 +85,9 @@ class ChatToolSessionManager:
         catalog_provider: Callable[[], AiCatalog | None] = lambda: None,
         plugin_tools_provider: Callable[[], Sequence[ChatToolName]] = lambda: (),
         bot_config_tools_provider: Callable[[], BotConfigTools | None] = lambda: None,
+        file_sender: Callable[..., Awaitable[object]] | None = None,
     ) -> None:
-        """保存实时依赖；主人配置工具只借用宿主明确注入的配置服务。"""
+        """保存实时依赖；配置工具只借用宿主明确注入的配置服务。"""
 
         self._config_provider = config_provider
         self._store_provider = store_provider
@@ -102,9 +103,10 @@ class ChatToolSessionManager:
         self._catalog_provider = catalog_provider
         self._plugin_tools_provider = plugin_tools_provider
         self._bot_config_tools_provider = bot_config_tools_provider
+        self._file_sender = file_sender
 
     def available_tools(self, event: MessageEvent) -> tuple[ChatToolName, ...]:
-        """按真实事件授予主人配置及宿主能力，B站写工具也仅授予超级用户。"""
+        """真人可查询配置，修改配置、宿主能力及 B站写工具仅授予超级用户。"""
 
         from agent_bot.plugins.bilibili.contracts import WRITE_TOOLS
 
@@ -123,17 +125,21 @@ class ChatToolSessionManager:
     def _available_tools(
         self, *, group: bool, user_id: str | None = None,
     ) -> tuple[ChatToolName, ...]:
-        """配置与宿主能力要求真人主人身份，自动发言不获得该权限。"""
+        """配置查询授予真人，修改配置与宿主能力另须主人身份，自动发言不获授权。"""
 
         config = self._config_provider()
         if not config.chat_mcp_enabled or self._store_provider() is None:
             return ()
         tools: list[ChatToolName] = []
+        if self._file_sender is not None and self._material_store_provider() is not None:
+            tools.append("file_send")
         if user_id in config.superusers:
             # 宿主能力属于公共核心，不随平台插件开放；不能从自动任务借用主人账号。
             tools.extend(("ls", "bash"))
-        if user_id in config.superusers and self._bot_config_tools_provider() is not None:
-            tools.extend(("bot_config_get", "bot_config_update"))
+        if user_id is not None and self._bot_config_tools_provider() is not None:
+            tools.append("bot_config_get")
+            if user_id in config.superusers:
+                tools.append("bot_config_update")
         if config.chat_job_enabled:
             tools.append("job")
         if config.chat_tagged_memory_enabled and self._memory_store_provider() is not None:
@@ -181,7 +187,15 @@ class ChatToolSessionManager:
             and str(event.user_id) in config.superusers
         )
         if (not tools and not material_library_access) or store is None:
-            yield ChatToolSessionLease(tools=(), token=None)
+            # 表达习惯来自真实互动，不依赖记忆或其他工具是否启用。
+            with direct_memory_source(
+                session_id=session_id, bot_id=bot.self_id, user_id=str(event.user_id),
+                message_id=event.message_id, created_at=event.time,
+                secret=config.chat_session_secret.get_secret_value(),
+                group_id=str(event.group_id) if isinstance(event, GroupMessageEvent) else None,
+                source_text=event.original_message.extract_plain_text(),
+            ):
+                yield ChatToolSessionLease(tools=(), token=None)
             return
 
         workflow_enabled = bool(
@@ -215,6 +229,8 @@ class ChatToolSessionManager:
             ),
             allowed_tools=frozenset(tools),
             material_library_access=material_library_access,
+            material_store=self._material_store_provider(),
+            file_sender=self._file_sender,
             bot_config_tools=self._bot_config_tools_provider(),
             workflow_service=self._workflow_service_provider(),
             workflow_collector=collector,
@@ -320,6 +336,7 @@ class ChatToolSessionManager:
             image_urls=job.image_urls,
             image_material_ids=job.image_material_ids,
             material_store=self._material_store_provider(),
+            file_sender=self._file_sender,
             workflow_request_scope=workflow_input_scope(job.job_id),
             tts_service=tts_service,
             tts_collector=speech_collector,

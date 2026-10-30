@@ -8,12 +8,18 @@ STICKER_TOOLS = frozenset({"sticker_search", "sticker_send"})
 
 
 class StickerSearchArguments(BaseModel):
-    """上下文表达本轮语气与意图，标签是管理员共享库的显式过滤条件。"""
+    """聊天模型只描述语境，不猜测管理员标签而把真实候选过滤为空。"""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    context: str = Field(min_length=1, max_length=4000)
-    tags: tuple[str, ...] = Field(default=(), max_length=16)
+    context: str = Field(min_length=1, max_length=4000,
+                         description="本轮对话含义、希望表达的情绪和语气；不是标签筛选")
     limit: int = Field(default=3, ge=1, le=5)
+
+
+class StickerLibrarySearchArguments(StickerSearchArguments):
+    """管理页保留人工指定标签的严格交集筛选，与聊天工具参数分离。"""
+
+    tags: tuple[str, ...] = Field(default=(), max_length=16)
 
     @field_validator("tags", mode="before")
     @classmethod

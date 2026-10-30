@@ -71,6 +71,12 @@ def test_parse_conversational_numeric_directive_without_native_segment() -> None
     assert command == MentionCommand(target_user_id=10086, text="提醒他开会")
 
 
+@pytest.mark.parametrize("prompt", ["他没理你，at一下", "帮我艾特一下", "at"])
+def test_contextual_mention_without_explicit_target_is_left_to_agent(prompt: str) -> None:
+    """目标省略属于需要上下文的正常对话，不能被解释为非法提醒参数。"""
+    assert parse_conversational_mention(Message(prompt), bot_user_id=90001) is None
+
+
 def test_conversational_marker_is_recognized_anywhere_in_first_twenty_characters() -> None:
     named_request = parse_conversational_mention(
         Message("桃桃，at一下小翊，告诉他没事多喝水，没钱就"),

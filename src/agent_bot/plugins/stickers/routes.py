@@ -13,7 +13,7 @@ from agent_bot.agent.errors import AgentError
 from agent_bot.ai.contracts import AiModel
 from agent_bot.media.config import MAX_IMAGE_BYTES, UPLOAD_SECONDS
 from agent_bot.plugins.stickers.contracts import StickerPatch, normalize_tags
-from agent_bot.plugins.stickers.tool_contracts import StickerSearchArguments
+from agent_bot.plugins.stickers.tool_contracts import StickerLibrarySearchArguments
 
 
 class _Revision(AiModel):
@@ -73,8 +73,8 @@ def install_sticker_routes(router: APIRouter, runtime) -> None:
                     raise AgentError("MEDIA_CANCELLED", status_code=499) from error
 
     @router.post("/stickers/search")
-    async def search(body: StickerSearchArguments, request: Request):
-        """离开试用页面立即取消模型匹配，等待收尾后才归还运行时租约。"""
+    async def search(body: StickerLibrarySearchArguments, request: Request):
+        """管理页保留显式标签筛选，离开页面取消匹配后才归还运行时租约。"""
         async with runtime.lease():
             return await run_with_disconnect(request, service().search(
                 body.context, tags=body.tags, limit=body.limit,

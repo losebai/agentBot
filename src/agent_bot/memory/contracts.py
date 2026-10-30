@@ -9,6 +9,15 @@ MemoryKind = Literal["relationship", "preference", "agreement", "task", "fact", 
 MemoryStatus = Literal["active", "pending", "disputed", "expired", "merged", "deleted"]
 
 
+class MemoryStatistics(BaseModel):
+    """当前有效事实总量与区间内已完成召回的命中率，不推算旧回执分母。"""
+
+    memory_count: int = Field(ge=0)
+    recall_count: int = Field(ge=0)
+    recall_hit_count: int = Field(ge=0)
+    recall_rate: float | None = Field(default=None, ge=0, le=1)
+
+
 class QuotedMemorySource(BaseModel):
     """服务端从真实引用绑定的有界资料，模型不能指定作者或平台消息身份。"""
 

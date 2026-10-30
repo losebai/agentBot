@@ -178,6 +178,8 @@ class AgentRequest(AiModel):
     """内部请求将 QQ 图片地址与管理上传标识分开，禁止公开序列化。"""
 
     agent_code: str | None = None
+    # 仅真人对话积累和应用通用习惯；内部识图及分类不能借用管理员或外层用户身份。
+    interaction: bool = Field(default=True, exclude=True, repr=False)
     model: str | None = Field(default=None, max_length=200)
     prompt: str = Field(max_length=32000)
     image_urls: tuple[str, ...] = Field(default=(), max_length=8, exclude=True, repr=False)

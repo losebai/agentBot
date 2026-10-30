@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from tests.unit.test_plugin_settings import valid_config
 
 from agent_bot.integrations.onebot.queue_processor import ConversationQueueProcessor
 from agent_bot.services.conversation_queue import (
@@ -29,8 +30,9 @@ async def test_queue_records_original_user_time_before_generation_and_skips_synt
     chat = SimpleNamespace(generate_queued=AsyncMock(side_effect=RuntimeError("模型失败")),
                            commit_queued=AsyncMock(),
                            client=SimpleNamespace(acknowledge_job=AsyncMock()))
+    config = valid_config(chat_chunk_chars=100, chat_multi_reply_enabled=False)
     processor = ConversationQueueProcessor(
-        config_provider=lambda: SimpleNamespace(chat_chunk_chars=100),
+        config_provider=lambda: config,
         chat_service_provider=lambda: chat, runtime_lease=lease, tool_session_provider=lease,
         bot_provider=lambda _: None, reply_composer=None, reply_gateway=None,
         operation_store_provider=lambda: None, image_submitter=AsyncMock(),

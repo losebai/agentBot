@@ -107,10 +107,18 @@ async def test_material_library_access_requires_human_owner_in_direct_and_queue(
         group_member_refresher=lambda _bot, _group: None,
     )
     async with manager.open_chat_session(bot, _private_event(), "destination") as lease:
+        from agent_bot.state import current_conversation_source
+
+        # 即使记忆和其他工具关闭，真实入站仍保留独立来源，供长期演化使用。
+        binding = current_conversation_source.get()
+        assert binding.session_id == 'destination'
+        assert binding.source['source_event_id'] == 'qq:90001:1'
+        assert binding.source['source_text'] == '生成语音'
         if is_owner:
             assert (await sessions.resolve(lease.token)).material_library_access is True
         else:
             assert lease.token is None
+    assert current_conversation_source.get() is None
     monkeypatch.setattr(manager, "queued_bot", lambda _: bot)
     job = ConversationJob(job_id="material-access", request_id="qq-material-access", created_at=1,
                           session_id="destination", bot_id="90001", scene="private",

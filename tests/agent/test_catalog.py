@@ -31,6 +31,49 @@ async def test_crud_cas_and_references(agent_database, agent_params, seeded_mode
     assert (await catalog.list_agents()).items == []
 
 
+@pytest.mark.parametrize("limit", [1, 2])
+async def test_current_enabled_agent_is_first_without_skipping_other_pages(
+    agent_database, agent_params, seeded_model, limit,
+):
+    """实际选中的角色即使在后页也置顶，其他已启用角色不能抢占且翻页不能漏项重复。"""
+    catalog = AgentCatalog(agent_params, connect=agent_database.connect)
+    for code in ("first", "second", "current", "last"):
+        await catalog.create_agent(AgentCreate(code=code, name=code,
+                                               model_id=seeded_model[2].id, enabled=True))
+    page = await catalog.list_agents(limit=limit, preferred_code="current")
+    codes = [item.code for item in page.items]
+    assert codes[0] == "current" and len(page.items) == limit
+    while page.next_cursor is not None:
+        # 切换运行配置不能让已经显示过的置顶项再次出现在当前分页遍历中。
+        page = await catalog.list_agents(limit=limit, cursor=page.next_cursor,
+                                          preferred_code="last")
+        assert len(page.items) <= limit
+        codes.extend(item.code for item in page.items)
+    assert codes == ["current", "first", "second", "last"]
+
+
+@pytest.mark.parametrize("code", ["missing", "stopped", None])
+async def test_missing_or_disabled_current_agent_preserves_original_order(
+    agent_database, agent_params, seeded_model, code,
+):
+    """未配置、已停用或不存在的预设没有运行角色，目录仍可按原顺序维护。"""
+    catalog = AgentCatalog(agent_params, connect=agent_database.connect)
+    for name, enabled in (("first", True), ("stopped", False)):
+        await catalog.create_agent(AgentCreate(code=name, name=name,
+                                               model_id=seeded_model[2].id, enabled=enabled))
+    result = await catalog.list_agents(preferred_code=code)
+    assert [item.code for item in result.items] == ["first", "stopped"]
+
+
+@pytest.mark.parametrize("cursor", ["p:0:1", "p:1:-1", "p:1:", "p:1:1 OR 1=1"])
+async def test_pinned_agent_cursor_rejects_invalid_values(agent_database, agent_params, cursor):
+    """置顶分页只接受有界数字身份，不能让非法游标进入SQL。"""
+    catalog = AgentCatalog(agent_params, connect=agent_database.connect)
+    with pytest.raises(AiError) as rejected:
+        await catalog.list_agents(cursor=cursor)
+    assert rejected.value.code == "AGENT_INVALID_PAGE"
+
+
 async def test_snapshot_survives_later_edits(agent_database, agent_params, seeded_model):
     ai, provider, model = seeded_model
     catalog = AgentCatalog(agent_params, connect=agent_database.connect)

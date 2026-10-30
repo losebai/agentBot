@@ -113,3 +113,40 @@ it('没有已结束的模型调用时失败率显示未知，日期倒置时阻�
   fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-10-28' } });
   expect(screen.getByRole('button', { name: /查\s*询/ })).toBeDisabled();
 });
+
+it('记忆概况沿用日期筛选，条数保持当前有效总量', async () => {
+  vi.stubGlobal('fetch', vi.fn(async raw => {
+    const url = new URL(String(raw), 'http://localhost');
+    if (url.pathname.endsWith('/bots')) return Response.json([]);
+    const historical = url.searchParams.get('start_date') === '2025-01-01';
+    return Response.json({ ...status(null), memory_statistics: {
+      memory_count: 1234, recall_count: historical ? 2 : 4,
+      recall_hit_count: historical ? 1 : 3, recall_rate: historical ? 0.5 : 0.75,
+    } });
+  }));
+  render(<Overview token="offline" />);
+  const overview = await screen.findByRole('region', { name: '记忆概况' });
+  expect(overview).toHaveTextContent('1,234');
+  expect(overview).toHaveTextContent('75.0%');
+  expect(overview).toHaveTextContent('命中 3 / 已完成召回 4');
+  fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2025-01-01' } });
+  fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2025-01-02' } });
+  await userEvent.click(screen.getByRole('button', { name: /查\s*询/ }));
+  await waitFor(() => expect(overview).toHaveTextContent('50.0%'));
+  expect(overview).toHaveTextContent('1,234');
+  expect(overview).toHaveTextContent('命中 1 / 已完成召回 2');
+});
+
+it.each([false, true])('记忆无样本或读取失败时不伪造零召回率：失败 %s', async failed => {
+  vi.stubGlobal('fetch', vi.fn(async raw => Response.json(String(raw).endsWith('/bots') ? [] : {
+    ...status(null), memory_statistics: failed ? null : {
+      memory_count: 0, recall_count: 0, recall_hit_count: 0, recall_rate: null,
+    }, memory_statistics_error: failed ? 'MEMORY_UNAVAILABLE' : null,
+  })));
+  render(<Overview token="offline" />);
+  const overview = await screen.findByRole('region', { name: '记忆概况' });
+  expect(overview).not.toHaveTextContent('0.0%');
+  expect(overview).toHaveTextContent(failed ? '统计不可用' : '暂无召回记录');
+  expect(screen.getByText('服务状态').parentElement).toHaveTextContent('就绪');
+  if (failed) expect(screen.getByText(/记忆统计暂不可用/)).toBeVisible();
+});

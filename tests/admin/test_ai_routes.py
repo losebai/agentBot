@@ -237,6 +237,40 @@ async def python_api(admin_store, admin_runtime):
     database.close()
 
 
+async def test_status_memory_statistics_uses_utc_dates_and_independent_errors(python_api):
+    """记忆按 UTC 过滤，失败不遮蔽用量及就绪信息，认证仍先于数据库读取。"""
+    from datetime import datetime
+    from unittest.mock import Mock
+
+    from agent_bot.integrations.tagged_memory_store import TaggedMemoryStoreError
+    from agent_bot.memory.contracts import MemoryStatistics
+
+    api, _, runtime = python_api
+    runtime.tagged_memory_store = Mock()
+    reader = runtime.tagged_memory_store.admin_statistics
+    reader.return_value = MemoryStatistics(
+        memory_count=12, recall_count=4, recall_hit_count=3, recall_rate=0.75,
+    )
+    path = "/api/v1/status?start_date=2026-10-30&end_date=2026-10-30"
+    assert (await api.get(path)).status_code == 401
+    reader.assert_not_called()
+    response = await api.get(path, headers=HEADERS)
+    assert response.status_code == 200
+    assert response.json()["memory_statistics"]["recall_rate"] == 0.75
+    reader.assert_called_once_with(
+        start_time=datetime(2026, 10, 29, 16), end_time=datetime(2026, 10, 30, 16),
+    )
+    reader.side_effect = TaggedMemoryStoreError("private database detail")
+    response = await api.get(path, headers=HEADERS)
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["memory_statistics"] is None
+    assert payload["memory_statistics_error"] == "MEMORY_UNAVAILABLE"
+    assert payload["statistics"] is not None
+    assert payload["ready"] is True
+    assert "private database detail" not in response.text
+
+
 async def test_ai_crud_auth_cas_and_safe_errors(python_api):
     api, _, _ = python_api
     assert (await api.get("/api/v1/ai/models")).status_code == 401
@@ -449,6 +483,7 @@ async def test_status_defaults_to_beijing_today_and_supports_date_ranges(python_
     for query in (
         f"start_date={today}&end_date={yesterday}", f"start_date={today}",
         f"end_date={today}", "start_date=invalid&end_date=2026-10-28",
+        "start_date=0001-01-01&end_date=0001-01-02",
     ):
         response = await api.get(f"/api/v1/status?{query}", headers=HEADERS)
         assert response.status_code == 422

@@ -53,6 +53,7 @@ class AgentService:
         image_downloader=None,
         maximum_images=4,
         maximum_tool_calls: int | None = None,
+        evolution=None,
     ):
         """注入运行配置调用预算和媒体边界，不在构造时下载或读文件。"""
         self.catalog, self.records, self.credentials = catalog, records, model_credentials
@@ -62,6 +63,7 @@ class AgentService:
         self.material_store = material_store
         self.maximum_images = min(maximum_images, 8)
         self.maximum_tool_calls = maximum_tool_calls
+        self.evolution = evolution
 
     @property
     def active_requests(self) -> int:
@@ -121,10 +123,16 @@ class AgentService:
         messages = [TurnMessage(role=m.role, text=m.content) for m in request.messages]
         if not messages or messages[-1].role != "user":
             messages.append(TurnMessage(role="user", text=request.prompt))
+        habits = ''
         if snapshot.agent:
             messages.insert(0, TurnMessage(role="system", text=compose_system_prompt(
                 snapshot.agent.system_prompt, snapshot.agent.personality_prompt,
             )))
+        if self.evolution is not None and request.interaction:
+            # 通用习惯不依赖角色预设，命名角色可叠加独立的专属习惯，均不扩大权限。
+            habits = await self.evolution.suggestions(
+                snapshot.agent.id if snapshot.agent else None, request, authority,
+            )
         images = ()
         if has_images:
             if len(request.image_urls or request.attachment_ids or request.image_material_ids
@@ -164,7 +172,8 @@ class AgentService:
             timeout_seconds=remaining_timeout(request.timeout_seconds),
         )
         return PreparedRun(
-            execution_id, request, snapshot, authority, call, maximum, scope, images, router
+            execution_id, request, snapshot, authority, call, maximum, scope, images, router,
+            evolution_prompt=habits,
         ), provider
 
     async def complete(self, request, authority):

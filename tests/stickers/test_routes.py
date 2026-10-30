@@ -79,6 +79,17 @@ async def test_sticker_upload_requires_management_authentication(api):
     assert (await current.store.list())["total"] == 0
 
 
+async def test_admin_search_keeps_explicit_tag_filter(api):
+    """机器人去掉标签参数后，管理页的显式标签筛选仍严格生效。"""
+    client, current, _ = api
+    await current.store.create(name="未标注图片", data=picture(), mime_type="image/png")
+    response = await client.post("/api/v1/stickers/search", headers=HEADERS, json={
+        "context": "轻松打招呼", "tags": ["问候"],
+    })
+    assert response.status_code == 200
+    assert response.json() == {"matches": []}
+
+
 async def test_gif_upload_original_content_and_partial_revision_edit(api):
     """上传与标签更新保留GIF原件，旧修订不能覆盖新编辑。"""
     client, _, _ = api

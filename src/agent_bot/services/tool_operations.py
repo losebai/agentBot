@@ -7,6 +7,7 @@ from typing import Annotated, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 EffectToolName = Literal[
+    "file_send",
     "outgoing_message",
     "image_generate",
     "send_reply",
@@ -26,6 +27,17 @@ class DeliveryEffect(BaseModel):
     kind: Literal["delivery"] = "delivery"
     signature: str = Field(pattern=r"^[a-f0-9]{64}$")
     message_id: str | None = Field(default=None, max_length=128)
+
+
+class FileEffect(BaseModel):
+    """已上传到当前会话的文件回执，不保存原件字节、路径或可修改的接收人。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["file"] = "file"
+    material_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    name: str = Field(min_length=1, max_length=255)
+    size_bytes: int = Field(gt=0, le=20 * 1024 * 1024)
+    record_warning: bool = False
 
 
 class ReplyEffect(BaseModel):
@@ -83,7 +95,8 @@ class SpeechEffect(BaseModel):
 
 
 ToolEffect = Annotated[
-    ReplyEffect
+    FileEffect
+    | ReplyEffect
     | MentionEffect
     | ImageEffect
     | VideoEffect

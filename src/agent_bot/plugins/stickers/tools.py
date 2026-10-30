@@ -8,6 +8,7 @@ import json
 from agent_bot.agent.contracts import ToolDefinition, ToolResult
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.tools.local_media import project_local_schema, validate_local_call
+from agent_bot.ai.errors import AiError
 from agent_bot.media_artifacts import ImageArtifact
 from agent_bot.plugins.stickers.tool_contracts import (
     STICKER_TOOLS,
@@ -19,9 +20,11 @@ from agent_bot.services.tool_images import record_tool_images
 _DESCRIPTIONS = {
     "sticker_search": (
         "根据当前聊天语境、情绪和表达意图检索表情包。context写清楚本轮对话含义和语气，"
-        "可传tags筛选管理员标签。日常闲聊可自主检索并搭配表情，无需用户明确要求发图。"
+        "按语境匹配全库说明、情绪与场景，不需要标签。日常闲聊、接梗、调侃、撒娇、"
+        "庆祝或安慰时主动考虑检索并搭配表情，无需用户明确要求发图。"
         "检索只返回已入库的真实ID、说明、情绪、适用场景及相关度。"
-        "没有合适表情返回空列表，不强行发送；自然语言回复不展示检索评分和内部ID。"
+        "有贴切结果时继续调用sticker_send完成选图；没有合适表情返回空列表，不强行发送。"
+        "自然语言回复不展示检索评分和内部ID。"
     ),
     "sticker_send": (
         "选择本请求sticker_search推荐的一张表情包，随本轮回复投递，保留原始动画。"
@@ -81,12 +84,25 @@ class StickerToolSession:
         return service
 
     async def call(self, call) -> ToolResult:
-        """文字结果只含元数据，投递原件独立进入现有持久附件链。"""
+        """检索格式错误明确反馈而不终止聊天；投递原件独立进入持久附件链。"""
         service = await self._authorize(call.name)
         validate_local_call(call)
         if call.name == "sticker_search":
             args = StickerSearchArguments.model_validate(call.arguments)
-            value = await service.search(args.context, tags=args.tags, limit=args.limit)
+            try:
+                value = await service.search(args.context, limit=args.limit)
+            except AiError as error:
+                # 已确认的只读检索格式错误可交回模型继续正文；期限、授权和取消仍中断执行。
+                if error.code not in {"STICKER_SEARCH_INVALID", "AI_RESPONSE_INVALID"}:
+                    raise
+                return ToolResult(
+                    call_id=call.call_id, name=call.name, is_error=True,
+                    content=json.dumps({
+                        "code": error.code,
+                        "message": "表情包检索结果无效，本轮未获得新的可发送候选。"
+                        "请继续正常文字回复，不声称已发送表情包。",
+                    }, ensure_ascii=False),
+                )
             self.selected.update(match["sticker"]["id"] for match in value["matches"])
             return ToolResult(call_id=call.call_id, name=call.name,
                               content=json.dumps(value, ensure_ascii=False))

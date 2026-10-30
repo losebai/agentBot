@@ -23,7 +23,11 @@ from agent_bot.ai.chat_errors import (
 )
 from agent_bot.config import RuntimeConfig
 from agent_bot.database_pool import finish_database_write
-from agent_bot.integrations.onebot.memory_source import has_user_memory_source, queued_memory_source
+from agent_bot.integrations.onebot.memory_source import (
+    has_user_memory_source,
+    queued_evolution_source,
+    queued_memory_source,
+)
 from agent_bot.integrations.onebot.outgoing import OutgoingRecorder
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway
 from agent_bot.integrations.workflow_store import WorkflowNotFoundError
@@ -66,7 +70,11 @@ from agent_bot.services.tool_operations import (
     VideoEffect,
 )
 from agent_bot.services.workflow_execution import WorkflowExecutionService, WorkflowImageRequest
-from agent_bot.state import AccessPolicy, split_reply
+from agent_bot.state import (
+    AccessPolicy,
+    current_conversation_source,
+    split_reply,
+)
 
 RuntimeLease = Callable[[], AbstractAsyncContextManager[None]]
 LegacyToolSessionValue = tuple[Sequence[ChatToolName], str | None]
@@ -164,9 +172,19 @@ class ConversationQueueProcessor:
 
     async def generate(self, job: ConversationJob) -> ConversationResult:
         """捕获素材读取和模型附件；开画通知也登记到当前请求的出站历史。"""
-        async with self._delivery_scope(job, "generate"):
-            with capture_tool_images() as images:
-                result = await self._generate(job)
+        # 来源独立于记忆工具开关；后台任务显式绑定空来源，不能继承外层真人证据。
+        binding = None
+        if job.source_message_id is not None:
+            binding = queued_evolution_source(
+                job, self._config_provider().chat_session_secret.get_secret_value(),
+            )
+        source_token = current_conversation_source.set(binding)
+        try:
+            async with self._delivery_scope(job, "generate"):
+                with capture_tool_images() as images:
+                    result = await self._generate(job)
+        finally:
+            current_conversation_source.reset(source_token)
         if images.items:
             result = ConversationResult.model_validate(result.model_copy(update={
                 "tool_images": images.items,
@@ -368,7 +386,7 @@ class ConversationQueueProcessor:
                     raise ChatAiProtocolError("多条回复正文不能为空")
                 return self._multi_reply_result(job, answer, reply_config, tools, reply_collector)
             if answer is not None:
-                # 单条 JSON 字符串与数组均先解码，再按实际正文决定长度、文件和工具发送。
+                # 先解码消息 JSON 及已确认的单字段包装，再按正文决定长度与投递形式。
                 answer = clean_internal_reply_text(join_reply_array(answer))
             # 普通聊天超过文字上限改为完整文件；自动发言继续遵循专用长度上限。
             if (

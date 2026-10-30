@@ -43,6 +43,8 @@ from agent_bot.ai.call_records import CallRecordStore
 from agent_bot.ai.chat_errors import ChatAiError, ChatAiUnavailableError
 from agent_bot.ai.errors import AiError
 from agent_bot.core.lifecycle import RuntimeRefreshInProgressError
+from agent_bot.database_pool import finish_database_write
+from agent_bot.integrations.tagged_memory_store import TaggedMemoryStoreError
 from agent_bot.integrations.workflow_store import (
     WorkflowNotFoundError,
     WorkflowRevisionConflictError,
@@ -122,10 +124,13 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
 
     @router.get("/status", response_model=ServiceStatus)
     async def status(start_date: date | None = None, end_date: date | None = None) -> ServiceStatus:
-        """按北京时间日期聚合归档，默认今日；实时请求和服务状态不受区间限制。"""
+        """默认北京时间今日；记忆回执换算 UTC，当前有效记忆和服务状态不受区间限制。"""
         if start_date is None and end_date is None:
             start_date = end_date = datetime.now(timezone(timedelta(hours=8))).date()
-        if start_date is None or end_date is None or start_date > end_date or end_date == date.max:
+        if (
+            start_date is None or end_date is None or start_date > end_date
+            or start_date == date.min or end_date == date.max
+        ):
             raise HTTPException(
                 status_code=422, detail="请选择有效的开始和结束日期，开始日期不能晚于结束日期。",
             )
@@ -149,6 +154,22 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
             python_media = media_resources.readiness if media_resources is not None else None
             statistics = None
             statistics_error = None
+            memory_statistics = None
+            memory_statistics_error = None
+            memory_store = getattr(runtime, "tagged_memory_store", None)
+            if memory_store is None:
+                memory_statistics_error = "MEMORY_UNAVAILABLE"
+            else:
+                try:
+                    # 记忆回执存 UTC；取消仍等线程归还数据库连接后才释放运行时租约。
+                    memory_statistics = await finish_database_write(
+                        lambda: memory_store.admin_statistics(
+                            start_time=start_time - timedelta(hours=8),
+                            end_time=end_time - timedelta(hours=8),
+                        ),
+                    )
+                except TaggedMemoryStoreError:
+                    memory_statistics_error = "MEMORY_UNAVAILABLE"
             if service is not None:
                 sessions = service.sessions
                 try:
@@ -180,6 +201,8 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
             python_media=python_media,
             statistics=statistics,
             statistics_error=statistics_error,
+            memory_statistics=memory_statistics,
+            memory_statistics_error=memory_statistics_error,
         )
 
     @router.post("/chat", response_model=ChatResponse)

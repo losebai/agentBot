@@ -20,9 +20,11 @@ from agent_bot.services.chat_tools import (
     WorkflowVideoArguments,
     _StrictArguments,
 )
+from agent_bot.services.file_send import FileSendArguments
 from agent_bot.services.tagged_memory import MemoryArguments
 
 ARGUMENT_MODELS = {
+    "file_send": FileSendArguments,
     "ls": LsArguments,
     "bash": BashArguments,
     **TOOL_MODELS,

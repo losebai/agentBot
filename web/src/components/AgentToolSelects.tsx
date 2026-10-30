@@ -18,9 +18,10 @@ const builtinTools = [
   ['material_search', '素材查询'], ['material_get', '素材读取'],
   ['sticker_search', '表情包检索'], ['sticker_send', '表情包发送'],
   ['memory', '标签记忆（QQ）'], ['naraka_query', '永劫无间查询（QQ）'],
-  ['bot_config_get', '查询机器人配置（仅主人）'],
+  ['bot_config_get', '查询机器人配置（QQ）'],
   ['bot_config_update', '修改机器人配置（仅主人）'],
   ['naraka_search', '永劫无间搜索（QQ）'], ['mention_member', '群成员 @（QQ）'],
+  ['file_send', '发送文件（QQ）'],
   ['image_generate', '模型直接生图'],
   ['local_workflow_list', '工作流列表'], ['local_workflow_generate_image', '工作流生图'], ['local_workflow_generate_video', '工作流生视频'],
   ['local_workflow_tasks', '绘图任务列表（QQ）'], ['local_workflow_cancel', '取消绘图任务（QQ）'],
@@ -35,7 +36,8 @@ const pluginTools: Record<string, string> = {
   // 图库工具只由已启动的表情包插件提供，停用时保留已有选择。
   sticker_search: 'stickers', sticker_send: 'stickers',
   memory: 'qqbot', naraka_query: 'qqbot', naraka_search: 'qqbot', mention_member: 'qqbot',
-  // 配置工具的可见性随 QQ 插件运行，实际执行还须服务端校验主人身份。
+  file_send: 'qqbot',
+  // 配置工具的可见性随 QQ 插件运行，查询面向 QQ 用户，修改还须服务端校验主人身份。
   bot_config_get: 'qqbot', bot_config_update: 'qqbot',
   local_workflow_tasks: 'qqbot', local_workflow_cancel: 'qqbot', job: 'qqbot',
 };

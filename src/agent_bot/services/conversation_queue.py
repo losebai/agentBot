@@ -87,6 +87,14 @@ class ConversationJob(BaseModel):
         default=None, alias="memorySourceText", max_length=20_000,
         exclude_if=lambda value: value is None, repr=False,
     )
+    # 演化必须使用平台原始身份与时间；旧持久任务缺失时不补造来源。
+    source_message_id: int | None = Field(
+        default=None, alias='sourceMessageId', exclude_if=lambda value: value is None,
+    )
+    source_message_time: float | None = Field(
+        default=None, alias='sourceMessageTime', ge=0, allow_inf_nan=False,
+        exclude_if=lambda value: value is None,
+    )
     # 引用单独保存，恢复任务时不把他人资料混入本人原话或摘要证据。
     memory_quoted_source: QuotedMemorySource | None = Field(
         default=None, alias="memoryQuotedSource", exclude_if=lambda value: value is None,

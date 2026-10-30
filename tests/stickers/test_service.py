@@ -118,6 +118,32 @@ async def test_model_cannot_invent_matching_sticker_ids():
     assert rejected.value.code == "STICKER_SEARCH_INVALID"
 
 
+async def test_ranking_accepts_redundant_name_but_uses_library_identity():
+    """兼容已出现的附加名称，最终名称和文件身份仍取自真实候选。"""
+    current, complete, _ = service([sticker(tags=())])
+    complete.return_value = SimpleNamespace(content=json.dumps({"matches": [
+        {"id": "a" * 32, "name": "模型提供的错误名称", "score": 0.95, "reason": "符合语境"},
+    ]}))
+    result = await current.search("今晚又加班，累瘫了")
+    assert result["matches"][0]["sticker"]["name"] == "猫猫崩溃"
+    assert result["matches"][0]["sticker"]["tags"] == []
+
+
+@pytest.mark.parametrize("matches", [
+    [{"id": "b" * 32, "name": "猫猫崩溃", "score": 0.9, "reason": "伪造ID"}],
+    [{"id": "a" * 32, "name": "猫猫崩溃", "score": 1.1, "reason": "评分越界"}],
+    [{"id": "a" * 32, "score": 0.9, "reason": "重复"}] * 2,
+    [{"id": "a" * 32, "score": 0.9, "reason": "额外字段", "url": "https://invalid"}],
+])
+async def test_ranking_name_compatibility_does_not_relax_candidate_validation(matches):
+    """接纳冗余名称不能允许假ID、非法评分、重复项或任意扩展字段。"""
+    current, complete, _ = service([sticker()])
+    complete.return_value = SimpleNamespace(content=json.dumps({"matches": matches}))
+    with pytest.raises(AgentError) as rejected:
+        await current.search("加班")
+    assert rejected.value.code == "STICKER_SEARCH_INVALID"
+
+
 async def test_no_semantic_match_never_becomes_random_selection():
     """有图库但语境不匹配时保持空列表，禁用项也不能进入候选。"""
     current, complete, _ = service([sticker(), sticker("b" * 32, enabled=False)])

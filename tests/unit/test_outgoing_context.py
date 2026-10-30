@@ -50,9 +50,12 @@ class Journal:
 def setup_recorder(*, journal=None, receipts=None):
     """提供真实网关与上下文登记器，仅替换持久化和 OneBot 网络。"""
     journal = Journal() if journal is None else journal
-    materials = SimpleNamespace(put=AsyncMock(return_value=SimpleNamespace(
-        id='a' * 32, name='原件', kind='image', mime_type='image/png', size_bytes=80,
-    )))
+    materials = SimpleNamespace(
+        put=AsyncMock(return_value=SimpleNamespace(
+            id='a' * 32, name='原件', kind='image', mime_type='image/png', size_bytes=80,
+        )),
+        add_category=AsyncMock(),
+    )
     service = SimpleNamespace(history_generation=AsyncMock(return_value='generation-one'))
 
     async def scope(request_id):

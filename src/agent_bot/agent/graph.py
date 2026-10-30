@@ -105,7 +105,8 @@ def build_agent_graph(
         turn = state.get("turn", 0) + 1
         base = state.get("messages", initial)
         prompt = AgentPromptBuilder.build(
-            role, prepared.snapshot.skills, definitions, final_only=final_only
+            role, prepared.snapshot.skills, definitions, final_only=final_only,
+            habits=prepared.evolution_prompt,
         )
         messages = [TurnMessage(role="system", text=prompt), *base]
         images = [

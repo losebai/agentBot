@@ -68,32 +68,77 @@ class OneBotReplyGateway:
     ) -> dict[str, Any]:
         """完整模型正文编码为 UTF-8 文件，NapCat 解码并释放临时文件，无共享目录。"""
         self._require_generated(reply)
-        encoded = base64.b64encode(reply.text.encode("utf-8")).decode("ascii")
         name = "reply-" + hashlib.sha256(reply.request_id.encode("utf-8")).hexdigest()[:16]
-        # 文件名由请求摘要生成，模型内容和外部标识不能指定本地路径。
-        async def send_file():
+        return await self.send_file(
+            bot, scene=scene, target_id=target_id, name=f"{name}.txt",
+            data=reply.text.encode("utf-8"), mime_type="text/plain",
+            request_id=reply.request_id, text=reply.text,
+        )
+
+    async def send_file(
+        self, bot: Bot, *, scene: Literal["private", "group"], target_id: str,
+        name: str, data: bytes, mime_type: str, request_id: str,
+        text: str | None = None, key: str = "file",
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """按可信会话发送原件；主动工具区分已确认上传与后续记录故障，不重传已确认文件。"""
+        from agent_bot.materials.contracts import MAX_FILE_BYTES
+        from agent_bot.services.file_send import FileUploadConfirmedError, validate_file_name
+
+        validate_file_name(name)
+        if not 0 < len(data) <= MAX_FILE_BYTES:
+            raise ValueError("file size is invalid")
+        encoded = base64.b64encode(data).decode("ascii")
+        platform_confirmed = False
+
+        async def upload():
             """上传目标和文件字节均来自已经校验的回复，不接受模型路径。"""
+            nonlocal platform_confirmed
             if scene == "group":
-                return await bot.call_api(
+                result = await bot.call_api(
                     "upload_group_file", group_id=int(target_id), file=f"base64://{encoded}",
-                    name=f"{name}.txt",
+                    name=name,
                 )
-            if scene == "private":
-                return await bot.call_api(
+            elif scene == "private":
+                result = await bot.call_api(
                     "upload_private_file", user_id=int(target_id), file=f"base64://{encoded}",
-                    name=f"{name}.txt",
+                    name=name,
                 )
-            raise ValueError("unsupported OneBot scene")
+            else:
+                raise ValueError("unsupported OneBot scene")
+            platform_confirmed = True
+            return result
 
         if self.recorder is None:
-            return await send_file()
-        with self.recorder.destination(
-            getattr(bot, "self_id", None), target_id if scene == "group" else None,
-        ):
-            return await self.recorder.send_file(
-                name=f"{name}.txt", data=reply.text.encode("utf-8"), text=reply.text,
-                request_id=reply.request_id, sender=send_file,
-            )
+            return await upload()
+        async def record_file():
+            """记录网关实际目标，既有队列作用域保留代际与请求身份。"""
+            with self.recorder.destination(
+                getattr(bot, "self_id", None), target_id if scene == "group" else None,
+            ):
+                return await self.recorder.send_file(
+                    name=name, data=data, text=text or f"[文件 名称={name} 大小={len(data)}]",
+                    mime_type=mime_type, key=key, request_id=request_id, sender=upload,
+                )
+
+        try:
+            scope = self.recorder.current_scope
+            if session_id is not None:
+                if scope is not None and scope.session_id != session_id:
+                    raise ValueError("file session differs from delivery scope")
+                if scope is None:
+                    # HTTP MCP不继承NoneBot事件，归属直接由令牌绑定，不能从正文猜测。
+                    async with self.recorder.scope(
+                        session_id, request_id, key="file-tool",
+                        bot_id=getattr(bot, "self_id", None),
+                        group_id=target_id if scene == "group" else None,
+                    ):
+                        return await record_file()
+            return await record_file()
+        except Exception as error:
+            if platform_confirmed and session_id is not None:
+                raise FileUploadConfirmedError(type(error).__name__) from error
+            raise
 
     async def send_file_mention(self, bot: Bot, *, target_id: str, member_id: str) -> None:
         """文件上传确认后发送原生群提醒，队列独立记录进度，重试不重传已确认文件。"""

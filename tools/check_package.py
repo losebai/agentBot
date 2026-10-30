@@ -10,6 +10,11 @@ def check(path: Path) -> None:
     with ZipFile(path) as archive:
         names = archive.namelist()
         required = {
+            'agent_bot/evolution/__init__.py',
+            'agent_bot/evolution/contracts.py',
+            'agent_bot/evolution/rules.py',
+            'agent_bot/evolution/service.py',
+            'agent_bot/evolution/store.py',
             'agent_bot/plugins/stickers/__init__.py',
             'agent_bot/plugins/stickers/contracts.py',
             'agent_bot/plugins/stickers/images.py',
@@ -21,6 +26,10 @@ def check(path: Path) -> None:
             'agent_bot/plugins/stickers/plugin.py',
             'agent_bot/resources/stickers-init.sql',
             'agent_bot/resources/stickers-init.sqlite.sql',
+            'agent_bot/resources/agent-evolution.sql',
+            'agent_bot/resources/evolution-independent.sql',
+            'agent_bot/resources/evolution-independent.sqlite.sql',
+            'agent_bot/resources/agent-evolution.sqlite.sql',
             'agent_bot/resources/agent-personality.sql',
             'agent_bot/resources/agent-personality.sqlite.sql',
             'agent_bot/database_upgrade.py',

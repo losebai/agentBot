@@ -11,7 +11,7 @@ function todayRange() {
   return { start_date: today, end_date: today };
 }
 
-/** 展示所选日期的归档用量、模型失败率及实时服务状态。 */
+/** 展示区间用量和记忆召回，以及当前有效记忆和实时服务状态。 */
 export function Overview({ token }: { token: string }) {
   const api = useMemo(() => new ApiClient(token), [token]);
   const [status, setStatus] = useState<ServiceStatus>();
@@ -31,7 +31,8 @@ export function Overview({ token }: { token: string }) {
     pending.current = controller;
     setLoading(true); setError('');
     // 切换条件或刷新时清除旧指标，失败后不能把上一日期的统计当作当前结果。
-    setStatus(previous => previous && { ...previous, statistics: null, statistics_error: null });
+    setStatus(previous => previous && { ...previous, statistics: null, statistics_error: null,
+      memory_statistics: null, memory_statistics_error: null });
     const [next, connections, managed] = await Promise.allSettled([
       api.status(controller.signal, range), api.bots(controller.signal), api.napcatStatus(controller.signal),
     ]);
@@ -46,6 +47,7 @@ export function Overview({ token }: { token: string }) {
   }
   useEffect(() => { void refresh(); return () => pending.current?.abort(); }, [api, range]);
   const statistics = status?.statistics;
+  const memory = status?.memory_statistics;
   // 统计故障独立显示，归档尚未升级时仍可查看机器人连接和服务就绪状态。
   const statisticsError = status?.statistics_error === 'AI_NOT_INITIALIZED'
     ? '用量统计不可用：调用记录尚未初始化，请完成数据库初始化或升级。'
@@ -55,7 +57,7 @@ export function Overview({ token }: { token: string }) {
     return value === undefined ? '—' : value.toLocaleString('zh-CN');
   }
   return <div className="page-content">
-    <div className="page-heading"><div><p className="eyebrow">WORKSPACE OVERVIEW</p><h1>运行概览</h1><p>查看对话活动、模型用量与服务状态。</p></div><Button icon={<ReloadOutlined />} loading={loading} onClick={() => void refresh()}>刷新状态</Button></div>
+    <div className="page-heading"><div><p className="eyebrow">WORKSPACE OVERVIEW</p><h1>运行概览</h1><p>查看对话活动、模型用量、记忆概况与服务状态。</p></div><Button icon={<ReloadOutlined />} loading={loading} onClick={() => void refresh()}>刷新状态</Button></div>
     <form className="overview-filters" aria-label="统计时间筛选" onSubmit={event => {
       event.preventDefault();
       if (validRange) setRange({ ...draft });
@@ -77,6 +79,14 @@ export function Overview({ token }: { token: string }) {
         <div className="metric"><span>缓存命中率</span><strong>{statistics?.cache_hit_rate == null ? '—' : `${(statistics.cache_hit_rate * 100).toFixed(1)}%`}</strong><p>{statistics?.cache_hit_rate == null ? '暂无缓存用量' : `缓存输入 ${count(statistics.cached_tokens)} / ${count(statistics.cache_prompt_tokens)}`}</p></div>
         <div className="metric"><span>模型调用失败率</span><strong>{statistics?.model_failure_rate == null ? '—' : `${(statistics.model_failure_rate * 100).toFixed(1)}%`}</strong><p>{!statistics ? '统计不可用' : statistics.model_failure_rate == null ? '暂无已结束的模型调用' : `失败 ${count(statistics.failed_model_calls)} / 已结束 ${count(statistics.model_call_count)}`}</p><p>仅计成功或失败的模型调用</p></div>
       </div>
+      <section className="panel memory-overview" aria-label="记忆概况" aria-busy={loading}>
+        <div className="panel-header"><h2>记忆概况</h2></div>
+        {status.memory_statistics_error && <Alert message="记忆统计暂不可用，请检查记忆数据库后刷新。" type="warning" showIcon className="notice" />}
+        <div className="metrics-grid memory-overview-metrics">
+          <div className="metric"><span>记忆条数</span><strong>{count(memory?.memory_count)}</strong><p>当前有效记忆总量，不受时间筛选影响</p></div>
+          <div className="metric"><span>召回率</span><strong>{memory?.recall_rate == null ? '—' : `${(memory.recall_rate * 100).toFixed(1)}%`}</strong><p>{!memory ? '统计不可用' : memory.recall_rate == null ? '暂无召回记录' : `命中 ${count(memory.recall_hit_count)} / 已完成召回 ${count(memory.recall_count)}`}</p><p>所选日期内命中记忆的召回次数占比，仅统计更新后的召回</p></div>
+        </div>
+      </section>
       <div className="metrics-grid">
         <div className="metric"><span>服务状态</span><strong className={status.ready ? 'healthy' : 'waiting'}>{status.ready ? '就绪' : '依赖异常'}</strong><p>数据库与持久队列</p></div>
         <div className="metric"><span>在线机器人</span><strong>{status.bot_count}<small> 个</small></strong><p>当前 OneBot 连接</p></div>

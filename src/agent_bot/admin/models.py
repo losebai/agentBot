@@ -11,6 +11,7 @@ from agent_bot.ai.contracts import CatalogReadiness, CompletionMetadata
 from agent_bot.bootstrap import BootstrapConfig
 from agent_bot.config import RuntimeConfig
 from agent_bot.media.contracts import MediaReadiness
+from agent_bot.memory.contracts import MemoryStatistics
 from agent_bot.models import ChatMessage
 from agent_bot.settings import SECRET_SETTING_NAMES
 from agent_bot.static_config import STATIC_SETTING_NAMES
@@ -159,6 +160,8 @@ class ServiceStatus(ApiModel):
     python_ai: CatalogReadiness | None = None
     statistics: OverviewStatistics | None = None
     statistics_error: str | None = None
+    memory_statistics: MemoryStatistics | None = None
+    memory_statistics_error: str | None = None
 
 
 class ChatRequest(ApiModel):

@@ -45,6 +45,26 @@ async def test_agent_crud_requires_admin_and_cas(agent_api):
     assert (await api.get("/api/v1/agents/1", headers=HEADERS)).json()["tools"] == []
 
 
+async def test_agent_directory_pins_current_runtime_selection_and_updates_on_refresh(agent_api):
+    """角色页面的首项来自当前LLM路由配置；多个角色同时启用时也必须选对正在使用者。"""
+    api, _, runtime = agent_api
+    catalog = runtime.agent_service.catalog
+    model_id = (await catalog.get_agent(1)).model_id
+    await catalog.create_agent(AgentCreate(code="current", name="当前角色", model_id=model_id,
+                                           enabled=True))
+    runtime.config = runtime.config.model_copy(update={"chat_python_agent_code": "current"})
+    result = await api.get("/api/v1/agents?limit=1", headers=HEADERS)
+    assert result.status_code == 200
+    assert [item["code"] for item in result.json()["items"]] == ["current"]
+    next_page = await api.get("/api/v1/agents", headers=HEADERS, params={
+        "limit": 1, "cursor": result.json()["next_cursor"],
+    })
+    assert [item["code"] for item in next_page.json()["items"]] == ["helper"]
+    runtime.config = runtime.config.model_copy(update={"chat_python_agent_code": "helper"})
+    refreshed = await api.get("/api/v1/agents?limit=1", headers=HEADERS)
+    assert [item["code"] for item in refreshed.json()["items"]] == ["helper"]
+
+
 async def test_personality_patch_checks_merged_length_without_partial_write(agent_api):
     """只修改人格也须校验存量角色，拒绝时保留版本和原始设定。"""
     api, _, _ = agent_api

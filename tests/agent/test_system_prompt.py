@@ -61,6 +61,7 @@ async def test_system_vision_keeps_agent_prompt_without_granting_tools(system_ro
     )
     request, authority = execution.complete.await_args.args
     assert request.model == "vision" and request.agent_code is None
+    assert request.interaction is False
     assert request.tools == authority.allowed_tools == authority.allowed_mcp_services == ()
     assert [message.content for message in request.messages if message.role == "system"] == [
         "当前 Agent 的人设", "只总结引用内容",

@@ -1,6 +1,6 @@
 import { Agents } from './Agents';
 
-/** 角色和人格直接展示 Agent 配置，远程服务通过独立一级导航维护。 */
-export function AgentManagement({ token }: { token: string }) {
-  return <Agents token={token} />;
+/** 保留角色草稿，返回页面时同步运行角色排序；演进与远程服务由各自入口维护。 */
+export function AgentManagement({ token, active = true }: { token: string; active?: boolean }) {
+  return <Agents token={token} active={active} />;
 }

@@ -145,7 +145,7 @@ def parse_conversational_mention(
     *,
     bot_user_id: int | str,
 ) -> MentionCommand | NamedMentionRequest | None:
-    """识别明确的群聊 @ 动作；普通讨论中的 @ 不会触发。"""
+    """识别明确的群聊 @ 动作；目标省略的请求留给Agent结合上下文处理。"""
 
     segments = list(message)
     if any(segment.type not in {"text", "at"} for segment in segments):
@@ -185,8 +185,11 @@ def parse_conversational_mention(
     if target_after_marker is None:
         return None
     target_and_text = " ".join(target_after_marker.split())
-    if not target_and_text or len(target_and_text) > _MAX_NAMED_DIRECTIVE_CHARS:
-        raise InvalidMentionDirectiveError("named mention directive is empty or too long")
+    if not target_and_text:
+        # “他没理你，at一下”不是非法指令，不能在聊天模型看到上下文之前截断请求。
+        return None
+    if len(target_and_text) > _MAX_NAMED_DIRECTIVE_CHARS:
+        raise InvalidMentionDirectiveError("named mention directive is too long")
     if any(
         unicodedata.category(character).startswith("C") and not character.isspace()
         for character in target_and_text

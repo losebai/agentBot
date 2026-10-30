@@ -1,6 +1,7 @@
 """已认证的 Agent 目录、执行和记录管理接口。"""
 
 from contextlib import aclosing
+from typing import Literal
 
 from fastapi import APIRouter, Query, Request
 
@@ -26,11 +27,75 @@ from agent_bot.agent.contracts import (
 )
 from agent_bot.agent.errors import AgentError
 from agent_bot.ai.contracts import Page, VersionDelete
+from agent_bot.evolution.contracts import EvolutionConfigUpdate, EvolutionReset
 
 
 def install_agent_routes(router: APIRouter, runtime):
     """安装 Agent 管理接口，执行时从当前租约获取服务和授权。"""
     chat = AgentChatProbe(runtime)
+
+    async def evolution_operation(action, *args, **kwargs):
+        """演化管理沿用外层管理员认证，变更必须持有正常运行时租约。"""
+        async with runtime.lease(read_only=action in {'profiles', 'history', 'records',
+                                                     'record_history'}):
+            evolution = chat.service().evolution
+            if evolution is None:
+                raise AgentError('AGENT_NOT_INITIALIZED', status_code=503)
+            return await getattr(evolution.store, action)(*args, **kwargs)
+
+    @router.get('/evolution')
+    async def independent_evolution_profiles(
+        agent_id: int | None = Query(None, ge=1), cursor: int = Query(0, ge=0),
+    ):
+        """默认查询无需角色的通用范围，也可显式选择关联角色。"""
+        return await evolution_operation('profiles', agent_id, after=cursor)
+
+    @router.patch('/evolution')
+    async def independent_evolution_config(
+        body: EvolutionConfigUpdate, agent_id: int | None = Query(None, ge=1),
+    ):
+        """通用范围和可选关联范围均按所见配置版本保存。"""
+        return await evolution_operation('configure', agent_id, **body.model_dump())
+
+    @router.get('/evolution/records')
+    async def evolution_records(
+        cursor: int = Query(0, ge=0),
+        kind: Literal['feedback', 'change', 'reset'] | None = None,
+        agent_id: int | None = Query(None, ge=1), unbound: bool = False,
+    ):
+        """独立分页展示跨范围记录；筛选可选角色或所有未关联范围。"""
+        return await evolution_operation('records', before=cursor, kind=kind,
+                                         agent_id=agent_id, unbound=unbound)
+
+    @router.get('/evolution/profiles/{profile_id}')
+    async def evolution_record_history(profile_id: int, cursor: int = Query(0, ge=0)):
+        """列表直接定位画像依据，角色已删除也不会使历史失联。"""
+        return await evolution_operation('record_history', profile_id, before=cursor)
+
+    @router.post('/evolution/profiles/{profile_id}/reset')
+    async def independent_evolution_reset(profile_id: int, body: EvolutionReset):
+        """重置独立画像，角色关联不是管理前提，仍校验当前版本。"""
+        return await evolution_operation('reset_profile', profile_id, **body.model_dump())
+
+    @router.get('/agents/{id}/evolution')
+    async def evolution_profiles(id: int, cursor: int = Query(0, ge=0)):
+        """分页查看匿名互动对象及当前演化状态。"""
+        return await evolution_operation('profiles', id, after=cursor)
+
+    @router.patch('/agents/{id}/evolution')
+    async def evolution_config(id: int, body: EvolutionConfigUpdate):
+        """暂停停止新反馈收集和习惯应用，不修改原角色。"""
+        return await evolution_operation('configure', id, **body.model_dump())
+
+    @router.get('/agents/{id}/evolution/profiles/{profile_id}')
+    async def evolution_history(id: int, profile_id: int, cursor: int = Query(0, ge=0)):
+        """历史包含原话和变化引用，分页不会跨 Agent 查询。"""
+        return await evolution_operation('history', id, profile_id, before=cursor)
+
+    @router.post('/agents/{id}/evolution/profiles/{profile_id}/reset')
+    async def evolution_reset(id: int, profile_id: int, body: EvolutionReset):
+        """显式重置当前版本，旧证据不再参与演化但保留审计。"""
+        return await evolution_operation('reset', id, profile_id, **body.model_dump())
 
     async def operate(action, *args, records=False, **kwargs):
         """仅数据库目录和归档可在刷新排空时读取，发现工具及执行仍需正常租约。"""
@@ -50,7 +115,9 @@ def install_agent_routes(router: APIRouter, runtime):
     async def list_agents(
         limit: int = Query(50, ge=1, le=100), cursor: str | None = Query(None, max_length=512)
     ):
-        return await operate("list_agents", limit=limit, cursor=cursor)
+        """角色页面优先显示运行配置实际选中的启用角色，其余顺序及分页保持稳定。"""
+        return await operate("list_agents", limit=limit, cursor=cursor,
+                             preferred_code=runtime.config.chat_python_agent_code)
 
     @router.get("/agents/{id}", response_model=AgentView)
     async def get_agent(id: int):

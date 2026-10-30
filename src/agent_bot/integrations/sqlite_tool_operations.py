@@ -9,6 +9,7 @@ from agent_bot.integrations.sqlite_queue_database import run_sqlite
 from agent_bot.services.tool_operations import (
     DeliveryEffect,
     EffectToolName,
+    FileEffect,
     ImageEffect,
     ImageTaskEffect,
     MentionEffect,
@@ -21,6 +22,7 @@ from agent_bot.services.tool_operations import (
 )
 
 _RESULT_TYPES = {
+    "file_send": (FileEffect,),
     "outgoing_message": (DeliveryEffect,),
     "image_generate": (ImageTaskEffect,),
     "send_reply": (ReplyEffect,),

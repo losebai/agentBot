@@ -14,6 +14,7 @@ ADMIN_MEDIA_TOOLS = frozenset(
 )
 QQ_ONLY_TOOLS = frozenset(
     {
+        "file_send",
         "bot_config_get",
         "bot_config_update",
         "memory",

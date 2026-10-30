@@ -10,9 +10,11 @@ from PIL import Image
 
 from agent_bot.agent.contracts import AgentRequest, ExecutionAuthority, ToolCall
 from agent_bot.agent.errors import AgentError
+from agent_bot.ai.errors import AiError
 from agent_bot.services.tool_images import capture_tool_images
 
 from .test_service import Library, sticker
+from .test_service import service as sticker_service
 
 
 def tool_session(*, entry="qq", enabled=True):
@@ -64,6 +66,45 @@ async def test_search_then_send_registers_original_gif_once():
     assert len(captured.items) == 1
     assert base64.b64decode(captured.items[0].data) == original
     assert captured.items[0].mime_type == "image/gif"
+
+
+async def test_chat_search_has_no_tag_filter_and_can_send_untagged_candidate():
+    """聊天检索不让模型猜管理员标签，无标签的已识图条目仍可入选和投递。"""
+    session, _, _ = tool_session()
+    current, complete, _ = sticker_service([sticker(tags=())])
+    complete.return_value = SimpleNamespace(content=json.dumps({"matches": [
+        {"id": "a" * 32, "score": 0.95, "reason": "符合疲惫语气"},
+    ]}))
+    session.tools.service_provider = lambda: current
+    definition = next(d for d in session.definitions if d.name == "sticker_search")
+    assert "tags" not in definition.input_schema["properties"]
+    result = await invoke(session, "sticker_search", {"context": "加班累瘫了"})
+    assert json.loads(result.content)["matches"][0]["sticker"]["id"] == "a" * 32
+    with capture_tool_images() as captured:
+        await invoke(session, "sticker_send", {"id": "a" * 32})
+    assert len(captured.items) == 1
+
+
+@pytest.mark.parametrize("code", ["STICKER_SEARCH_INVALID", "AI_RESPONSE_INVALID"])
+async def test_invalid_search_returns_tool_error_without_fabricating_delivery(code):
+    """可选表情检索格式错误反馈给聊天模型，不中断正文或泄漏上游内容。"""
+    session, service, _ = tool_session()
+    service.search.side_effect = AiError(code)
+    with capture_tool_images() as captured:
+        result = await invoke(session, "sticker_search", {"context": "加班"})
+    assert result.is_error and json.loads(result.content)["code"] == code
+    assert not captured.items and not session.selected
+    with pytest.raises(AgentError, match="STICKER_NOT_SELECTED"):
+        await invoke(session, "sticker_send", {"id": "a" * 32})
+
+
+@pytest.mark.parametrize("code", ["AI_TIMEOUT", "AGENT_TOOL_SESSION_EXPIRED"])
+async def test_search_deadline_errors_still_interrupt_execution(code):
+    """期限与授权中断不能被可选表情的格式错误处理吞掉。"""
+    session, service, _ = tool_session()
+    service.search.side_effect = AgentError(code)
+    with pytest.raises(AgentError, match=code):
+        await invoke(session, "sticker_search", {"context": "加班"})
 
 
 async def test_disabled_after_search_is_not_sent():

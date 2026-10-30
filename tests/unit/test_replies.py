@@ -194,6 +194,8 @@ async def test_composer_returns_generated_reply_from_llm() -> None:
     ('["给你，画好啦\uff5e"]', "给你，画好啦\uff5e"),
     ('["给你，", "画好啦\uff5e"]', "给你，画好啦\uff5e"),
     ('"给你，画好啦\uff5e"', "给你，画好啦\uff5e"),
+    ('{"消息内容":"给你，画好啦\uff5e"}', "给你，画好啦\uff5e"),
+    ('{"消息内容":""}', None),
     ('[]', None),
     ('["  "]', None),
 ])

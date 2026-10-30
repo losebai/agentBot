@@ -38,6 +38,12 @@ def test_multi_reply_cleans_internal_at_markers_before_building_delivery_parts()
     ('["第一行\\n", "第二行"]', "第一行\n第二行"),
     ('["只有一条"]', "只有一条"),
     ('"第一行\\n第二行"', "第一行\n第二行"),
+    ('{"消息内容":"92都快九块了，加满一箱心都在滴血，95这是要奔十去啊\uff08笑\uff09"}',
+     "92都快九块了，加满一箱心都在滴血，95这是要奔十去啊\uff08笑\uff09"),
+    (' { "消息内容": "第一行\\n第二行" } ', "第一行\n第二行"),
+    (r'{"消息内容":"路径 C:\\new\\notes；保留字面 \\n"}', r'路径 C:\new\notes；保留字面 \n'),
+    (r'{"消息内容":"{\"消息内容\":\"只解码一层\"}"}', '{"消息内容":"只解码一层"}'),
+    ('{"消息内容":""}', ""),
     (r'"路径 C:\\new\\notes；保留字面 \\n"', r'路径 C:\new\notes；保留字面 \n'),
     ('[]', ""),
     ('普通正文', '普通正文'),
@@ -45,9 +51,14 @@ def test_multi_reply_cleans_internal_at_markers_before_building_delivery_parts()
     ('["尚未闭合"', '["尚未闭合"'),
     ('["文字", 123]', '["文字", 123]'),
     ('{"messages": ["内容"]}', '{"messages": ["内容"]}'),
+    ('{"消息内容":"正文","状态":"成功"}', '{"消息内容":"正文","状态":"成功"}'),
+    ('{"消息内容":["正文"]}', '{"消息内容":["正文"]}'),
+    ('{"消息内容":null}', '{"消息内容":null}'),
+    ('{"消息内容":123}', '{"消息内容":123}'),
+    ('[{"消息内容":"正文"}]', '[{"消息内容":"正文"}]'),
 ])
 def test_disabled_multi_reply_decodes_message_json_only(text, expected):
-    """只解码完整 JSON 消息一层，普通正文和路径中的字面反斜杠保持原样。"""
+    """已确认的单字段包装只解码一层，其他对象、普通正文与字面反斜杠保持原样。"""
     from agent_bot.services.multi_reply import join_reply_array
 
     assert join_reply_array(text) == expected
@@ -56,6 +67,7 @@ def test_disabled_multi_reply_decodes_message_json_only(text, expected):
 @pytest.mark.parametrize("text", [
     '普通正文', '```json\n["正文"]\n```', '{}', '[]', '[null]', '[1]',
     '[true]', '["有效", "   "]', '["一", "二", "三", "四"]', '["未完成"',
+    '{"消息内容":"正文"}',
 ])
 def test_invalid_multi_reply_is_rejected_without_fallback(text):
     """格式错误必须拒绝，不能把包装内容投递或擅自改写。"""

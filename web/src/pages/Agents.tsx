@@ -67,7 +67,7 @@ function editableAgent(agent?: Agent): AgentDraft {
 }
 
 /** 页内切换多个 Agent，草稿及写入版本按身份隔离，不使用编辑弹窗。 */
-export function Agents({ token }: { token: string }) {
+export function Agents({ token, active = true }: { token: string; active?: boolean }) {
   const api = useMemo(() => new AgentApi(token), [token]);
   const [items, setItems] = useState<Agent[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -83,6 +83,7 @@ export function Agents({ token }: { token: string }) {
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const alive = useRef(true);
+  const wasActive = useRef(active);
   const errorRef = useRef<HTMLDivElement>(null);
 
   /** 刷新只替换目录；已经编辑的草稿仍绑定原快照，不能绕过乐观锁覆盖外部修改。 */
@@ -122,6 +123,14 @@ export function Agents({ token }: { token: string }) {
     return () => { alive.current = false; pending.current?.abort(); };
   }, [load]);
   useEffect(() => {
+    // 页面保持挂载以保存草稿；重新进入时同步运行角色排序，写入期间延后读取。
+    if (!active) wasActive.current = false;
+    else if (!busy && !wasActive.current) {
+      wasActive.current = true;
+      void load();
+    }
+  }, [active, busy, load]);
+  useEffect(() => {
     // 长页面保存失败后将焦点移到错误，使浏览器滚入可见区域。
     if (error) errorRef.current?.focus();
   }, [error]);
@@ -156,7 +165,7 @@ export function Agents({ token }: { token: string }) {
     selectAgent('new');
   }
 
-  /** 保存只提交已编辑字段，保留隐藏的 Skill 与未更改的其他权限。 */
+  /** 保存只提交已编辑字段；身份或启用状态改变后同步服务端排序，保留当前编辑选择。 */
   async function save() {
     if (!draft || !selected || busy || promptError(draft)) return;
     const key = selected;
@@ -177,6 +186,11 @@ export function Agents({ token }: { token: string }) {
         ? previous.map(agent => agent.id === saved.id ? saved : agent) : [...previous, saved]);
       setDrafts(previous => { const next = { ...previous }; delete next[key]; return next; });
       setSelected(String(saved.id)); setNotice('Agent 已保存。'); setConfirmDelete(false);
+      if (!original || original.enabled !== saved.enabled || original.code !== saved.code) {
+        // 新建、启停或改代码可能影响正在使用的角色，不能让保存前的目录顺序继续留在页面。
+        selectedRef.current = String(saved.id);
+        await load();
+      }
     } catch (failure) {
       if (alive.current) setError(errorMessage(failure));
     } finally { if (alive.current) setBusy(false); }

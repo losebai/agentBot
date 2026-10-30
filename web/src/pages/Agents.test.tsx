@@ -6,6 +6,33 @@ import { useRunningPluginFixture } from '../test-plugins';
 
 useRunningPluginFixture();
 
+it('启用当前配置角色后立即置顶，并保留正在编辑的角色选择', async () => {
+  const first = { id: 1, revision: 1, code: 'first', name: '其他启用角色', description: '',
+    enabled: true, model_id: 1, system_prompt: '其他角色', personality_prompt: '',
+    tools: [], skill_ids: [], mcp_ids: [], options: {} };
+  let current = { ...first, id: 2, code: 'current', name: '当前配置角色',
+    enabled: false, system_prompt: '当前角色' };
+  vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+    if (init?.method === 'PATCH') {
+      current = { ...current, ...JSON.parse(String(init.body)), revision: 2 };
+      return Response.json(current);
+    }
+    if (String(url).includes('/agents?')) return Response.json({
+      items: current.enabled ? [current, first] : [first, current], next_cursor: null,
+    });
+    return Response.json({ items: [], next_cursor: null });
+  }));
+  render(<Agents token="offline" />);
+  const switches = await screen.findByRole('group', { name: '切换 Agent' });
+  fireEvent.click(await within(switches).findByRole('button', { name: '当前配置角色' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: '启用 Agent' }));
+  fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
+  await waitFor(() => expect(within(switches).getAllByRole('button')[0])
+    .toHaveAccessibleName('当前配置角色'));
+  expect(within(switches).getAllByRole('button')[0]).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByLabelText('角色')).toHaveValue('当前角色');
+});
+
 it('三种角色允许复用同一模型并说明图片模型留空的影响', async () => {
   let patch: unknown;
   const agent = { id: 1, revision: 1, code: 'helper', name: '助手', description: '', enabled: true,

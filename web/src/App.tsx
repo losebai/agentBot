@@ -8,6 +8,8 @@ import { Chat } from './pages/Chat';
 import { Providers } from './pages/Providers';
 import { Sessions } from './pages/Sessions';
 import { AgentManagement } from './pages/AgentManagement';
+import { AgentEvolutionPage } from './pages/AgentEvolution';
+import { AgentMenu } from './components/AgentMenu';
 import { McpServers } from './pages/McpServers';
 import { Plugins } from './pages/Plugins';
 import { PluginConfiguration } from './pages/PluginConfiguration';
@@ -40,7 +42,8 @@ const workspaceTheme = {
 const titles: Record<string, string> = {overview:'运行概览', settings:'机器人配置',
   'plugin-center':'插件中心', 'plugin-qqbot':'QQ 配置', 'plugin-bilibili':'B站配置', 'plugin-comfy':'Comfy 配置',
   'plugin-stickers':'表情包配置',
-  chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'角色和人格',
+  chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'角色配置',
+  'agent-evolution':'自我演进',
   'remote-services':'远程服务', knowledge:'标签与知识库'};
 
 /** 按服务端登录模式进入工作台；插件设置保留草稿，离开配置页取消专属读取。 */
@@ -96,15 +99,16 @@ export function App() {
       </form></main>
       : <div className="workspace"><aside className="sidebar"><div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot</span></div><p className="nav-label">工作空间</p><nav aria-label="主导航">{[
         { key: 'overview', label: '运行概览', icon: <DashboardOutlined /> },
-        { key: 'settings', label: '机器人配置', icon: <SettingOutlined /> },
-        { key: 'plugins', label: '插件管理', icon: <ApiOutlined /> },
-        { key: 'chat', label: '对话测试', icon: <MessageOutlined /> },
-        { key: 'providers', label: '供应商与模型', icon: <ApiOutlined /> },
-        { key: 'sessions', label: '会话记录', icon: <HistoryOutlined /> },
-        { key: 'knowledge', label: '标签与知识库', icon: <TagsOutlined /> },
         { key: 'agents', label: '角色和人格', icon: <RobotOutlined /> },
+        { key: 'settings', label: '机器人配置', icon: <SettingOutlined /> },
+        { key: 'providers', label: '供应商与模型', icon: <ApiOutlined /> },
+        { key: 'chat', label: '对话测试', icon: <MessageOutlined /> },
+        { key: 'sessions', label: '会话记录', icon: <HistoryOutlined /> },
         { key: 'remote-services', label: '远程服务', icon: <ApiOutlined /> },
-      ].map(item => item.key === 'plugins' ? <PluginMenu key={item.key} token={token} page={page} onNavigate={navigate} />
+        { key: 'plugins', label: '插件管理', icon: <ApiOutlined /> },
+        { key: 'knowledge', label: '标签与知识库', icon: <TagsOutlined /> },
+      ].map(item => item.key === 'agents' ? <AgentMenu key={item.key} page={page} onNavigate={navigate} />
+        : item.key === 'plugins' ? <PluginMenu key={item.key} token={token} page={page} onNavigate={navigate} />
         : <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
         <main className="main-area"><header className="topbar"><span className="topbar-title">{titles[page]}</span><span className="workspace-label">AgentBot</span></header>
           <section hidden={page !== 'overview'}>{visited.includes('overview') && <Overview token={token} />}</section>
@@ -126,7 +130,9 @@ export function App() {
           <section hidden={page !== 'providers'}>{visited.includes('providers') && <Providers token={token} />}</section>
           <section hidden={page !== 'sessions'}>{page === 'sessions' && <Sessions token={token} />}</section>
           <section hidden={page !== 'knowledge'}>{page === 'knowledge' && <Knowledge token={token} />}</section>
-          <section hidden={page !== 'agents'}>{visited.includes('agents') && <AgentManagement token={token} />}</section>
+          <section hidden={page !== 'agents'}>{visited.includes('agents') && <AgentManagement token={token}
+            active={page === 'agents'} />}</section>
+          {page === 'agent-evolution' && <AgentEvolutionPage token={token} />}
           <section hidden={page !== 'remote-services'}>{visited.includes('remote-services') && <McpServers token={token} />}</section>
         </main></div>}
   </ConfigProvider>;

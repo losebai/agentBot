@@ -1,4 +1,4 @@
-"""主人配置工具复用真实配置服务，验证权限、版本和文件事务。"""
+"""配置工具复用真实配置服务，验证公开查询、主人修改、版本和文件事务。"""
 
 import json
 
@@ -55,9 +55,11 @@ def test_owner_config_tools_are_registered():
     assert names == {"bot_config_get", "bot_config_update"}
 
 
-async def test_owner_reads_redacted_fields_and_revisions(config_tools):
-    """真实秘密不能进入模型结果，秘密字段在聊天工具中始终只读。"""
+@pytest.mark.parametrize("user_id", ["10001", "10002"])
+async def test_users_read_redacted_fields_and_revisions(config_tools, user_id):
+    """主人和普通用户均可查询，真实秘密不能进入模型结果。"""
     _, context = config_tools
+    context.user_id = user_id
     result = await call(context, "bot_config_get", {
         "names": ["chat_llm_temperature", "chat_naraka_default_role_id"],
     })
@@ -104,13 +106,15 @@ async def test_owner_partial_update_preserves_secrets_and_reports_saved_state(co
 
 @pytest.mark.parametrize("user_id,bot_id", [("10002", "90001"), ("10001", None)])
 async def test_identity_is_checked_even_with_an_allowed_tool(config_tools, user_id, bot_id):
-    """工具白名单不能替代主人和 QQ 入口身份验证。"""
+    """修改始终复核主人身份，查询仍要求绑定 QQ 入口。"""
     service, context = config_tools
     context.user_id, context.bot_user_id = user_id, bot_id
-    for name, arguments in (
-        ("bot_config_get", {}),
+    requests = [
         ("bot_config_update", {"expected_revision": 1, "values": {"nickname": ["新名字"]}}),
-    ):
+    ]
+    if bot_id is None:
+        requests.append(("bot_config_get", {}))
+    for name, arguments in requests:
         with pytest.raises(ChatToolError) as denied:
             await call(context, name, arguments)
         assert denied.value.code == "FORBIDDEN"
@@ -135,14 +139,18 @@ async def test_invalid_or_secret_updates_do_not_write_or_echo_inputs(config_tool
     assert service.store.load().revision == 1
 
 
-async def test_revoked_owner_cannot_reuse_an_existing_context(config_tools):
-    """每次执行重新读取当前运行名单，不能缓存旧主人授权。"""
+async def test_revoked_owner_can_read_but_cannot_update_with_existing_context(config_tools):
+    """撤销主人后仍能公开查询，但旧上下文不能继续修改配置。"""
     service, context = config_tools
     await call(context, "bot_config_get", {"names": ["nickname"]})
     service.runtime.config = service.runtime.config.model_copy(update={"superusers": set()})
+    assert (await call(context, "bot_config_get", {"names": ["nickname"]}))["fields"]
     with pytest.raises(ChatToolError) as denied:
-        await call(context, "bot_config_get", {})
+        await call(context, "bot_config_update", {
+            "expected_revision": 1, "values": {"nickname": ["新名字"]},
+        })
     assert denied.value.code == "FORBIDDEN"
+    assert service.store.load().revision == 1
 
 
 async def test_static_update_requires_version_and_only_saves_file(config_tools, tmp_path):
@@ -190,10 +198,11 @@ async def test_failed_database_write_restores_static_file(config_tools, tmp_path
     assert service.store.load().revision == 1
 
 
-async def test_real_message_and_queue_bind_owner_tools_but_automatic_messages_do_not(
-    config_tools, monkeypatch,
+@pytest.mark.parametrize("user_id", ["10001", "10002"])
+async def test_real_message_and_queue_allow_config_reads_but_automatic_messages_do_not(
+    config_tools, monkeypatch, user_id,
 ):
-    """同步和持久队列共用真实发送者，后台任务不能借主人的 QQ 号获得能力。"""
+    """真人同步和队列均能查询，仅主人能修改，自动任务不借用真人授权。"""
     from unittest.mock import Mock
 
     from nonebot.adapters.onebot.v11 import Message, PrivateMessageEvent
@@ -214,31 +223,34 @@ async def test_real_message_and_queue_bind_owner_tools_but_automatic_messages_do
     )
     event = PrivateMessageEvent(
         time=1700000000, self_id=90001, post_type="message", sub_type="friend",
-        user_id=10001, message_type="private", message_id=1, message=Message("查询配置"),
+        user_id=int(user_id), message_type="private", message_id=1, message=Message("查询配置"),
         original_message=Message("查询配置"), raw_message="查询配置", font=0,
-        sender=Sender(user_id=10001, nickname="主人"), to_me=True,
+        sender=Sender(user_id=int(user_id), nickname="用户"), to_me=True,
     )
     owner_tools = {"bot_config_get", "bot_config_update"}
-    assert owner_tools <= set(manager.available_tools(event))
-    stranger = event.model_copy(update={"user_id": 10002})
-    assert not owner_tools & set(manager.available_tools(stranger))
+    expected = owner_tools if user_id == "10001" else {"bot_config_get"}
+    assert owner_tools & set(manager.available_tools(event)) == expected
     assert not owner_tools & set(manager.available_group_tools())
     bot = Mock(self_id="90001")
     async with manager.open_chat_session(bot, event, "direct") as lease:
         bound = await sessions.resolve(lease.token)
-        assert bound.user_id == "10001" and bound.bot_config_tools is context.bot_config_tools
+        assert bound.user_id == user_id and bound.bot_config_tools is context.bot_config_tools
         assert (await call(bound, "bot_config_get", {"names": ["nickname"]}))["fields"]
     monkeypatch.setattr(manager, "queued_bot", lambda _bot_id: bot)
     job = ConversationJob(
         job_id="owner-config-test", request_id="qq-owner-config-test", created_at=1700000000,
-        session_id="private-session", bot_id="90001", scene="private", user_id="10001",
-        prompt="查询配置", chat_tools=("bot_config_get", "bot_config_update"),
+        session_id="private-session", bot_id="90001", scene="private", user_id=user_id,
+        prompt="查询配置", chat_tools=tuple(sorted(expected)),
         memory_source_text="查询配置",
     )
     async with manager.open_queued_session(job) as lease:
         bound = await sessions.resolve(lease.token)
-        assert bound.user_id == "10001" and bound.bot_config_tools is context.bot_config_tools
-    for changed in ({"user_id": "10002"}, {"request_id": "automatic", "memory_source_text": None}):
+        assert bound.user_id == user_id and bound.bot_config_tools is context.bot_config_tools
+        assert (await call(bound, "bot_config_get", {"names": ["nickname"]}))["fields"]
+    for changed in (
+        {"user_id": "10002", "chat_tools": ("bot_config_update",)},
+        {"request_id": "automatic", "memory_source_text": None},
+    ):
         with pytest.raises(RuntimeError, match="configuration changed"):
             async with manager.open_queued_session(job.model_copy(update=changed)):
                 pytest.fail("unauthorized queued config tools must be refused")
@@ -342,7 +354,7 @@ async def test_cancellation_waits_for_started_write_to_finish(config_tools, monk
 
 
 def test_chat_route_preserves_only_authorized_config_tools():
-    """自然语言路由不能丢掉主人能力，也不能给普通用户新增授权。"""
+    """自然语言路由保留已授权查询，不能仅凭自称主人获得修改权限。"""
     from agent_bot.services.chat.routing import ChatRouteSelector
 
     selector = ChatRouteSelector()

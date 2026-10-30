@@ -42,6 +42,8 @@ class PreparedRun:
     media_scope: MediaScope | None = None
     images: tuple[ValidatedImage, ...] = ()
     model_router: AgentModelRouter | None = None
+    # 固定表达建议独立于管理员角色预算，仍受图中的总提示预算约束。
+    evolution_prompt: str = ''
 
 
 class AgentEngine:

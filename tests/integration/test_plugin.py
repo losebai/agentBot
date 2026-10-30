@@ -1266,6 +1266,8 @@ async def test_natural_chat_includes_all_quoted_content_in_current_request(
     assert "这段内容是什么意思？" in respond.await_args.args[1]
     queued = chat_plugin.conversation_queue.enqueue.await_args.args[0]
     assert queued.memory_source_text == "这段内容是什么意思？"
+    assert queued.source_message_id == event.message_id
+    assert queued.source_message_time == event.time
     assert "引用正文" not in queued.memory_source_text
     assert "引用正文" in queued.memory_quoted_source.text
     assert queued.memory_quoted_source.text in queued.prompt
@@ -2521,14 +2523,16 @@ async def test_group_member_notices_incrementally_update_persisted_directory(
 
 
 @pytest.mark.integration
-async def test_group_chat_rejects_ambiguous_named_mention_without_ai(
+async def test_group_chat_passes_ambiguous_named_mention_to_agent(
     app: App,
     monkeypatch: pytest.MonkeyPatch,
     chat_plugin,
 ) -> None:
-    """Verify group chat rejects ambiguous named mention without ai."""
+    """同名目标交给正常Agent追问，不能提前转成无工具的校验回复。"""
 
-    respond = mock_response(monkeypatch, chat_plugin, "不应调用 AI")
+    respond = mock_response(monkeypatch, chat_plugin, "你说的是哪位小明？")
+    monkeypatch.setattr(chat_plugin._tool_session_manager, "available_tools",
+                        lambda _: ("mention_member",))
     event = group_event("帮我艾特小明，集合", to_me=True)
 
     async with app.test_matcher(chat_plugin.natural_chat) as ctx:
@@ -2545,12 +2549,14 @@ async def test_group_chat_rejects_ambiguous_named_mention_without_ai(
         )
         ctx.should_call_send(
             event,
-            Message(MessageSegment.text("模型生成的校验回复。")),
+            Message(MessageSegment.text("你说的是哪位小明？")),
             bot=bot,
         )
         ctx.should_finished(chat_plugin.natural_chat)
 
-    respond.assert_not_awaited()
+    respond.assert_awaited_once()
+    assert respond.await_args.args[1] == "帮我艾特小明，集合"
+    assert respond.await_args.kwargs["chat_tools"] == ("mention_member",)
 
 
 @pytest.mark.integration

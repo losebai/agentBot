@@ -64,6 +64,14 @@ export interface OverviewStatistics {
   model_failure_rate: number | null;
 }
 
+/** 当前有效记忆总量；召回按所选日期计数，没有已完成召回时比例未知。 */
+export interface MemoryStatistics {
+  memory_count: number;
+  recall_count: number;
+  recall_hit_count: number;
+  recall_rate: number | null;
+}
+
 export interface ServiceStatus {
   service: 'agentBot';
   ready: boolean;
@@ -72,6 +80,8 @@ export interface ServiceStatus {
   applied_revision: number;
   statistics?: OverviewStatistics | null;
   statistics_error?: string | null;
+  memory_statistics?: MemoryStatistics | null;
+  memory_statistics_error?: string | null;
   restart_required_fields: string[];
   ai_backend: 'python-ordinary';
   plain_ai_backend?: 'python';

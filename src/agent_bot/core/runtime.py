@@ -22,6 +22,8 @@ from agent_bot.ai.service import AiService
 from agent_bot.ai.sessions import AiSessionStore
 from agent_bot.config import RuntimeConfig
 from agent_bot.database_pool import MySqlConnectionPool
+from agent_bot.evolution.service import EvolutionService
+from agent_bot.evolution.store import EvolutionStore
 from agent_bot.integrations.gpt_sovits import GptSoVitsClient
 from agent_bot.integrations.workflow_store import WorkflowStore
 from agent_bot.jobs.service import JobService
@@ -170,6 +172,10 @@ def build_core_state(
             image_downloader=QQImageDownloader(remaining=lambda: remaining_timeout(15)),
             maximum_images=config.chat_max_images_per_message,
             maximum_tool_calls=config.chat_agent_max_steps,
+            evolution=EvolutionService(
+                EvolutionStore(database, connect=database_pool.connect),
+                secret=config.chat_session_secret.get_secret_value(),
+            ),
         ),
         job_service=JobService(job_store, python_service),
     )

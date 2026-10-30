@@ -178,8 +178,44 @@ class AgentCatalog(AiDatabase):
     async def get_agent(self, id):
         return await self.run(lambda c: self._get(c, "agent", id))
 
-    async def list_agents(self, *, limit=50, cursor=None):
-        return await self._list("agent", limit, cursor)
+    async def list_agents(self, *, limit=50, cursor=None, preferred_code=None):
+        """实际启用预设置顶，游标固定已显示的置顶身份，保持其他角色分页完整且顺序稳定。"""
+        if cursor is not None and not cursor.startswith("p:"):
+            # 已开始的旧数字游标继续原顺序，不能在中途切换排序而遗漏角色。
+            return await self._list("agent", limit, cursor)
+        if cursor is None and not preferred_code:
+            return await self._list("agent", limit, cursor)
+        page_limit(limit)
+        pinned_id, after = 0, 0
+        if cursor is not None:
+            parts = cursor.split(":")
+            if (len(parts) != 3 or parts[0] != "p"
+                    or any(not value.isascii() or not value.isdecimal() or len(value) > 20
+                           for value in parts[1:]) or int(parts[1]) == 0):
+                raise AgentError("AGENT_INVALID_PAGE", status_code=422)
+            pinned_id, after = int(parts[1]), int(parts[2])
+
+        def read(connection):
+            """置顶与其余角色同事务读取；后续页排除已显示的置顶项，不改变单页条数。"""
+            pinned = pinned_id
+            if cursor is None:
+                row = query(connection, "SELECT id FROM agent_bot_agent "
+                            "WHERE code=%s AND enabled=1", (preferred_code,), one=True)
+                pinned = row["id"] if row is not None else 0
+            include_pinned = cursor is None and bool(pinned)
+            remaining = limit - int(include_pinned)
+            rows = query(connection, "SELECT id FROM agent_bot_agent "
+                         "WHERE id>%s AND id<>%s ORDER BY id LIMIT %s",
+                         (after, pinned, remaining + 1))
+            items = [self._get(connection, "agent", pinned)] if include_pinned else []
+            items.extend(self._get(connection, "agent", row["id"]) for row in rows[:remaining])
+            next_cursor = None
+            if len(rows) > remaining:
+                last = rows[remaining - 1]["id"] if remaining else after
+                next_cursor = f"p:{pinned}:{last}" if pinned else str(last)
+            return Page[VIEW["agent"]](items=items, next_cursor=next_cursor)
+
+        return await self.run(read)
 
     async def create_skill(self, data):
         return await self._create("skill", data)

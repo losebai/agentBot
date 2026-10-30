@@ -69,6 +69,9 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .overview-filters > span { align-self: center; color: var(--text-secondary); font-size: 12px; }
 .overview-filters > [role=alert] { color: #b42318; }
 .overview-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+/* 记忆总量与区间命中率分列展示，内部网格沿用外层面板边框。 */
+.memory-overview { margin-bottom: 24px; }
+.memory-overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 0; border: 0; border-radius: 0 0 12px 12px; }
 .metric { padding: 20px; border-right: 1px solid var(--border); }
 .metric:first-child { padding-left: 20px; }
 .metric:last-child { border-right: 0; }
@@ -394,7 +397,7 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .ant-select-item-option-selected:not(.ant-select-item-option-disabled) { background: var(--selection-gradient); }
 .ant-select-item-option-active:not(.ant-select-item-option-disabled) { background: #f7f3fc; }
 
-/* 插件二级菜单沿用主导航样式，窄屏随主导航横向滚动，不撑高整个导航栏。 */
+/* 角色和插件二级菜单沿用主导航样式，窄屏随主导航横向滚动。 */
 .plugin-navigation { display: grid; gap: 4px; }
 .plugin-navigation > button { width: 100%; }
 .plugin-menu-arrow { margin-left: auto; display: inline-flex; }
@@ -444,3 +447,29 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
   .plugin-navigation > button { width: auto; }
   .plugin-submenu { display: flex; margin-left: 0; padding-left: 4px; }
 }
+.agent-evolution { padding: 20px; margin-top: 20px; }
+.agent-evolution-body { display: grid; gap: 14px; margin-top: 16px; }
+.agent-evolution-body p { margin: 0; line-height: 1.7; overflow-wrap: anywhere; }
+.agent-evolution-profile { padding: 16px; display: grid; gap: 10px; }
+.agent-evolution-profile > button { justify-self: start; }
+.agent-evolution-history { border-top: 1px solid #e1e6ee; padding-top: 16px; }
+.agent-evolution-history > button { margin: 12px 0; }
+.agent-evolution-history li { margin-bottom: 18px; }
+.agent-evolution-history li p + p { margin-top: 6px; }
+/* 独立记录以完整字段展示，窄屏横向滚动，不挤压原因与依据入口。 */
+.evolution-records { display: grid; gap: 14px; min-width: 0; border-top: 1px solid var(--border); padding-top: 16px; }
+.evolution-records h3 { margin: 0; }
+.evolution-record-filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+.evolution-record-filters label { display: grid; gap: 6px; }
+.evolution-record-filters select { min-height: 36px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font: inherit; color: inherit; background: white; }
+.evolution-records > .table-scroll { width: 100%; overflow-x: auto; }
+.evolution-record-table { min-width: 960px; }
+.evolution-record-table th, .evolution-record-table td { padding: 12px; }
+.evolution-record-table th { white-space: nowrap; }
+.evolution-record-table td { vertical-align: top; }
+.evolution-record-table td:first-child { min-width: 170px; }
+.evolution-record-table td:nth-child(3) { min-width: 140px; }
+.evolution-record-table td:nth-child(2), .evolution-record-table td:nth-child(4),
+.evolution-record-table td:nth-child(5), .evolution-record-table td:nth-child(6) { white-space: nowrap; }
+.evolution-record-table td:nth-child(7) { min-width: 200px; max-width: 360px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.evolution-records > button { justify-self: start; }

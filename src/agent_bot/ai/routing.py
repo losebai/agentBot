@@ -279,6 +279,7 @@ class RoutingAiClient:
                     names += ("knowledge_search", "material_search", "material_get")
                 request = AgentRequest(
                     agent_code=agent_code,
+                    interaction=use_agent and not laya_decision,
                     model=None if agent_code else model,
                     image_urls=tuple(image_urls),
                     image_material_ids=tuple(image_material_ids),

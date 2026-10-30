@@ -101,3 +101,55 @@ async def test_bare_bot_mention_refreshes_missing_member_name(
     assert len(jobs) == 1
     assert jobs[0].args[0].prompt == "最新群名片"
     reply_model.assert_not_awaited()
+
+
+@pytest.mark.parametrize("prompt,members", [
+    ("他没理你，at一下", []),
+    ("帮我艾特一下", []),
+    ("帮我at他一下", [{"user_id": 10086, "nickname": "小明", "card": ""}]),
+    ("帮我艾特小明，集合", [
+        {"user_id": 10086, "nickname": "小明", "card": ""},
+        {"user_id": 10087, "nickname": "小明", "card": ""},
+    ]),
+])
+async def test_contextual_mention_keeps_original_prompt_context_and_authorized_tools(
+    chat_plugin, monkeypatch, prompt, members,
+) -> None:
+    """省略、指代和同名目标均进入原Agent队列，保留上下文与工具且不单开提示调用。"""
+    tools = ("mention_member", "memory", "tts_generate")
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_auto_mention_enabled", True)
+    monkeypatch.setattr(chat_plugin._tool_session_manager, "available_tools", lambda _: tools)
+    monkeypatch.setattr(chat_plugin, "_load_group_members", AsyncMock(return_value=members))
+    monkeypatch.setattr(chat_plugin, "_refresh_group_members", AsyncMock(return_value=members))
+    counter = Mock()
+    counter.try_consume.return_value = True
+    monkeypatch.setattr(chat_plugin, "message_counter", counter)
+    reply_model = AsyncMock(return_value="不应调用校验回复")
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_reply_queued", reply_model)
+    monkeypatch.setattr(chat_plugin._conversation_handler, "_recent_context_provider", AsyncMock(
+        return_value="qwen3.8(QQ 10086)：刚才的消息",
+    ))
+    event = _group_event(Message(prompt))
+    bot = SimpleNamespace(self_id="90001")
+    matcher = Mock(send=AsyncMock(), finish=AsyncMock(side_effect=FinishedException))
+
+    async def parse_mention(current_bot, current_event):
+        """使用真实前置解析器，确认不能提前结束或缩减工具授权。"""
+        return await chat_plugin._conversation_handler.conversational_mention(
+            current_bot, current_event, matcher=matcher,
+        )
+
+    with pytest.raises(FinishedException):
+        await chat_plugin._conversation_handler.natural_chat(
+            bot, event, matcher=matcher, mention_handler=parse_mention,
+        )
+
+    chat_plugin.conversation_queue.enqueue.assert_awaited_once()
+    job = chat_plugin.conversation_queue.enqueue.await_args.args[0]
+    assert job.prompt == prompt
+    assert job.recent_group_context == "qwen3.8(QQ 10086)：刚才的消息"
+    assert job.chat_tools == tools
+    assert job.mention_target_id is None
+    counter.try_consume.assert_called_once_with(str(event.user_id))
+    reply_model.assert_not_awaited()
+    matcher.send.assert_not_awaited()

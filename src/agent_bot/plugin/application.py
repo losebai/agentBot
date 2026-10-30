@@ -379,6 +379,7 @@ _tool_session_manager = ChatToolSessionManager(
     ),
     material_store_provider=lambda: _media_resources.materials,
     operation_store_provider=_tool_operations,
+    file_sender=_reply_gateway.send_file,
     catalog_provider=lambda: model_guard.catalog,
     plugin_tools_provider=_plugin_tool_names,
     bot_config_tools_provider=lambda: getattr(

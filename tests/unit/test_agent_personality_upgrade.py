@@ -76,7 +76,8 @@ def test_invalid_existing_personality_column_is_not_stamped_current(legacy_datab
 
 
 def test_same_version_database_still_runs_missing_personality_migration(legacy_database):  # noqa: F811
-    """旧 0.5.10 安装尚无新增流水时，仍按唯一迁移 ID 补齐人格列。"""
+    """当前版本安装尚无新增流水时，仍按唯一迁移 ID 补齐人格列。"""
+    from agent_bot import __version__
     from agent_bot.database_upgrade import MIGRATIONS
 
     # 首次只跑旧清单，再删除人格列，模拟本次功能发布前的同版本安装。
@@ -86,7 +87,7 @@ def test_same_version_database_still_runs_missing_personality_migration(legacy_d
     )
     before = old_agents(legacy_database)
     result = upgrade_database(legacy_database, read_resource=resource)
-    assert result.previous_version == result.current_version == '0.5.10'
+    assert result.previous_version == result.current_version == __version__
     assert result.applied == ('agent-personality-v1',)
     assert query(legacy_database, 'SELECT * FROM agent_bot_agent ORDER BY id') == [
         (*row, '') for row in before

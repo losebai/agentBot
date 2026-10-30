@@ -82,10 +82,10 @@ it('主导航可进入标签与知识库，离开后不保留详情页', async (
   }));
   render(<App />);
   const nav = await screen.findByRole('navigation');
-  fireEvent.click(within(nav).getByRole('button', {name: /标签与知识库$/}));
-  expect(await screen.findByRole('button', {name: '新增知识'})).toBeInTheDocument();
-  fireEvent.click(within(nav).getByRole('button', {name: /运行概览$/}));
-  expect(screen.queryByRole('button', {name: '新增知识'})).not.toBeInTheDocument();
+  fireEvent.click(getVisibleButton('标签与知识库', nav));
+  expect(await screen.findByText('新增知识', { selector: 'button > span' })).toBeVisible();
+  fireEvent.click(getVisibleButton('运行概览', nav));
+  expect(screen.queryByText('新增知识', { selector: 'button > span' })).not.toBeInTheDocument();
 });
 
 it('机器人配置提供与 LLM 同级的记忆入口', async () => {
@@ -168,7 +168,7 @@ it('查询登录模式失败时显示错误，不能误进入系统', async () =
   expect(screen.queryByLabelText('管理员密码')).not.toBeInTheDocument();
 });
 
-it('角色和人格直接展示配置，远程服务从一级导航独立创建', async () => {
+it('角色配置从角色和人格二级菜单进入，远程服务从一级导航独立创建', async () => {
   const servers: Record<string, unknown>[] = [];
   const agent = { id: 1, revision: 1, code: 'helper', name: '助手', description: '',
     enabled: true, model_id: 1, vision_model_id: null, fallback_model_id: null,
@@ -192,7 +192,7 @@ it('角色和人格直接展示配置，远程服务从一级导航独立创建'
   }));
   render(<App />);
   const navigation = await screen.findByRole('navigation', { name: '主导航' });
-  fireEvent.click(getVisibleButton(/角色和人格$/, navigation));
+  fireEvent.click(getVisibleButton('角色配置', navigation));
   expect(await screen.findByRole('heading', { name: '角色和人格' })).toBeVisible();
   expect(await screen.findByRole('group', { name: '切换 Agent' })).toBeVisible();
   expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
@@ -209,7 +209,7 @@ it('角色和人格直接展示配置，远程服务从一级导航独立创建'
   fireEvent.click(getVisibleButton('保存 远程服务', dialog));
   await waitFor(() => expect(dialog).not.toBeInTheDocument());
   expect(await screen.findByText('资料服务')).toBeVisible();
-  fireEvent.click(getVisibleButton(/角色和人格$/, navigation));
+  fireEvent.click(getVisibleButton('角色配置', navigation));
   expect(await screen.findByRole('group', { name: '切换 Agent' })).toBeVisible();
   expect(screen.getByRole('button', { name: /远程服务$/ })).toBeVisible();
 }, 20000);

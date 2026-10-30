@@ -62,6 +62,22 @@ def queued_memory_source(job: ConversationJob, secret: str) -> dict[str, str] | 
     return source
 
 
+def queued_evolution_source(
+    job: ConversationJob, secret: str,
+) -> ConversationSourceBinding | None:
+    """演化只接受平台原始消息；任务重入队与延迟不改变证据身份或日期。"""
+    if job.source_message_id is None or job.source_message_time is None:
+        return None
+    source = queued_memory_source(job, secret)
+    if source is None:
+        return None
+    # 旧记忆的 queue 引用保持兼容，演化单独以平台消息去重。
+    source['source_event_id'] = f'qq:{job.bot_id}:{job.source_message_id}'
+    return ConversationSourceBinding(
+        job.session_id, source, datetime.fromtimestamp(job.source_message_time, UTC),
+    )
+
+
 @contextmanager
 def direct_memory_source(
     *, session_id: str, bot_id: str, user_id: str, message_id: int,

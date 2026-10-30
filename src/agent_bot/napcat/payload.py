@@ -2,12 +2,14 @@
 
 import hashlib
 import json
+import os
 import re
 import stat
+import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-VERSION = "v4.18.38"
+VERSION = "v4.18.42"
 REQUIRED_FILES = frozenset({
     "shell/NapCatWinBootMain.exe", "shell/NapCatWinBootHook.dll", "shell/napcat.mjs",
     "shell/loadNapCat.js", "shell/qqnt.json",
@@ -59,6 +61,40 @@ def safe_payload_path(root: Path, name: str) -> Path:
     if not target.resolve().is_relative_to(root.resolve()):
         raise PayloadError("NapCat 载荷路径越界。")
     return target
+
+
+def quarantine_runtime_files(root: Path, residue: Path) -> list[str]:
+    """启动前把 QQ 运行时落在载荷目录内的数据文件隔离到独立目录。
+
+    QQ 运行会向程序目录写入 guild 数据库等残留，整体校验会把它们当成
+    分发损坏；隔离保留而非删除，manifest 缺失或损坏时不动任何文件，
+    交由 load_payload 明确报错。
+    """
+    try:
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        files = manifest["files"]
+        if not isinstance(files, dict):
+            return []
+    except (OSError, ValueError):
+        return []
+    declared = set(files) | {"manifest.json"}
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    moved = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative in declared or is_link(path) or is_link(path.parent):
+            continue
+        target = residue / stamp / relative
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # 同盘改名原子生效；文件被占用时保持原状交给整体校验拒绝。
+            os.replace(path, target)
+            moved.append(relative)
+        except OSError:
+            continue
+    return moved
 
 
 def load_payload(root: Path) -> NapCatPayload:

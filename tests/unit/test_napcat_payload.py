@@ -9,10 +9,10 @@ from napcat_fakes import make_payload
 
 def test_payload_checks_hash_and_rejects_extra_data(tmp_path):
     """摘要错误及未声明配置均拒绝，不能用启动失败代替发布校验。"""
-    from agent_bot.napcat.payload import PayloadError, load_payload
+    from agent_bot.napcat.payload import VERSION, PayloadError, load_payload
 
     root = make_payload(tmp_path / "runtime")
-    assert load_payload(root).napcat_version == "v4.18.38"
+    assert load_payload(root).napcat_version == VERSION
     assert not (root / "qq").exists()
     (root / "shell/napcat.mjs").write_bytes(b"modified")
     with pytest.raises(PayloadError):
@@ -21,6 +21,50 @@ def test_payload_checks_hash_and_rejects_extra_data(tmp_path):
     (root / ".env").write_text("secret", encoding="utf-8")
     with pytest.raises(PayloadError):
         load_payload(root)
+
+
+def test_quarantine_moves_runtime_residue_before_validation(tmp_path):
+    """QQ 运行残留被隔离保留而非删除；隔离后整体校验恢复通过。"""
+    from agent_bot.napcat.payload import quarantine_runtime_files, load_payload
+
+    root = make_payload(tmp_path / "runtime")
+    residue = tmp_path / "data/napcat/residue"
+    (root / "shell/guild1.db").write_bytes(b"runtime-data")
+    (root / "shell/guild1.db-shm").write_bytes(b"runtime-shm")
+
+    moved = quarantine_runtime_files(root, residue)
+
+    assert sorted(moved) == ["shell/guild1.db", "shell/guild1.db-shm"]
+    assert not (root / "shell/guild1.db").exists()
+    assert list(residue.rglob("guild1.db"))[0].read_bytes() == b"runtime-data"
+    load_payload(root)
+
+
+def test_quarantine_keeps_files_without_usable_manifest(tmp_path):
+    """清单缺失或损坏时不移动任何文件，交由整体校验明确报错。"""
+    from agent_bot.napcat.payload import PayloadError, load_payload, quarantine_runtime_files
+
+    root = make_payload(tmp_path / "runtime")
+    (root / "shell/stray.db").write_bytes(b"stray")
+    (root / "manifest.json").write_text("{broken", encoding="utf-8")
+
+    assert quarantine_runtime_files(root, tmp_path / "residue") == []
+    assert (root / "shell/stray.db").exists()
+    with pytest.raises(PayloadError):
+        load_payload(root)
+
+
+def test_quarantine_keeps_declared_files_untouched(tmp_path):
+    """声明清单内的分发文件与 manifest 本体不参与隔离。"""
+    from agent_bot.napcat.payload import quarantine_runtime_files
+
+    root = make_payload(tmp_path / "runtime")
+    before = (root / "shell/napcat.mjs").read_bytes()
+
+    assert quarantine_runtime_files(root, tmp_path / "residue") == []
+    assert (root / "shell/napcat.mjs").read_bytes() == before
+    assert (root / "manifest.json").exists()
+    assert not (tmp_path / "residue").exists()
 
 
 @pytest.mark.parametrize(("field", "version"), [

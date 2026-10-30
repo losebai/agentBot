@@ -3,9 +3,11 @@
 import hashlib
 import json
 
+from agent_bot.napcat.payload import VERSION
+
 
 def make_payload(root):
-    """只生成固定版本 Shell 的占位字节，不捆绑或执行本机 QQ。"""
+    """只生成当前支持版本 Shell 的占位字节，不捆绑或执行本机 QQ。"""
     root.mkdir(parents=True, exist_ok=True)
     files = {}
     for name in ("shell/NapCatWinBootMain.exe", "shell/NapCatWinBootHook.dll",
@@ -15,7 +17,7 @@ def make_payload(root):
         target.write_bytes(b"offline-placeholder-not-an-executable")
         files[name] = hashlib.sha256(target.read_bytes()).hexdigest()
     manifest = {"schema_version": 2, "platform": "windows-x64",
-                "napcat_version": "v4.18.38", "qq_source": "installed",
+                "napcat_version": VERSION, "qq_source": "installed",
                 "entrypoint": "shell/NapCatWinBootMain.exe",
                 "files": files}
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

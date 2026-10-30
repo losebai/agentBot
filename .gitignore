@@ -41,4 +41,6 @@ docs/**
 [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*.sql
 [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*.md
 /workflows/
-/src/resources/
+# 资源目录默认不入库，随源码分发的 NapCat WebUI 模板除外。
+/src/resources/*
+!/src/resources/napcat-webui-template.json

@@ -12,7 +12,12 @@ import httpx
 from agent_bot.config import RuntimeConfig
 from agent_bot.napcat.configuration import ConfigurationError, configure_instance
 from agent_bot.napcat.contracts import NapCatErrorCode, NapCatStatus
-from agent_bot.napcat.payload import PayloadError, is_link, load_payload
+from agent_bot.napcat.payload import (
+    PayloadError,
+    is_link,
+    load_payload,
+    quarantine_runtime_files,
+)
 from agent_bot.napcat.qq_installation import find_qq_executable
 
 
@@ -74,7 +79,11 @@ class NapCatSupervisor:
 
         stage: NapCatErrorCode = "PAYLOAD_INVALID"
         try:
-            payload = load_payload(self.directory / "runtime/napcat")
+            payload_root = self.directory / "runtime/napcat"
+            # QQ 运行会把数据库等残留写进程序目录；启动前先隔离，
+            # 分发文件的缺失与摘要不匹配仍由整体校验明确拒绝。
+            quarantine_runtime_files(payload_root, self.directory / "data/napcat/residue")
+            payload = load_payload(payload_root)
             if sys.platform != "win32":
                 self._publish("failed", "PLATFORM_UNSUPPORTED")
                 return
@@ -120,6 +129,15 @@ class NapCatSupervisor:
                                 ready = True
                                 self._publish("running", ready=True)
                         if ready and not owns:
+                            # QQ 内部守护可能重启 WebUI 进程并脱离所属 Job；
+                            # 只要登录页仍由本实例端口响应就继续观察，
+                            # 页面也停止响应时才判定登录页已停止。
+                            try:
+                                response = client.get(f"http://127.0.0.1:{launch.webui_port}/webui/")
+                            except httpx.HTTPError:
+                                response = None
+                            if response is not None and response.status_code == 200:
+                                continue
                             self._publish("failed", "WEBUI_UNAVAILABLE")
                             return
                         if not ready and time.monotonic() >= deadline:

@@ -107,11 +107,17 @@ class BackendProcess:
                         from agent_bot.napcat.desktop_ui import NapCatDesktopState
 
                         try:
-                            self.napcat_state = NapCatDesktopState.model_validate_json(
+                            updated = NapCatDesktopState.model_validate_json(
                                 line.removeprefix(_NAPCAT))
                         except ValidationError:
                             # 畸形私有通知不落盘，避免未知字段把秘密带入日志。
-                            pass
+                            continue
+                        was_ready = self.napcat_state.webui_ready
+                        self.napcat_state = updated
+                        # 登录页从等待到就绪的跃迁自动打开，免去手动点击和密钥弹窗。
+                        if (updated.webui_ready and not was_ready
+                                and self.on_napcat_login is not None):
+                            threading.Thread(target=self.on_napcat_login, daemon=True).start()
                         continue
                     log.write(line)
                     log.flush()
@@ -259,7 +265,8 @@ class DesktopController:
                 self.backend.stop()
 
 
-def serve(app: Any, host: str, port: int, *, napcat: Any = None) -> None:
+def serve(app: Any, host: str, port: int, *, napcat: Any = None,
+          napcat_mode: str = "external") -> None:
     """监听后向 QQ 插件开放所属托管入口，停机先释放 QQ 再关闭业务资源。"""
     import uvicorn
 
@@ -277,6 +284,12 @@ def serve(app: Any, host: str, port: int, *, napcat: Any = None) -> None:
                 print(f"{_READY}{url}", flush=True)
                 if napcat is not None:
                     app.state.napcat_backend_url = url
+                    # 运行配置启用 QQ 插件时，后端就绪即自动拉起所属 NapCat 托管，
+                    # 免去每次开机手动连接；qqbot 未启用或连接冲突由 supervisor
+                    # 的固定条件检查保持原状态并广播给界面。LLM 供应商属于消息
+                    # 处理配置，保存后热更新即参与回复，不阻塞机器人上线。
+                    if napcat_mode == "managed":
+                        await asyncio.to_thread(napcat.start, url, managed=True)
 
         async def shutdown(self, sockets=None) -> None:
             """先停止第三方进程，防止业务资源释放后继续接收消息。"""
@@ -350,7 +363,8 @@ def run_backend() -> int:
 
     app.state.napcat_open_login = request_login
     print(_STAGE + json.dumps("准备数据库和队列"), flush=True)
-    serve(app, str(stored.config.host), stored.config.port, napcat=napcat)
+    serve(app, str(stored.config.host), stored.config.port, napcat=napcat,
+          napcat_mode=stored.config.agent_bot_napcat_mode)
     return 0
 
 

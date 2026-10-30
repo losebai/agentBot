@@ -87,7 +87,24 @@ def configure_instance(
             network["websocketClients"] = clients
             updates[path] = data
         webui = read_object(folder / "webui.json")
-        webui.update(host="127.0.0.1", port=config.agent_bot_napcat_webui_port,
+        if not webui:
+            # NapCat v4.18.42 要求完整 schema(theme、loginRate 等)才启动 WebUI，
+            # 且对 IPv4 字面量 host 绑定失败；首次部署以发布模板为基底。
+            # host 使用官方默认的 "::" 通配监听，登录页仍由 Token 保护。
+            # 打包后资源位于 agent_bot/resources，源码运行时位于 src/resources。
+            here = Path(__file__).resolve()
+            template = next(
+                (path for path in (
+                    here.parents[1] / "resources" / "napcat-webui-template.json",
+                    here.parents[2] / "resources" / "napcat-webui-template.json")
+                 if path.is_file()), None)
+            if template is not None:
+                loaded = json.loads(template.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    # 模板随发布包公开分发，其中的示例密钥必须丢弃后重新生成。
+                    loaded.pop("token", None)
+                    webui = loaded
+        webui.update(host="::", port=config.agent_bot_napcat_webui_port,
                      disableWebUI=False, enableXForwardedFor=False)
         webui.setdefault("token", secrets.token_urlsafe(32))
         updates[folder / "webui.json"] = webui

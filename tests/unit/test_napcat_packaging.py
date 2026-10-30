@@ -39,9 +39,9 @@ def test_prepare_payload_copies_only_verified_clean_resources(tmp_path):
     (source / "manifest.json").unlink()
     destination = tmp_path / "output"
     module.prepare_payload(source, destination)
-    from agent_bot.napcat.payload import PayloadError, load_payload
+    from agent_bot.napcat.payload import VERSION, PayloadError, load_payload
 
-    assert load_payload(destination).napcat_version == "v4.18.38"
+    assert load_payload(destination).napcat_version == VERSION
     assert not (destination / "qq").exists()
     with pytest.raises(FileExistsError):
         module.prepare_payload(source, destination)
@@ -54,7 +54,7 @@ def test_prepare_payload_copies_only_verified_clean_resources(tmp_path):
 
 def test_prepare_payload_cli_uses_pinned_versions_without_version_argument(tmp_path):
     """真实命令行无需填写版本，生成的载荷仍须通过固定版本校验。"""
-    from agent_bot.napcat.payload import load_payload
+    from agent_bot.napcat.payload import VERSION, load_payload
 
     script = Path(__file__).resolve().parents[2] / "tools/prepare_napcat_payload.py"
     source = make_payload(tmp_path / "source")
@@ -65,7 +65,7 @@ def test_prepare_payload_cli_uses_pinned_versions_without_version_argument(tmp_p
     )
     assert result.returncode == 0, result.stdout + result.stderr
     payload = load_payload(destination)
-    assert payload.napcat_version == "v4.18.38"
+    assert payload.napcat_version == VERSION
     assert not (destination / "qq").exists()
 
 

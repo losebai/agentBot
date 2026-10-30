@@ -116,6 +116,9 @@ class WindowsJob:
         import win32api
         import win32job
 
+        # NapCat 可能绑定回环、IPv4 通配或 IPv6 通配(双栈)；端口一致且
+        # 监听进程属于本 Job 即可确认归属，地址只需是本机监听形态。
+        local_forms = {"127.0.0.1", "0.0.0.0", host}
         size = ctypes.c_ulong(0)
         api = ctypes.windll.iphlpapi.GetExtendedTcpTable
         result = api(None, ctypes.byref(size), False, socket.AF_INET, 3, 0)
@@ -129,7 +132,7 @@ class WindowsJob:
             state, address, local_port, _, _, pid = struct.unpack_from(
                 "=6I", buffer, 4 + index * 24)
             if (state != 2 or socket.ntohs(local_port & 0xFFFF) != port
-                    or socket.inet_ntoa(struct.pack("=I", address)) != host):
+                    or socket.inet_ntoa(struct.pack("=I", address)) not in local_forms):
                 continue
             try:
                 handle = win32api.OpenProcess(0x1000, False, pid)

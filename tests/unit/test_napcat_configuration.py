@@ -66,7 +66,7 @@ def test_owned_config_inherits_current_token_and_preserves_webui_secret(tmp_path
     assert client["token"] == current.onebot_v11_access_token.get_secret_value()
     assert client["messagePostFormat"] == "array"
     webui = json.loads((folder / "webui.json").read_text())
-    assert webui["host"] == "127.0.0.1"
+    assert webui["host"] == "::"
     assert webui["token"] != client["token"]
     assert launch.environment["NAPCAT_DISABLE_MULTI_PROCESS"] == "1"
     assert client["token"] not in repr(launch)

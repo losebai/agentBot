@@ -1,8 +1,9 @@
-"""QQ 插件请求的原生登录窗口，凭据不进入网页。"""
+"""QQ 插件请求默认浏览器打开所属后台，地址不由页面提供。"""
 
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,9 +29,9 @@ class NapCatDesktopState(BaseModel):
 
 def open_login(
     window: Any, directory: Path, current: Callable[[], NapCatDesktopState],
-) -> Any:
-    """只打开所属且仍存活的登录页，网页无法传入 URL 或读取登录密钥。"""
-    import webview
+) -> None:
+    """按用户授权将密钥编码到所属后台 URL，交给本机默认浏览器。"""
+    import webbrowser
 
     from agent_bot.desktop_settings import show_error
 
@@ -46,9 +47,11 @@ def open_login(
     except (OSError, ValueError):
         show_error(window, "NapCat 登录配置无法读取，请检查配置文件。")
         return None
-    show_error(window, f"NapCat WebUI 登录密钥：\n{token}\n\n请在接下来打开的登录页输入。")
-    # 原生提示期间可能重启或退出后端，不能再打开已经失效或被接管的旧端口。
+    # 配置读取期间可能重启或退出后端，不能打开被接管的旧端口。
     active = current()
     if not active.webui_ready or active.webui_port != state.webui_port:
         return None
-    return webview.create_window("NapCat QQ 登录", url=state.login_url(), width=1000, height=760)
+    # 直接进入官方登录路由，避免根路由解码后再次拼接而损坏含 &/+ 的密钥。
+    url = state.login_url() + "web_login?" + urlencode({"token": token})
+    if not webbrowser.open(url, new=2):
+        show_error(window, "默认浏览器无法打开，请检查系统浏览器设置。")

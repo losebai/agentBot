@@ -91,18 +91,21 @@ OneBot Token 与会话密钥须使用至少 32 字符的不同随机值。
 
 ## NapCat 桌面托管
 
-在管理页面进入“插件管理 → QQ 配置”，点击“启动 NapCat”，就绪后点击“打开登录页”完成 QQ 登录。
+在管理页面进入“插件管理 → QQ 配置”，点击“启动 NapCat”，就绪后直接扫描本页二维码完成 QQ 登录。
+页面显示实际运行的管理端口；二维码支持刷新，并显示扫码确认、连接中和已登录状态。
+“打开后台管理界面”会使用本机默认浏览器，按用户授权将密钥编码到 URL 一键登录。
 桌面不再提供 QQ 菜单。启动窗口和查看状态不会自动启动 QQ；启动仅作用于本窗口所属的 NapCat，
 不改写静态模式配置、不重启后端。启用 QQ 插件的选择仍须保存并手动重启后端后生效。
 普通 `agent-bot.exe` 命令行服务保持外部接入，不提供桌面 NapCat 启动和登录能力。
 
-桌面包只携带固定版本 NapCat Shell，运行电脑须先安装 Windows x64 QQ。
-点击“启动 NapCat”时按官方启动脚本的安装登记定位 QQ：读取本机注册表 32 位视图的
-`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\QQ` 中的 `UninstallString`，
-使用同目录的 `QQ.exe`；不扫描磁盘、不修改 QQ 安装目录、不接管已运行的其他 QQ。
-未安装、登记不可读或程序已移除时明确提示安装 QQ，修复后可再次点击启动。
+桌面包携带固定版本 NapCat Node 运行资源，无需用户安装 Node 或另外启动 NapCat。
+点击“启动 NapCat”后，AgentBot 在后台隐藏启动配套 Node 进程；二维码直接显示在项目内。
+不定位、注入或修改系统安装的 QQ，也不接管其他已运行的 QQ 或 NapCat。
+进程属于本窗口的 Windows Job，退出或重启后端时只清理所属进程树。
+运行资源缺失或校验失败时明确提示安装包含 Node 运行包的新版桌面程序，不回退为 QQ 注入。
 
-登录密钥由本机原生提示显示，不写入 URL、管理 API 或日志。运行概览分别显示
+后台管理 URL 仅由所属桌面根据本次活动端口和本机密钥构造，不接受网页指定地址；
+密钥和 WebUI 短期凭据不通过管理 API 返回、不写入项目日志。扫码响应禁止缓存。运行概览分别显示
 NapCat 状态和实际 QQ 连接；“运行中”不代表已完成登录。
 QQ 插件的启动和登录请求沿用管理员认证，并仅接受本机同源页面；不接受程序路径、端口或任意命令。
 禁用 QQ 插件后不能启动 NapCat。缺运行文件时插件内给出明确错误，管理页面仍可使用。
@@ -114,37 +117,36 @@ OneBot Token 仍使用现有配置；页面保存新 Token 后保持当前连接
 托管模式请清空正向 OneBot 地址与 HTTP API 根地址，避免重复连接。
 
 NapCat 配置、锁和缓存保存到 `data/napcat/`，日志为 `logs/napcat.log`，
-QQ 登录资料沿用 QQ 自身的原生目录，AgentBot 不更改系统 QQ 资料路径。
+QQ SDK 会话资料固定使用 `data/napcat/qq/`，不更改系统 QQ 资料路径。
 建议使用专用机器人账号。关窗只清理本窗口所属进程树，不按名称关闭其他 QQ。
 升级和卸载保留用户资料；不要把实际配置、缓存、登录记录或日志放进程序载荷。
 
-标准源码及 wheel 不附带第三方运行程序。需要制作带 Shell 的 Windows 包时，
-构建者先将固定版本 NapCat `v4.18.38` 的完整 Shell 解压到以下目录，排除其默认
-`config/` 目录，并核实分发许可；实际配置由 AgentBot 在 `data/napcat/` 中生成：
-
-```text
-prepared/
-  shell/  # 固定版本的完整 Shell 文件，含 NapCatWinBootMain.exe 等入口
-```
-
-`prepared` 是需要自行准备的本地输入目录，不由工具创建或下载；
-程序位于其他目录时，将命令中的 `prepared` 替换为实际路径。
-工具在复制前检查源目录和固定入口，缺失时列出需要补齐的相对文件路径。
+标准源码及 wheel 不附带第三方运行程序。制作集成 NapCat 的 Windows 包时，
+构建者使用官方固定 `v4.18.38` 的 `NapCat.Shell.Windows.Node.zip`，配套 Node 为 `v22.11.0`。
+将解压后的资源放在 `prepared/node/`，保留根目录原生 DLL、`wrapper.node`、`node.exe`、
+`index.js`、`package.json`、`config.json`、`win64/` 和 `napcat/` 的程序资源。
+排除 `napcat/config/`，并移除 `.bat`、`.ps1`、`NapCatWinBootMain.exe`、
+`NapCatWinBootHook.dll`、`loadNapCat.js` 等不使用的注入启动文件；不得包含运行数据。
+实际 OneBot、WebUI 配置继续保存在 `data/napcat/config/`，既有密钥保留。
+Node 使用 `data/napcat/` 作为工作目录，用户资料环境指向 `data/napcat/profile/`。
+项目维护的 Node 入口会在 SDK 会话初始化前固定原生资料路径为 `data/napcat/qq/`，
+避免 Windows 原生目录发现绕过环境变量而采用日常 QQ 的资料目录；入口随载荷校验。
+这些目录是运行数据隔离，不是操作系统权限沙箱；第三方进程仍以当前 Windows 用户权限运行。
 
 ```powershell
-uv run python tools/prepare_napcat_payload.py prepared build/napcat-payload
-powershell -ExecutionPolicy Bypass -File tools/build_windows.ps1 -NapCatPayloadDirectory build/napcat-payload
+uv run python tools/prepare_napcat_payload.py prepared runtime/napcat-node
+powershell -ExecutionPolicy Bypass -File tools/build_windows.ps1 -NapCatPayloadDirectory runtime/napcat-node
 ```
 
-Shell 版本统一固定在 `src/agent_bot/napcat/payload.py`，准备工具自动写入第 2 版清单，
-声明 QQ 来自本机安装；旧版捆绑 QQ 清单须从干净 Shell 重新生成，不能仅修改版本号。
-QQ 不随载荷固定或分发，使用本机已安装的 Windows 版本；不接受 `--qq-version`。
-构建和运行时均拒绝清单中的其他 Shell 版本或捆绑 QQ 程序。
-清单和摘要校验不会识别 Shell 的实际版本，构建者仍须确认源程序版本；
-固定 Shell 版本不代表已经完成与本机 QQ 的真实扫码验收。
-工具生成逐文件 SHA256 清单并拒绝运行数据、目录链接和额外文件；不下载或执行 QQ。
-载荷源目录须位于构建输出之外，避免重建时清理输入；准备工具也拒绝源与目标目录重叠。
-打包载荷位于 `runtime/napcat/`，与运行数据分离。真实登录和 OneBot 联调须在隔离测试账号上另行验收。
+准备工具生成第 3 版逐文件 SHA256 清单，固定 Node 运行方式、NapCat 和 Node 版本，
+拒绝旧注入清单、缺失原生组件、用户配置、目录链接及额外文件；不下载或执行第三方程序。
+清单不能代替下载来源核验，构建者应同时核对官方发布包摘要并确认分发许可。
+载荷源目录须位于构建输出之外；源与目标目录重叠时明确失败。
+
+新程序载荷使用 `runtime/napcat-node/`，与旧 `runtime/napcat/` 分开，升级无需删除旧目录。
+已有 `data/napcat/` 配置和密钥保持原位；不导入日常 QQ 登录资料。
+本机升级后手动“服务 → 重启后端”，随后在 QQ 配置点击启动和登录。
+真实扫码及 OneBot 收发须另用隔离测试账号验收，离线检查不连接 QQ。
 
 ## 可选 Redis 与 MySQL
 

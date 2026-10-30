@@ -3,8 +3,7 @@ import type { NapCatStatus as NapCatObservation } from '../types';
 
 /** 只展示固定错误提示，不把本机安装路径或启动参数传入页面。 */
 export const napcatErrors: Record<string, string> = {
-  PAYLOAD_INVALID: 'NapCat 运行载荷缺失或校验失败，请检查桌面运行环境。',
-  QQ_NOT_FOUND: '未找到本机安装的 QQ，请安装 Windows QQ 后重新点击“启动 NapCat”。',
+  PAYLOAD_INVALID: 'NapCat 运行载荷缺失或校验失败，请安装包含 Node 运行包的新版桌面程序。',
   CONFIG_INVALID: 'NapCat 配置无法读取或保存，请检查文件格式和权限。',
   CONFIG_CONFLICT: '托管模式与正向 OneBot 地址冲突，请清理接入地址后手动重启。',
   INSTANCE_BUSY: '托管目录已被另一个实例使用，或目录无法访问。',
@@ -28,7 +27,7 @@ export function NapCatStatus({ status, botCount, error }: {
     <div className="panel-header"><h2>NapCat 托管</h2><Tag>{labels[status.state]}</Tag></div>
     {status.error_code && <Alert type="error" showIcon message={napcatErrors[status.error_code] || 'NapCat 托管异常，请查看插件状态。'} />}
     {status.state === 'running' && <p>{botCount > 0 ? 'QQ 已在线' : '等待登录或连接'}</p>}
-    {status.webui_ready && <p>登录页已就绪。通过“插件管理 → QQ → 打开登录页”完成扫码。</p>}
+    {status.webui_ready && <p>登录服务已就绪，可在“QQ 配置”直接扫码，或使用浏览器打开后台管理界面。</p>}
     <p>模式、端口或 Token 保存后，通过“服务 → 重启后端”生效。</p>
   </section>;
 }

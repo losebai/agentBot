@@ -8,7 +8,7 @@ NapCatMode = Literal["external", "managed"]
 NapCatState = Literal["not_started", "starting", "running", "stopped", "failed", "plugin_disabled"]
 NapCatErrorCode = Literal[
     "PAYLOAD_INVALID", "CONFIG_INVALID", "CONFIG_CONFLICT", "INSTANCE_BUSY", "PORT_UNAVAILABLE",
-    "START_FAILED", "PROCESS_EXITED", "WEBUI_UNAVAILABLE", "PLATFORM_UNSUPPORTED", "QQ_NOT_FOUND",
+    "START_FAILED", "PROCESS_EXITED", "WEBUI_UNAVAILABLE", "PLATFORM_UNSUPPORTED",
 ]
 
 
@@ -24,11 +24,20 @@ class NapCatStatus:
 
 @dataclass(frozen=True)
 class NapCatPluginStatus:
-    """插件卡片只接收能力标志和公开状态，不接触窗口参数或密钥。"""
+    """插件卡片接收能力、状态和活动管理端口，不接触命令或密钥。"""
 
     available: bool
     plugin_enabled: bool
     status: NapCatStatus
+    webui_port: int | None = None
+
+
+@dataclass(frozen=True)
+class NapCatLogin:
+    """仅返回扫码所需信息，不暴露 WebUI 密钥或短期管理凭据。"""
+
+    status: Literal["generating", "waiting", "scanned", "connecting", "online", "error"]
+    qr_code_url: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)

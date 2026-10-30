@@ -15,15 +15,6 @@ def config(**values):
     )
 
 
-@pytest.fixture
-def installed_qq(tmp_path):
-    """模拟载荷目录之外的本机 QQ，配置生成不能修改其程序文件。"""
-    executable = tmp_path / "Installed QQ/QQ.exe"
-    executable.parent.mkdir()
-    executable.write_bytes(b"offline-installed-qq")
-    return executable
-
-
 def test_napcat_defaults_and_static_ownership():
     """旧部署不因更新自动启动 QQ，端口和模式只属于启动配置。"""
     current = config()
@@ -45,7 +36,7 @@ def test_napcat_rejects_invalid_startup_values(values):
         config(**values)
 
 
-def test_owned_config_inherits_current_token_and_preserves_webui_secret(tmp_path, installed_qq):
+def test_owned_config_inherits_current_token_and_preserves_webui_secret(tmp_path):
     """重启时才使用新 Token；首次账号通过默认文件继承，WebUI 密钥独立保留。"""
     import json
 
@@ -55,10 +46,10 @@ def test_owned_config_inherits_current_token_and_preserves_webui_secret(tmp_path
 
     payload = load_payload(make_payload(tmp_path / "runtime/napcat"))
     current = config(agent_bot_napcat_mode="managed")
-    launch = configure_instance(tmp_path, payload, current, "http://[::1]:8088/",
-                                qq_executable=installed_qq)
-    assert launch.command[1] == str(installed_qq)
-    assert installed_qq.read_bytes() == b"offline-installed-qq"
+    launch = configure_instance(tmp_path, payload, current, "http://[::1]:8088/")
+    assert launch.command == (str(payload.root / "node/node.exe"),
+                              str(payload.root / "node/agentbot-entry.cjs"))
+    assert launch.cwd == (tmp_path / "data/napcat").resolve()
     folder = tmp_path / "data/napcat/config"
     onebot = json.loads((folder / "onebot11.json").read_text())
     client = onebot["network"]["websocketClients"][0]
@@ -71,15 +62,14 @@ def test_owned_config_inherits_current_token_and_preserves_webui_secret(tmp_path
     assert launch.environment["NAPCAT_DISABLE_MULTI_PROCESS"] == "1"
     assert client["token"] not in repr(launch)
     (folder / "onebot11_12345.json").write_text(json.dumps(onebot))
-    configure_instance(tmp_path, payload, current, "http://127.0.0.1:8090/",
-                       qq_executable=installed_qq)
+    configure_instance(tmp_path, payload, current, "http://127.0.0.1:8090/")
     assert json.loads((folder / "webui.json").read_text())["token"] == webui["token"]
     assert json.loads((folder / "onebot11_12345.json").read_text())[
         "network"]["websocketClients"][0]["url"].endswith(":8090/onebot/v11/ws")
 
 
 def test_configuration_failure_does_not_overwrite_existing_files(
-    tmp_path, monkeypatch, installed_qq,
+    tmp_path, monkeypatch,
 ):
     """一份账号配置写入失败时还原此前已更新的文件。"""
     import os
@@ -90,8 +80,7 @@ def test_configuration_failure_does_not_overwrite_existing_files(
 
     payload = load_payload(make_payload(tmp_path / "runtime/napcat"))
     current = config(agent_bot_napcat_mode="managed")
-    configure_instance(tmp_path, payload, current, "http://127.0.0.1:8080/",
-                       qq_executable=installed_qq)
+    configure_instance(tmp_path, payload, current, "http://127.0.0.1:8080/")
     folder = tmp_path / "data/napcat/config"
     originals = {p: p.read_bytes() for p in folder.iterdir()}
     replace = os.replace
@@ -104,7 +93,27 @@ def test_configuration_failure_does_not_overwrite_existing_files(
 
     monkeypatch.setattr(os, "replace", fail_webui)
     with pytest.raises(ConfigurationError):
-        configure_instance(tmp_path, payload, current, "http://127.0.0.1:8090/",
-                           qq_executable=installed_qq)
+        configure_instance(tmp_path, payload, current, "http://127.0.0.1:8090/")
     for path, original in originals.items():
         assert path.read_bytes() == original
+
+
+def test_node_environment_does_not_inherit_host_secrets_or_profile(tmp_path, monkeypatch):
+    """Node 使用实例资料目录，不继承注入参数、模型密钥或任意 Node 启动钩子。"""
+    from agent_bot.napcat.configuration import configure_instance
+    from agent_bot.napcat.payload import load_payload
+    from napcat_fakes import make_payload
+
+    for key in ("NODE_OPTIONS", "NODE_PATH", "OPENAI_API_KEY", "NAPCAT_PATCH_PACKAGE"):
+        monkeypatch.setenv(key, "host-private-value")
+    payload = load_payload(make_payload(tmp_path / "runtime/napcat"))
+    launch = configure_instance(tmp_path, payload, config(), "http://127.0.0.1:8081/")
+    assert "host-private-value" not in repr(launch.environment)
+    assert launch.environment["USERPROFILE"] == str((tmp_path / "data/napcat/profile").resolve())
+    assert launch.environment["APPDATA"].startswith(launch.environment["USERPROFILE"])
+    assert launch.environment["LOCALAPPDATA"].startswith(launch.environment["USERPROFILE"])
+    assert not any(key in launch.environment for key in (
+        "NAPCAT_PATCH_PACKAGE", "NAPCAT_INJECT_PATH", "NAPCAT_LOAD_PATH",
+    ))
+    assert not (tmp_path / "runtime/napcat/node/napcat/config").exists()
+    load_payload(payload.root)

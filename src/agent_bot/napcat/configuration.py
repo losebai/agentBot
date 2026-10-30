@@ -1,4 +1,4 @@
-"""仅修改所属 NapCat 配置；QQ 原生资料位置保持不变。"""
+"""配置所属 NapCat Node 与实例资料目录，不修改日常 QQ 的程序文件。"""
 
 from __future__ import annotations
 
@@ -52,12 +52,12 @@ def read_object(path: Path) -> dict:
 
 def configure_instance(
     directory: Path, payload: NapCatPayload, config: RuntimeConfig, backend_url: str,
-    *, qq_executable: Path,
 ) -> NapCatLaunch:
-    """使用已定位的本机 QQ 与活动配置；写入失败回滚，不修改 QQ 程序目录。"""
+    """配置独立 Node 进程；写入失败回滚，不使用或修改本机 QQ 程序。"""
     if config.onebot_v11_ws_urls or config.onebot_v11_api_roots:
         raise ConfigurationError("托管模式不能同时配置正向 OneBot 连接。")
     folder = directory / "data/napcat/config"
+    profile = folder.parent / "profile"
     changed: list[Path] = []
     originals: dict[Path, bytes | None] = {}
     try:
@@ -65,6 +65,12 @@ def configure_instance(
             if is_link(parent):
                 raise ConfigurationError("托管配置目录不能是链接。")
         folder.mkdir(parents=True, exist_ok=True)
+        # 在写入配置前检查资料目录，权限或链接错误同样走统一失败出口。
+        for parent in (folder.parent / "qq", profile, profile / "AppData",
+                       profile / "AppData/Roaming", profile / "AppData/Local"):
+            if is_link(parent):
+                raise ConfigurationError("托管资料目录不能是链接。")
+            parent.mkdir(exist_ok=True)
         updates = {}
         for path in [folder / "onebot11.json", *sorted(folder.glob("onebot11_*.json"))]:
             data = read_object(path)
@@ -110,18 +116,18 @@ def configure_instance(
             else:
                 atomic_write(path, original)
         raise ConfigurationError("NapCat 配置无法保存，请检查格式、连接冲突和写入权限。") from exc
-    shell = payload.root / "shell"
+    node = payload.root / "node"
     # 仅把程序需要的系统环境交给第三方进程，不传数据库、模型或会话秘密。
     environment = {name: value for name, value in os.environ.items()
                    if name.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
                                        "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
                                        "PROGRAMFILES", "PROGRAMFILES(X86)", "COMSPEC"}}
-    environment.update({"NAPCAT_WORKDIR": str(folder.parent.resolve()),
+    environment.update({"USERPROFILE": str(profile.resolve()),
+                        "APPDATA": str((profile / "AppData/Roaming").resolve()),
+                        "LOCALAPPDATA": str((profile / "AppData/Local").resolve()),
+                        "NAPCAT_WORKDIR": str(folder.parent.resolve()),
                         "NAPCAT_DISABLE_MULTI_PROCESS": "1", "NAPCAT_DISABLE_PIPE": "1",
-                        "NAPCAT_PATCH_PACKAGE": str(shell / "qqnt.json"),
-                        "NAPCAT_LOAD_PATH": str(shell / "loadNapCat.js"),
-                        "NAPCAT_MAIN_PATH": str(shell / "napcat.mjs"),
-                        "NAPCAT_INJECT_PATH": str(shell / "NapCatWinBootHook.dll")})
-    return NapCatLaunch((str(shell / "NapCatWinBootMain.exe"), str(qq_executable),
-                         str(shell / "NapCatWinBootHook.dll")), shell, environment,
+                        "NAPCAT_FORCE_NODE_PROCESS": "1"})
+    return NapCatLaunch((str(node / "node.exe"), str(node / "agentbot-entry.cjs")),
+                        folder.parent.resolve(), environment,
                         config.agent_bot_napcat_webui_port)

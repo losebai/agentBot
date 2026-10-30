@@ -37,6 +37,34 @@ def test_desktop_state_rejects_arbitrary_url_and_masks_no_secret():
         NapCatDesktopState.model_validate({**state.model_dump(), "url": "https://example.com"})
 
 
+def test_admin_uses_default_browser_with_encoded_key_and_active_port(tmp_path, monkeypatch):
+    """用户授权 URL 登录；密钥正确编码，不打开第二个 WebView 或复制密钥弹窗。"""
+    import webbrowser
+    from unittest.mock import Mock
+    from urllib.parse import parse_qs, urlsplit
+
+    from agent_bot.napcat.desktop_ui import NapCatDesktopState, open_login
+
+    folder = tmp_path / "data/napcat/config"
+    folder.mkdir(parents=True)
+    (folder / "webui.json").write_text(json.dumps({"token": "offline key&x=1+test"}))
+    opened = Mock(return_value=True)
+    errors = Mock()
+    monkeypatch.setattr(webbrowser, "open", opened)
+    monkeypatch.setattr("agent_bot.desktop_settings.show_error", errors)
+    state = NapCatDesktopState(mode="managed", state="running", webui_ready=True, webui_port=6199)
+    open_login(object(), tmp_path, lambda: state)
+    url = urlsplit(opened.call_args.args[0])
+    assert url.netloc == "127.0.0.1:6199"
+    assert url.path == "/webui/web_login"
+    assert parse_qs(url.query) == {"token": ["offline key&x=1+test"]}
+    assert opened.call_args.kwargs == {"new": 2}
+    assert not errors.called
+    opened.reset_mock()
+    open_login(object(), tmp_path, lambda: NapCatDesktopState())
+    assert not opened.called
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="实际 Windows 私有握手")
 def test_parent_job_handshake_and_safe_napcat_notifications(tmp_path):
     """启动握手不会被误当停机信号，通知不带凭据。"""

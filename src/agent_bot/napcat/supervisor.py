@@ -11,9 +11,9 @@ import httpx
 
 from agent_bot.config import RuntimeConfig
 from agent_bot.napcat.configuration import ConfigurationError, configure_instance
-from agent_bot.napcat.contracts import NapCatErrorCode, NapCatStatus
+from agent_bot.napcat.contracts import NapCatErrorCode, NapCatLogin, NapCatStatus
 from agent_bot.napcat.payload import PayloadError, is_link, load_payload
-from agent_bot.napcat.qq_installation import find_qq_executable
+from agent_bot.napcat.webui import NapCatWebUI, WebUIError
 
 
 class NapCatSupervisor:
@@ -28,11 +28,24 @@ class NapCatSupervisor:
         self._cancelled = threading.Event()
         self._thread: threading.Thread | None = None
         self.on_status: Callable[[NapCatStatus], None] | None = None
+        self._webui: NapCatWebUI | None = None
 
     def snapshot(self) -> NapCatStatus:
         """返回不可变的非秘密状态，不暴露启动参数或配置原文。"""
         with self._lock:
             return self._status
+
+    def login(self, *, refresh: bool = False) -> NapCatLogin:
+        """只读取当前所属实例，停机或重启后丢弃旧二维码结果。"""
+        with self._lock:
+            client = self._webui
+        if client is None or not self.snapshot().webui_ready:
+            raise WebUIError("NapCat 登录服务尚未就绪。")
+        result = client.login(refresh=refresh)
+        with self._lock:
+            if client is not self._webui or not self._status.webui_ready:
+                raise WebUIError("所属 NapCat 登录服务已停止。")
+        return result
 
     def _publish(self, state: str, error: NapCatErrorCode | None = None, ready=False) -> None:
         """固定枚举事件同时用于原生通知和无秘密日志。"""
@@ -68,13 +81,13 @@ class NapCatSupervisor:
             self._thread.start()
 
     def _run(self, backend_url: str) -> None:
-        """显式启动时定位本机 QQ；工作线程唯一持有 Job 和锁并统一清理。"""
+        """显式启动配套 Node；工作线程唯一持有 Job 和锁并统一清理。"""
         from agent_bot.desktop_settings import check_port_available
         from agent_bot.napcat.windows_process import InstanceLease, WindowsJob
 
         stage: NapCatErrorCode = "PAYLOAD_INVALID"
         try:
-            payload = load_payload(self.directory / "runtime/napcat")
+            payload = load_payload(self.directory / "runtime/napcat-node", runtime=True)
             if sys.platform != "win32":
                 self._publish("failed", "PLATFORM_UNSUPPORTED")
                 return
@@ -89,11 +102,8 @@ class NapCatSupervisor:
                 resources.enter_context(InstanceLease(data / "napcat"))
                 stage = "PORT_UNAVAILABLE"
                 check_port_available("127.0.0.1", self.config.agent_bot_napcat_webui_port)
-                stage = "QQ_NOT_FOUND"
-                qq_executable = find_qq_executable()
                 stage = "CONFIG_INVALID"
-                launch = configure_instance(self.directory, payload, self.config, backend_url,
-                                            qq_executable=qq_executable)
+                launch = configure_instance(self.directory, payload, self.config, backend_url)
                 if self._cancelled.is_set():
                     return
                 stage = "START_FAILED"
@@ -102,6 +112,10 @@ class NapCatSupervisor:
                 resources.callback(job.close)
                 process = job.spawn(launch)
                 resources.callback(process.close)
+                with self._lock:
+                    self._webui = NapCatWebUI(self.directory, launch.webui_port, lambda: (
+                        not self._cancelled.is_set()
+                        and job.owns_listener("127.0.0.1", launch.webui_port)))
                 deadline = time.monotonic() + 30
                 ready = False
                 with httpx.Client(trust_env=False, timeout=0.5) as client:
@@ -133,6 +147,8 @@ class NapCatSupervisor:
             # 上游/OS 异常可能含路径或凭据，只公开所在阶段的固定错误码。
             self._publish("failed", stage)
         finally:
+            with self._lock:
+                self._webui = None
             if self._cancelled.is_set() and self.snapshot().state != "failed":
                 self._publish("stopped")
 

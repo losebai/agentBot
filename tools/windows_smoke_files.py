@@ -1,4 +1,4 @@
-"""复制隔离桌面验收文件，排除 NapCat Shell 载荷并保留窗口运行依赖。"""
+"""复制隔离桌面验收文件，排除 NapCat Node 载荷并保留窗口运行依赖。"""
 
 import shutil
 from pathlib import Path

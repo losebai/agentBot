@@ -53,7 +53,7 @@ def test_occupied_webui_port_fails_without_spawning_qq(tmp_path):
     from agent_bot.napcat.supervisor import NapCatSupervisor
     from napcat_fakes import make_payload
 
-    make_payload(tmp_path / "runtime/napcat")
+    make_payload(tmp_path / "runtime/napcat-node")
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
@@ -105,8 +105,7 @@ def test_unresponsive_owned_webui_still_obeys_startup_deadline(tmp_path, monkeyp
         """固定模拟无响应，不连接回环或外部网络。"""
         raise httpx.ConnectError("offline fixture")
 
-    make_payload(tmp_path / "runtime/napcat")
-    monkeypatch.setattr(module, "find_qq_executable", lambda: tmp_path / "Installed QQ/QQ.exe")
+    make_payload(tmp_path / "runtime/napcat-node")
     monkeypatch.setattr("agent_bot.napcat.windows_process.WindowsJob", FakeJob)
     monkeypatch.setattr("agent_bot.desktop_settings.check_port_available", lambda *_: None)
     ticks = iter([0, 31])
@@ -128,29 +127,62 @@ def test_unresponsive_owned_webui_still_obeys_startup_deadline(tmp_path, monkeyp
     assert closed == ["process", "job"]
 
 
-def test_missing_installed_qq_fails_before_writing_configuration(tmp_path, monkeypatch):
-    """QQ 未安装时只公开固定错误码，不写入配置、不泄露路径或启动进程。"""
+def test_node_starts_without_registry_and_stops_owned_processes(tmp_path, monkeypatch):
+    """没有系统 QQ 安装也可启动；只观察所属就绪端口，停止时释放进程和锁。"""
+    import winreg
+    from types import SimpleNamespace
+
+    import httpx
+
     from agent_bot.napcat import supervisor as module
-    from agent_bot.napcat.qq_installation import QQInstallationError
     from napcat_fakes import make_payload
 
-    def missing_qq():
-        """模拟用户尚未安装 QQ，异常原文不得进入日志或响应。"""
-        raise QQInstallationError("private-installation-path")
+    closed = []
+    launches = []
 
-    make_payload(tmp_path / "runtime/napcat")
-    monkeypatch.setattr(module, "find_qq_executable", missing_qq)
+    class FakeJob:
+        """模拟后台 Node 的就绪生命周期，不运行第三方代码或连接 QQ。"""
+
+        def spawn(self, launch):
+            """记录固定命令，返回所属进程观察句柄。"""
+            launches.append(launch)
+            return SimpleNamespace(close=lambda: closed.append("process"))
+
+        def active_processes(self):
+            """在取消前保持所属进程存活。"""
+            return 1
+
+        def owns_listener(self, host, port):
+            """仅模拟本实例的登录页监听。"""
+            return True
+
+        def close(self):
+            """记录 Job 释放，不影响其他进程。"""
+            closed.append("job")
+
+    def forbidden_registry(*args, **kwargs):
+        """若仍尝试定位系统 QQ，就立即使测试失败。"""
+        raise AssertionError("system QQ registration must not be read")
+
+    make_payload(tmp_path / "runtime/napcat-node")
+    monkeypatch.setattr(winreg, "OpenKey", forbidden_registry)
+    monkeypatch.setattr("agent_bot.napcat.windows_process.WindowsJob", FakeJob)
     monkeypatch.setattr("agent_bot.desktop_settings.check_port_available", lambda *_: None)
+    monkeypatch.setattr(httpx.Client, "get", lambda *_: SimpleNamespace(status_code=200))
     supervisor = module.NapCatSupervisor(tmp_path, RuntimeConfig(
         onebot_v11_access_token="offline-onebot-32-characters-at-least-secret",
         chat_session_secret="offline-session-32-characters-at-least-secret",
         agent_bot_napcat_mode="managed",
     ))
-    supervisor.start("http://127.0.0.1:8080/")
+    supervisor.start("http://127.0.0.1:8081/")
     try:
-        supervisor._thread.join(timeout=5)
-        assert supervisor.snapshot().error_code == "QQ_NOT_FOUND"
-        assert not (tmp_path / "data/napcat/config").exists()
-        assert "private-installation-path" not in (tmp_path / "logs/napcat.log").read_text()
+        limit = time.monotonic() + 5
+        while supervisor.snapshot().state == "starting" and time.monotonic() < limit:
+            time.sleep(0.02)
+        assert supervisor.snapshot().state == "running"
+        assert supervisor.snapshot().webui_ready
+        assert launches[0].command[0].endswith("node.exe")
     finally:
         supervisor.stop()
+    assert closed == ["process", "job"]
+    assert supervisor.snapshot().state == "stopped"

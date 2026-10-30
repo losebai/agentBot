@@ -18,8 +18,3 @@ it('缺运行载荷时给出明确提示', () => {
   render(<NapCatStatus status={{ mode: 'managed', state: 'failed', webui_ready: false, error_code: 'PAYLOAD_INVALID' }} botCount={0} />);
   expect(screen.getByText(/运行载荷缺失或校验失败/)).toBeInTheDocument();
 });
-
-it('本机 QQ 未安装时提示安装，不把问题误报为 Shell 载荷损坏', () => {
-  render(<NapCatStatus status={{ mode: 'managed', state: 'failed', webui_ready: false, error_code: 'QQ_NOT_FOUND' }} botCount={0} />);
-  expect(screen.getByText(/未找到本机安装的 QQ/)).toBeInTheDocument();
-});

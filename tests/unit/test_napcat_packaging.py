@@ -17,7 +17,7 @@ def test_smoke_copy_keeps_pythonnet_runtime_but_excludes_qq(tmp_path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     bundle = tmp_path / "bundle"
-    make_payload(bundle / "runtime/napcat")
+    make_payload(bundle / "runtime/napcat-node")
     runtime = bundle / "_internal/pythonnet/runtime"
     runtime.mkdir(parents=True)
     (runtime / "Python.Runtime.dll").write_bytes(b"native-dependency")
@@ -45,8 +45,8 @@ def test_prepare_payload_copies_only_verified_clean_resources(tmp_path):
     assert not (destination / "qq").exists()
     with pytest.raises(FileExistsError):
         module.prepare_payload(source, destination)
-    (source / "shell/config").mkdir()
-    (source / "shell/config/webui.json").write_text('{"token":"do-not-ship"}')
+    (source / "node/napcat/config").mkdir()
+    (source / "node/napcat/config/webui.json").write_text('{"token":"do-not-ship"}')
     with pytest.raises(PayloadError):
         module.prepare_payload(source, tmp_path / "bad")
     assert not (tmp_path / "bad").exists()
@@ -85,7 +85,7 @@ def test_prepare_payload_rejects_invalid_source_before_creating_output(tmp_path,
     assert not destination.parent.exists()
 
 
-@pytest.mark.parametrize("missing", ["shell/napcat.mjs", "shell/NapCatWinBootMain.exe"])
+@pytest.mark.parametrize("missing", ["node/napcat/napcat.mjs", "node/node.exe"])
 def test_prepare_payload_reports_missing_entry_before_creating_output(tmp_path, missing):
     """错误定位到缺少的 Shell 入口，避免复制大文件后才发现层级错误。"""
     from agent_bot.napcat.payload import PayloadError
@@ -127,7 +127,7 @@ def test_windows_build_rejects_payload_inside_cleared_output(tmp_path):
     tools.mkdir(parents=True)
     script = tools / "build_windows.ps1"
     script.write_bytes((source_root / "tools/build_windows.ps1").read_bytes())
-    payload = make_payload(repo / "dist/windows/AgentBot/runtime/napcat")
+    payload = make_payload(repo / "dist/windows/AgentBot/runtime/napcat-node")
     result = subprocess.run([
         "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
         "-NapCatPayloadDirectory", str(payload),

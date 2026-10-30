@@ -1,4 +1,4 @@
-"""从固定 Shell 目录生成干净载荷；QQ 使用本机安装，不联网或启动程序。"""
+"""从固定 Node 运行目录生成干净载荷，不联网、启动 QQ 或读取本机资料。"""
 
 import argparse
 import json
@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 
 from agent_bot.napcat.payload import (
+    NODE_ENTRY_SOURCE,
+    NODE_VERSION,
     REQUIRED_FILES,
     VERSION,
     PayloadError,
@@ -26,14 +28,15 @@ def prepare_payload(source: Path, destination: Path) -> None:
     if is_link(source):
         raise ValueError("载荷源目录不能是链接。")
     if not source.is_dir():
-        raise ValueError("载荷源目录不存在或不是目录，请先准备包含 shell/ 的程序目录。")
+        raise ValueError("载荷源目录不存在或不是目录，请先准备包含 node/ 的程序目录。")
     source = source.resolve()
     destination = destination.resolve()
     if source == destination or source in destination.parents or destination in source.parents:
         raise ValueError("载荷源目录和输出目录不能重叠。")
     # 入口缺失通常是未准备程序或解压层级错误，应在大文件复制前指出相对位置。
     missing = [name for name in sorted(REQUIRED_FILES)
-               if not safe_payload_path(source, name).is_file()]
+               if name != "node/agentbot-entry.cjs"
+               and not safe_payload_path(source, name).is_file()]
     if missing:
         raise PayloadError(f"载荷源目录缺少固定入口：{', '.join(missing)}")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -46,13 +49,18 @@ def prepare_payload(source: Path, destination: Path) -> None:
         for path in source.rglob("*"):
             relative = path.relative_to(source).as_posix()
             safe_payload_path(source, relative)
-            if path.is_file() and relative != "manifest.json":
+            if path.is_file() and relative not in {"manifest.json", "node/agentbot-entry.cjs"}:
                 target = stage / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(path, target)
                 files[relative] = file_sha256(target)
-        manifest = {"schema_version": 2, "platform": "windows-x64", "napcat_version": VERSION,
-                    "qq_source": "installed", "entrypoint": "shell/NapCatWinBootMain.exe",
+        # 桥接代码由项目维护并进入摘要清单，源包不能替换原生资料目录边界。
+        entry = stage / "node/agentbot-entry.cjs"
+        shutil.copyfile(NODE_ENTRY_SOURCE, entry)
+        files["node/agentbot-entry.cjs"] = file_sha256(entry)
+        manifest = {"schema_version": 3, "platform": "windows-x64", "napcat_version": VERSION,
+                    "runtime": "node", "node_version": NODE_VERSION,
+                    "qq_source": "bundled-components", "entrypoint": "node/agentbot-entry.cjs",
                     "files": files}
         (stage / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         load_payload(stage)
@@ -69,7 +77,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.check:
         payload = load_payload(args.source)
-        print(f"NapCat Shell 载荷校验通过：{payload.napcat_version}；QQ 使用本机安装。")
+        print(f"NapCat Node 载荷校验通过：{payload.napcat_version}；无需安装或启动系统 QQ。")
     else:
         if not args.destination:
             parser.error("准备载荷需要 destination")

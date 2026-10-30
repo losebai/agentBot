@@ -315,7 +315,7 @@ def run_backend() -> int:
         enable_managed = False
         # 仅全新桌面安装自动选择托管，已有部署不因添加运行资源而改变连接。
         if (not any(Path(name).exists() for name in (".env", ".env.prod"))
-                and Path("runtime/napcat").exists()):
+                and Path("runtime/napcat-node").exists()):
             # 载荷校验属于托管启动阶段；损坏资源不能阻止管理后端提供诊断。
             enable_managed = True
         prepare_first_run(Path.cwd(), enable_managed_napcat=enable_managed)
@@ -345,7 +345,7 @@ def run_backend() -> int:
     app = create_application(stored, admin, napcat=napcat)
 
     def request_login() -> None:
-        """插件只能发送固定登录意图，具体窗口和密钥由所属父进程处理。"""
+        """插件只发送固定后台打开意图，URL 和密钥由所属父进程处理。"""
         print(_NAPCAT_LOGIN, flush=True)
 
     app.state.napcat_open_login = request_login
@@ -409,10 +409,8 @@ def main() -> int:
             window.load_html(status_page(message))
 
     controller = DesktopController(directory, command, show_status, window.load_url)
-    login_windows: list = []
-
     def open_plugin_login(backend: BackendProcess) -> None:
-        """忽略旧后端通知，关窗或重启期间禁止打开失去归属的登录窗口。"""
+        """忽略旧后端通知，关窗或重启期间禁止打开失去归属的后台。"""
         from agent_bot.napcat.desktop_ui import NapCatDesktopState, open_login
 
         def current() -> NapCatDesktopState:
@@ -421,20 +419,13 @@ def main() -> int:
                 return NapCatDesktopState()
             return backend.napcat_snapshot()
 
-        child = open_login(window, directory, current)
-        if child is not None:
-            if controller.closed.is_set():
-                child.destroy()
-            else:
-                login_windows.append(child)
+        open_login(window, directory, current)
 
     controller.on_napcat_login = open_plugin_login
 
     def close_windows() -> None:
-        """主窗口关闭时一并关闭登录窗口，避免原生事件循环继续持有后端。"""
+        """主窗口关闭后拒绝晚到的后台打开通知，系统浏览器不归本进程管理。"""
         controller.closed.set()
-        for child in login_windows:
-            child.destroy()
 
     window.events.closed += close_windows
 

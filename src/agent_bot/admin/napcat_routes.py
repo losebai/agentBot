@@ -10,13 +10,14 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from agent_bot.napcat.contracts import NapCatPluginStatus, NapCatStatus
+from agent_bot.napcat.webui import WebUIError
 
 if TYPE_CHECKING:
     from agent_bot.napcat.supervisor import NapCatSupervisor
 
 
 def install_napcat_routes(router: APIRouter, provider: Callable[[], NapCatStatus]) -> None:
-    """复用管理认证；只有本机同源页面可启动所属实例或通知桌面打开登录。"""
+    """复用管理认证；本机同源页面可扫码或通知桌面用浏览器打开所属后台。"""
 
     def reject(code: str, message: str, status: int) -> JSONResponse:
         """错误使用固定文案，不回传 OS、配置或第三方异常正文。"""
@@ -44,12 +45,15 @@ def install_napcat_routes(router: APIRouter, provider: Callable[[], NapCatStatus
     async def plugin_state(request: Request) -> NapCatPluginStatus:
         """能力信息只含布尔值及公开状态，不提供 WebUI 密钥或地址。"""
         supervisor = getattr(request.app.state, "napcat", None)
+        status = provider()
         return NapCatPluginStatus(
             available=supervisor is not None and bool(
                 getattr(request.app.state, "napcat_backend_url", None)),
             plugin_enabled=supervisor is not None and "qqbot" in (
                 supervisor.config.app_enabled_plugins),
-            status=provider(),
+            status=status,
+            webui_port=(supervisor.config.agent_bot_napcat_webui_port
+                        if supervisor is not None and status.webui_ready else None),
         )
 
     @router.post("/napcat/start", response_model=NapCatStatus)
@@ -63,9 +67,34 @@ def install_napcat_routes(router: APIRouter, provider: Callable[[], NapCatStatus
         )
         return supervisor.snapshot()
 
-    @router.post("/napcat/login", response_model=None)
-    async def login(request: Request) -> dict[str, bool] | JSONResponse:
-        """WebUI 凭据仍留在本机原生窗口，网页仅发送无参数的登录意图。"""
+    async def login_result(request: Request, *, refresh: bool) -> JSONResponse:
+        """同源授权页面才能读取临时扫码数据，不接受网页指定上游地址。"""
+        from dataclasses import asdict
+
+        supervisor = context(request)
+        if isinstance(supervisor, JSONResponse):
+            return supervisor
+        try:
+            result = await asyncio.to_thread(supervisor.login, refresh=refresh)
+        except WebUIError as exc:
+            response = reject("NAPCAT_LOGIN_UNAVAILABLE", str(exc), 409)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        return JSONResponse(asdict(result), headers={"Cache-Control": "no-store"})
+
+    @router.post("/napcat/login")
+    async def login(request: Request) -> JSONResponse:
+        """读取所属实例的扫码状态，不启动 QQ 或更换已有二维码。"""
+        return await login_result(request, refresh=False)
+
+    @router.post("/napcat/login/refresh")
+    async def refresh_login(request: Request) -> JSONResponse:
+        """用户显式刷新二维码，旧二维码由上游作废。"""
+        return await login_result(request, refresh=True)
+
+    @router.post("/napcat/admin", response_model=None)
+    async def open_admin(request: Request) -> dict[str, bool] | JSONResponse:
+        """网页只发送无参数意图，本机桌面构造地址并交给默认浏览器。"""
         supervisor = context(request)
         if isinstance(supervisor, JSONResponse):
             return supervisor

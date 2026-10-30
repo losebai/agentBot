@@ -120,3 +120,9 @@ export interface NapCatStatus {
   webui_ready: boolean;
   error_code: string | null;
 }
+
+/** 二维码只驻留当前页面；不包含 WebUI 管理密钥或凭据。 */
+export interface NapCatLogin {
+  status: 'generating' | 'waiting' | 'scanned' | 'connecting' | 'online' | 'error';
+  qr_code_url: string | null;
+}

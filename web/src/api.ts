@@ -1,4 +1,4 @@
-import type { BotInfo, ChatMessage, ChatResponse, ComfyStatus, DeadLetterClearResult, DeadLetterStatus, JsonValue, NapCatStatus, PluginInfo, ServiceStatus, SettingsSnapshot } from './types';
+import type { BotInfo, ChatMessage, ChatResponse, ComfyStatus, DeadLetterClearResult, DeadLetterStatus, JsonValue, NapCatLogin, NapCatStatus, PluginInfo, ServiceStatus, SettingsSnapshot } from './types';
 import { readChatEvents } from './stream';
 import type { BilibiliQr, BilibiliStatus } from './components/BilibiliPlugin';
 
@@ -38,7 +38,7 @@ export class ApiClient {
   napcatStatus(signal?: AbortSignal) { return this.request<NapCatStatus>('napcat/status', 'GET', undefined, signal); }
   /** QQ 插件只读取所属桌面能力，不接收可执行文件、端口或登录密钥。 */
   napcatPlugin(signal?: AbortSignal) {
-    return this.request<{ available: boolean; plugin_enabled: boolean; status: NapCatStatus }>('napcat/plugin', 'GET', undefined, signal);
+    return this.request<{ available: boolean; plugin_enabled: boolean; status: NapCatStatus; webui_port?: number | null }>('napcat/plugin', 'GET', undefined, signal);
   }
   /** 用户显式启动所属 NapCat，不修改静态配置或重启后端。 */
   startNapcat() { return this.request<NapCatStatus>('napcat/start', 'POST', {}); }
@@ -46,8 +46,12 @@ export class ApiClient {
   comfyStatus(signal?: AbortSignal) { return this.request<ComfyStatus>('comfy/status', 'GET', undefined, signal); }
   /** 只提交启动意图，实际解释器、目录和参数由后端有效配置决定。 */
   startComfy() { return this.request<ComfyStatus>('comfy/start', 'POST', {}); }
-  /** 仅发送打开原生登录窗口的意图，WebUI 密钥不经过页面。 */
-  openNapcatLogin() { return this.request<{ accepted: boolean }>('napcat/login', 'POST', {}); }
+  /** 读取所属实例当前扫码状态，页面离开时取消，不更换已有二维码。 */
+  napcatLogin(signal?: AbortSignal) { return this.request<NapCatLogin>('napcat/login', 'POST', {}, signal); }
+  /** 用户显式换码，旧二维码不再保留在页面。 */
+  refreshNapcatLogin(signal?: AbortSignal) { return this.request<NapCatLogin>('napcat/login/refresh', 'POST', {}, signal); }
+  /** 桌面读取密钥并构造 URL，交给默认浏览器，不接受页面传入地址。 */
+  openNapcatAdmin() { return this.request<{ accepted: boolean }>('napcat/admin', 'POST', {}); }
   /** 页面卸载时取消读取，避免过期响应覆盖插件草稿。 */
   settings(signal?: AbortSignal) { return this.request<SettingsSnapshot>('settings', 'GET', undefined, signal); }
   /** 只读查询运行中的 QQ 队列；离开维护区时取消等待。 */

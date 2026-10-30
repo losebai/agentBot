@@ -4,7 +4,7 @@ param(
     [string]$Server = 'root@192.168.1.5',
     [string]$RemoteDirectory = '/www/public/agentbot',
     [string]$BaseUrl = 'https://public.loserbai.cn/agentbot',
-    [string]$NapCatPayloadDirectory = 'runtime/napcat',
+    [string]$NapCatPayloadDirectory = 'runtime/napcat-node',
     [string]$IsccPath = $env:ISCC_PATH,
     [switch]$BuildOnly,
     [switch]$SkipTests

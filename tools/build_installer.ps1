@@ -10,8 +10,8 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $bundle = (Resolve-Path -LiteralPath $BundleDirectory).Path
 $napcatDefine = @()
-if (Test-Path -LiteralPath (Join-Path $bundle 'runtime/napcat')) {
-    & uv run --no-sync python (Join-Path $PSScriptRoot 'prepare_napcat_payload.py') (Join-Path $bundle 'runtime/napcat') --check
+if (Test-Path -LiteralPath (Join-Path $bundle 'runtime/napcat-node')) {
+    & uv run --no-sync python (Join-Path $PSScriptRoot 'prepare_napcat_payload.py') (Join-Path $bundle 'runtime/napcat-node') --check
     if ($LASTEXITCODE -ne 0) { throw '安装器中的 NapCat 载荷校验失败。' }
     $napcatDefine = @('/DWithNapCat=1')
 }

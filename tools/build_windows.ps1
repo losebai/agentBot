@@ -29,10 +29,10 @@ try {
         $generatedNames = @("AgentBot.exe", "agent-bot.exe", "_internal", ".env.example", "WINDOWS_README.md")
         if (Test-Path -LiteralPath (Join-Path $bundle 'runtime')) {
             $runtimeItems = @(Get-ChildItem -LiteralPath (Join-Path $bundle 'runtime') -Force)
-            if ($runtimeItems.Count -ne 1 -or $runtimeItems[0].Name -ne 'napcat') {
+            if ($runtimeItems.Count -ne 1 -or $runtimeItems[0].Name -ne 'napcat-node') {
                 throw '输出目录含有未声明的运行资源，请指定新的构建目录。'
             }
-            & uv run --no-sync python tools/prepare_napcat_payload.py (Join-Path $bundle 'runtime/napcat') --check
+            & uv run --no-sync python tools/prepare_napcat_payload.py (Join-Path $bundle 'runtime/napcat-node') --check
             if ($LASTEXITCODE -ne 0) { throw '输出目录中的 NapCat 资源含数据或不完整，已取消覆盖。' }
             $generatedNames += 'runtime'
         }
@@ -83,7 +83,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'NapCat 载荷校验失败。' }
         $runtimeTarget = Join-Path $bundle 'runtime'
         New-Item -ItemType Directory -Force -Path $runtimeTarget | Out-Null
-        Copy-Item -LiteralPath $napcatSource -Destination (Join-Path $runtimeTarget 'napcat') -Recurse
+        Copy-Item -LiteralPath $napcatSource -Destination (Join-Path $runtimeTarget 'napcat-node') -Recurse
     }
     # 便携包与安装器共用同一份已构建程序，版本来自已安装的发布包。
     if ($BuildInstaller) {

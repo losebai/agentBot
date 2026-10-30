@@ -35,12 +35,14 @@ async def test_plugin_start_and_login_use_only_owned_desktop_context(admin_store
 
     from agent_bot.admin.config import AdminConfig
     from agent_bot.admin.routes import install_admin
-    from agent_bot.napcat.contracts import NapCatStatus
+    from agent_bot.napcat.contracts import NapCatLogin, NapCatStatus
+    from agent_bot.napcat.webui import WebUIError
 
     supervisor = SimpleNamespace(
-        config=SimpleNamespace(app_enabled_plugins=["qqbot"]),
+        config=SimpleNamespace(app_enabled_plugins=["qqbot"], agent_bot_napcat_webui_port=6199),
         snapshot=Mock(return_value=NapCatStatus("managed", "running", True)),
         start=Mock(),
+        login=Mock(return_value=NapCatLogin("waiting", "https://txz.qq.com/p?k=offline")),
     )
     login = Mock()
     app = FastAPI()
@@ -59,13 +61,30 @@ async def test_plugin_start_and_login_use_only_owned_desktop_context(admin_store
         response = await client.post("/api/v1/napcat/start", headers=headers, json={})
         assert response.status_code == 200
         supervisor.start.assert_called_once_with("http://127.0.0.1:8080/", managed=True)
+        plugin = await client.get("/api/v1/napcat/plugin", headers=headers)
+        assert plugin.json()["webui_port"] == 6199
         response = await client.post("/api/v1/napcat/login", headers=headers, json={})
+        assert response.status_code == 200
+        assert response.json() == {"status": "waiting", "qr_code_url": "https://txz.qq.com/p?k=offline"}
+        assert response.headers["cache-control"] == "no-store"
+        supervisor.login.assert_called_once_with(refresh=False)
+        assert not login.called
+        response = await client.post("/api/v1/napcat/login/refresh", headers=headers, json={})
+        assert response.status_code == 200
+        supervisor.login.assert_called_with(refresh=True)
+        assert (await client.post("/api/v1/napcat/login", headers=headers | {
+            "Origin": "https://foreign.example",
+        })).status_code == 403
+        response = await client.post("/api/v1/napcat/admin", headers=headers, json={})
         assert response.status_code == 200
         login.assert_called_once_with()
         supervisor.snapshot.return_value = NapCatStatus(
             "managed", "failed", False, "PROCESS_EXITED",
         )
+        supervisor.login.side_effect = WebUIError("所属 NapCat 登录服务已停止。")
         response = await client.post("/api/v1/napcat/login", headers=headers, json={})
+        assert response.status_code == 409
+        response = await client.post("/api/v1/napcat/admin", headers=headers, json={})
         assert response.status_code == 409
         supervisor.config.app_enabled_plugins = []
         response = await client.post("/api/v1/napcat/start", headers=headers, json={})

@@ -60,6 +60,12 @@ class ApplicationRuntimeProvider:
         return self.media_resources.store
 
     @property
+    def comfy_launcher(self):
+        """只有已运行插件才授予本机启动能力，保存待启用不能提前开放。"""
+        plugin = self.plugins.running_plugin("comfy")
+        return plugin.launcher if plugin is not None else None
+
+    @property
     def workflow_store(self):
         """存储跨启停保留，只有当前运行的 Comfy 插件才授予 HTTP 管理能力。"""
         return self.runtime.workflow_store if self.plugins.running_plugin("comfy") else None

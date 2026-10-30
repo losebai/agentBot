@@ -714,6 +714,32 @@ class RuntimeConfig(PluginConfig):
     app_enabled_plugins: list[str] = Field(default_factory=lambda: ["qqbot"])
     agent_bot_napcat_mode: Literal["external", "managed"] = "external"
     agent_bot_napcat_webui_port: int = Field(default=6099, ge=1, le=65535)
+    agent_bot_comfy_python: str | None = Field(default=None, min_length=1, max_length=1024)
+    agent_bot_comfy_directory: str | None = Field(default=None, min_length=1, max_length=1024)
+    agent_bot_comfy_args: list[str] = Field(default_factory=list, max_length=128)
+
+    @field_validator("agent_bot_comfy_python", "agent_bot_comfy_directory", mode="before")
+    @classmethod
+    def normalize_comfy_launch_path(cls, value: object) -> object:
+        """空路径明确表示未配置；控制字符不能进入本机进程参数。"""
+        if isinstance(value, str):
+            if not value.strip():
+                return None
+            if any(ord(char) < 32 for char in value):
+                raise ValueError("Comfy launch path contains control characters")
+        return value
+
+    @field_validator("agent_bot_comfy_args")
+    @classmethod
+    def validate_comfy_launch_args(cls, values: list[str]) -> list[str]:
+        """监听目标由服务地址唯一决定，附加参数不能覆盖监听地址或端口。"""
+        if any(not value or len(value) > 4096 or any(ord(c) < 32 for c in value)
+               or (value.startswith("--") and any(
+                   reserved.startswith(value.split("=", 1)[0])
+                   for reserved in ("--listen", "--port")
+               )) for value in values):
+            raise ValueError("Comfy launch arguments are invalid")
+        return values
 
     @field_validator("app_enabled_plugins")
     @classmethod
@@ -801,6 +827,9 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "app_enabled_plugins": "启用的内置插件 (重启生效)",
     "agent_bot_napcat_mode": "NapCat 静态模式 (插件启动仅作用于当前实例)",
     "agent_bot_napcat_webui_port": "NapCat 登录页端口 (启动配置，重启生效)",
+    "agent_bot_comfy_python": "ComfyUI Python 解释器路径 (启动配置，重启生效)",
+    "agent_bot_comfy_directory": "ComfyUI 目录 (包含 main.py，重启生效)",
+    "agent_bot_comfy_args": "ComfyUI 附加启动参数 (JSON 字符串数组，重启生效)",
     # AI 服务
     "chat_python_agent_code": "Python Agent 预设代码 (空值使用当前聊天模型与提示词)",
     "chat_model": "聊天模型 (供应商 / 模型)",

@@ -69,8 +69,8 @@ function fieldCategory(field: SettingField): Category {
     'chat_llm_', 'chat_python_', 'chat_agent_', 'chat_web_search_',
     'chat_tts_', 'chat_image_',
   ].some(prefix => name.startsWith(prefix))) return 'llm';
-  // 生图模型和预算与 Comfy 无关，只有本地工作流字段归入 Comfy。
-  if (name.startsWith('chat_local_workflow_')) return 'comfy';
+  // 启动文件字段和运行连接共用 Comfy 草稿；静态写入权限仍由服务端决定。
+  if (name.startsWith('chat_local_workflow_') || name.startsWith('agent_bot_comfy_')) return 'comfy';
   return 'basic';
 }
 

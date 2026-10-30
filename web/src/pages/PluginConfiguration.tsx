@@ -2,6 +2,7 @@ import { Alert, Button, Spin, Tabs } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { ApiClient, errorMessage } from '../api';
 import { BilibiliPlugin } from '../components/BilibiliPlugin';
+import { ComfyLaunch } from '../components/ComfyLaunch';
 import { NapCatPlugin } from '../components/NapCatPlugin';
 import { StickerPlugin } from '../components/StickerPlugin';
 import { isPluginRunning, pluginConfigurationLabels } from '../plugin-runtime';
@@ -62,8 +63,10 @@ export function PluginConfiguration({ token, pluginId, active = true }: {
               ]} />
             </div>
           : pluginId === 'comfy'
-            ? <div hidden={!activationValidated}><Settings token={token} categoryKeys={['comfy']} embedded
-              active={active && activationValidated} /></div>
+            ? <>{active && activationValidated && <div className="settings-card"><ComfyLaunch api={api} /></div>}
+              {/* 状态面板随页面卸载取消轮询，设置表单独立保留未保存草稿。 */}
+              <div hidden={!activationValidated}><Settings token={token} categoryKeys={['comfy']} embedded
+                active={active && activationValidated} /></div></>
           : <>{active && activationValidated && <div className="settings-card"><NapCatPlugin api={api} /></div>}
             {/* 未验证本次运行状态时只隐藏表单，保留草稿且不允许操作旧缓存。 */}
             <div hidden={!activationValidated}><Settings token={token} categoryKeys={['qq', 'games']} embedded /></div></>}

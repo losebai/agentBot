@@ -46,7 +46,7 @@ def test_admin_explicit_long_timeout_reaches_agent_request():
 
 
 def test_h3_import_and_bind_actual_prompt_noise_and_image():
-    """没有负向节点的视频仍可执行，超分和原始音轨保留。"""
+    """两段采样共用提示和种子，视频使用细化结果，原始音轨保持不变。"""
     definition = WorkflowCatalogImporter().parse_json("h3-api.json", json.dumps(h3_api()))
     assert definition.workflow_type == "image_to_video"
     assert definition.executable
@@ -65,7 +65,10 @@ def test_h3_import_and_bind_actual_prompt_noise_and_image():
     assert prompt["6"]["inputs"]["prompt"] == "镜头缓慢推近"
     assert prompt["8"]["inputs"]["noise_seed"] == 42
     assert prompt["1"]["inputs"]["image"] == image.comfy_path
-    assert prompt["14"]["inputs"]["images"] == ["21", 0]
+    assert prompt["14"]["inputs"]["images"] == ["12", 0]
+    assert prompt["12"]["inputs"]["samples"] == ["35", 0]
+    assert prompt["31"]["inputs"]["prompt"] == "镜头缓慢推近"
+    assert prompt["13"]["inputs"]["samples"] == ["11", 0]
     assert prompt["14"]["inputs"]["audio"] == ["13", 0]
     assert "seed" not in prompt["11"]["inputs"]
 

@@ -178,15 +178,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1
 ```
 
 脚本读取项目版本，完成测试、安装器与 SQL 包构建、上传校验及公网验证。
-也可加 `-Version 0.6.0` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.6.0.md`。
+也可加 `-Version 0.6.1` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.6.1.md`。
 参数与环境要求见 [发布说明](deploy/README.md#一键构建并发布)。
 
-当前 Windows 发布版本：**0.6.0**。后续安装与更新以下载站的
+当前 Windows 发布版本：**0.6.1**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。
 
-0.6.0 更新：改进表情包图片格式识别与预览处理、回复和媒体发送，以及工作流必需原图的校验提示。
-从已完成数据库升级的 0.5.11 更新无需新增 SQL 迁移；详见 [0.6.0 升级说明](sql/UPGRADE-0.6.0.md)。
-[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.6.0-sql.zip) 同时提供完整初始化与历史适用增量。
+0.6.1 更新：新增长期互动演化及管理能力、本机 ComfyUI 启动入口，并改进工作流处理。
+从 0.6.0 更新前停服备份，启动时自动执行适用演化增量；详见 [0.6.1 升级说明](sql/UPGRADE-0.6.1.md)。
+[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.6.1-sql.zip) 同时提供完整初始化与历史适用增量。
 
 适用于 Windows 10/11 x64，无需安装 Python、uv 或 Node.js。
 
@@ -549,6 +549,19 @@ uv run pytest -m "not e2e" -k "not database_onebot_token_reaches_adapter_without
 
 测试使用 Fake/Mock，不连接 QQ、不调用付费模型或生产服务。Windows 事件循环需要本机 socketpair，因此允许 loopback。命令排除了会清空真实 MySQL 配置表的联调测试；完整覆盖率门槛为 80%。文档修改只需核对内容、命令和路径。
 
+## 从 Comfy 插件启动本机 ComfyUI
+
+在“插件管理 → Comfy 配置”填写已有 ComfyUI 环境的 Python 解释器路径、包含 `main.py`
+的目录与附加参数，保存后手动重启机器人后端；也可在 `.env` 设置
+`AGENT_BOT_COMFY_PYTHON`、`AGENT_BOT_COMFY_DIRECTORY`、`AGENT_BOT_COMFY_ARGS`。
+附加参数使用 JSON 字符串数组，每个参数或参数值独占一项；`--listen` 和 `--port` 由页面中的
+Comfy 服务地址决定，不可在附加参数中重复设置。额外模型目录、输入输出目录可通过附加参数指定。
+
+启用 Comfy 插件后，在本机回环管理页面点击“启动 ComfyUI”。Python 环境需已安装 ComfyUI
+依赖，目标须为本机 HTTP 地址且端口可用；已有在线实例直接复用。页面不安装或下载模型，
+模型、VAE、节点和硬件资源须满足所用工作流要求。机器人调用本地工作流仍需开启图片生成与 MCP。
+后端退出只清理本次由插件启动的进程，不接管或关闭外部 Comfy Desktop 实例。
+
 ## 构建与安装发布包
 
 直接安装桌面版请使用上方的 [Windows 一键安装](#windows-一键安装)。以下说明从源码构建发布包。
@@ -561,7 +574,7 @@ Windows 独立桌面版可执行 `powershell -ExecutionPolicy Bypass -File tools
 ```powershell
 npm --prefix web run build
 uv build
-uv run python tools/check_package.py dist/agent_bot-0.6.0-py3-none-any.whl
+uv run python tools/check_package.py dist/agent_bot-0.6.1-py3-none-any.whl
 ```
 
 wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行模块、静态界面和 SQL 资源，并排除凭据、缓存、日志及媒体文件。
@@ -570,7 +583,7 @@ wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行�
 
 ```powershell
 uv venv --python 3.12
-uv pip install "D:\packages\agent_bot-0.6.0-py3-none-any.whl"
+uv pip install "D:\packages\agent_bot-0.6.1-py3-none-any.whl"
 .venv\Scripts\agent-bot.exe --help
 ```
 

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from agent_bot.config import RuntimeConfig
 from agent_bot.integrations.comfy import ComfyClient
 from agent_bot.plugins.catalog import COMFY_METADATA
+from agent_bot.plugins.comfy.launcher import ComfyLauncher
 from agent_bot.plugins.contracts import PluginContext
 from agent_bot.services.workflow_execution import WorkflowExecutionService
 from agent_bot.services.workflows import WorkflowCatalogImporter
@@ -62,11 +63,13 @@ class ComfyPlugin:
         self._runtime: ApplicationRuntime | None = None
         self._resources: set[ComfyResources] = set()
         self._running = False
+        self.launcher: ComfyLauncher | None = None
 
     def prepare(self, context: PluginContext) -> None:
         """先于公共快照登记工厂，禁用插件时不会经过此入口。"""
         self._runtime = context.runtime
         context.runtime.comfy_plugin = self
+        self.launcher = ComfyLauncher(context.runtime.config)
 
     def build_resources(self, config: RuntimeConfig) -> ComfyResources:
         """客户端的配置版本与公共快照一致，不在请求中修改旧代。"""
@@ -110,7 +113,8 @@ class ComfyPlugin:
             await self._runtime.gate.begin_refresh()
             await self._runtime.gate.wait_until_idle()
             await close_actions([lambda item=item: self.release(item)
-                                 for item in tuple(self._resources)])
+                                 for item in tuple(self._resources)]
+                                + ([self.launcher.aclose] if self.launcher is not None else []))
             # 插件只能随进程退出，门闩留给宿主最终关闭后再开放，避免借用已关闭的当前代。
 
         await finish_cleanup(drain())

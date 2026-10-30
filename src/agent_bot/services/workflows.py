@@ -678,7 +678,12 @@ def prepare_workflow_prompt(
     if definition.workflow_type == "image_to_video":
         if negative_prompt.strip():
             raise WorkflowValidationError("H3 does not support a negative prompt")
-        workflow[definition.positive_node_id]["inputs"]["prompt"] = positive
+        from agent_bot.services.video_workflows import H3_TYPES
+
+        # 拓扑校验已限定两段条件来自同一授权图；同时更新以免高分辨率条件残留旧提示。
+        for node in workflow.values():
+            if node["class_type"] in H3_TYPES:
+                node["inputs"]["prompt"] = positive
         workflow[definition.seed_node_id]["inputs"]["noise_seed"] = seed
         workflow[definition.input_image_node_id]["inputs"]["image"] = input_image.comfy_path
         return workflow

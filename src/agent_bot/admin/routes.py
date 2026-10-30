@@ -17,6 +17,7 @@ from agent_bot.admin.agent_routes import install_agent_routes
 from agent_bot.admin.ai_routes import install_ai_routes
 from agent_bot.admin.auth import require_token
 from agent_bot.admin.chat import ChatProbe
+from agent_bot.admin.comfy_routes import install_comfy_routes
 from agent_bot.admin.config import AdminConfig
 from agent_bot.admin.errors import classify_api_error
 from agent_bot.admin.http import ManagementMiddleware
@@ -84,6 +85,7 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
         return supervisor.snapshot() if supervisor is not None else NapCatStatus()
 
     install_napcat_routes(router, napcat_snapshot)
+    install_comfy_routes(router, runtime)
 
     @app.get("/api/v1/auth")
     async def auth_mode() -> dict[str, bool]:

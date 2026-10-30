@@ -1,5 +1,16 @@
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
+/** HTTP 服务探测与所属进程状态分开，不回显附加参数或进程日志。 */
+export interface ComfyStatus {
+  state: 'not_configured' | 'offline' | 'starting' | 'online' | 'failed';
+  configured: boolean;
+  local: boolean;
+  managed: boolean;
+  error_code: string | null;
+  python: string | null;
+  directory: string | null;
+}
+
 /** 保存启用状态与进程运行状态分开，修改开关需重启后生效。 */
 export interface PluginInfo {
   id: string;

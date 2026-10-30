@@ -31,6 +31,12 @@ class StaticConfigBase(BaseModel):
 
     model_config = ConfigDict(extra="ignore", hide_input_in_errors=True, str_strip_whitespace=True)
 
+    @field_validator("agent_bot_comfy_args", check_fields=False)
+    @classmethod
+    def validate_comfy_arguments(cls, value: list[str]) -> list[str]:
+        """静态解析复用完整模型的启动参数约束，不能绕过保留监听字段。"""
+        return RuntimeConfig.validate_comfy_launch_args(value)
+
     @field_validator("*", mode="before")
     @classmethod
     def parse_environment_values(cls, value: Any, info: ValidationInfo) -> Any:
@@ -44,6 +50,7 @@ class StaticConfigBase(BaseModel):
             "command_start",
             "command_sep",
             "chat_mcp_allowed_hosts",
+            "agent_bot_comfy_args",
         }:
             return json.loads(value)
         if info.field_name == "session_expire_timeout":

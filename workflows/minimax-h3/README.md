@@ -1,8 +1,14 @@
 # MiniMax H3 单图生成视频工作流
 
+## 当前两倍潜空间高清版
+
+`minimax_h3_r2v_upscale2x.json` 与对应 API 模板现在使用两段采样：448×800 主采样 → 3D 学习型潜空间 2 倍放大 → 896×1600 低降噪细化 → 解码。保持 8 秒、24 FPS 和首次采样的音轨，不叠加逐帧 RealESRGAN。
+
+需要作者的 `MinimaxH3LatentUpscaler3D` 配套节点和 `minimax_h3_latent_upscaler_3d_conv_v1_bf16.safetensors`；下载地址、文件摘要与参数见 [`minimax_h3_video_guide.md`](../../src/resources/minimax_h3_video_guide.md)。二次细化默认 6 步、降噪 0.25；高分辨率增加耗时与显存，不能保证恢复原始低分辨率中已经丢失的细节。
+
 ## 720p 时序一致性优先版
 
-最新模板为 `minimax_h3_r2v_ultrasharp720p.json` 与 `minimax_h3_r2v_ultrasharp720p_api.json`。处理顺序为原始帧 → 可选轻度降噪 → RAFT 时序融合 → 保守超分 → 可选轻微锐化 → 输出，基础生成仍为 448×800、192 帧、24 FPS，最终输出 720×1280、8 秒并保留音轨。
+时序优先模板为 `minimax_h3_r2v_ultrasharp720p.json` 与 `minimax_h3_r2v_ultrasharp720p_api.json`。处理顺序为原始帧 → 可选轻度降噪 → RAFT 时序融合 → 保守超分 → 可选轻微锐化 → 输出，基础生成仍为 448×800、192 帧、24 FPS，最终输出 720×1280、8 秒并保留音轨。
 
 节点 24 降噪默认关闭；节点 23 在原始尺寸上计算光流，亮度/色彩融合强度 0.25/0.35；节点 21 将模型增强结果混入 35%，额外锐化默认关闭，可调少量强度。放大后的锐化在每帧收集之前完成，不额外保留整段副本。安装配套两个 Python 节点文件与本地模型后，刷新 ComfyUI 并重新打开工作流；部署与调参见下方说明。
 
@@ -14,7 +20,7 @@
 
 ## 两倍版本
 
-`minimax_h3_r2v_upscale2x.json` 与 `minimax_h3_r2v_upscale2x_api.json` 是此前 test 两倍超分方案的可移植版本。采用已安装的 ref2va 主模型、首帧 Guide、448×800 基础生成、192 帧、24 FPS，并接入 RealESRGAN_x2plus 两倍超分，输出 896×1600、8 秒带声音的 MP4。节点字段以实际运行的 ComfyUI v0.37.0 为准。
+`minimax_h3_r2v_upscale2x.json` 与 `minimax_h3_r2v_upscale2x_api.json` 现已改为上文的潜空间放大及二次细化链路；早期 RealESRGAN 两倍方案保留在本地变更备份中，不与新链路同时放大。
 
 机器人现已支持 `image_to_video` 类型和独立 `local_workflow_generate_video` 工具。将配套 API JSON 导入工作流管理，启用后给目标 Agent 显式授权“工作流列表”和“工作流生视频”。H3 不支持负向提示词，也不能作为默认生图工作流。部署预算、媒体存储和同步目录说明见 [`minimax_h3_video_guide.md`](../../src/resources/minimax_h3_video_guide.md)。
 

@@ -1,4 +1,4 @@
-"""H3 单图视频的显式绑定校验，不复用图片工作流的负向提示假设。"""
+"""H3 单图视频及受控双阶段细化的显式绑定校验。"""
 
 import copy
 import json
@@ -12,6 +12,129 @@ from agent_bot.services.workflows import (
 )
 
 H3_TYPES = {"MiniMaxH3ReferenceToVideo", "MiniMaxH3ImageToVideo"}
+
+
+def _validate_refinement(api: dict, encoders: list[str], samplers: list[str]) -> tuple[str, str]:
+    """按拓扑识别两段采样，限定视频放大、原音轨及高分辨率身份条件。"""
+    def unique(kind: str) -> str:
+        """细化协议中每个处理角色只能出现一次。"""
+        matches = [key for key, node in api.items() if node["class_type"] == kind]
+        if len(matches) != 1:
+            raise WorkflowValidationError("H3 refinement roles are ambiguous")
+        return matches[0]
+
+    def require(node: str, field: str, value: object) -> None:
+        """关键连线必须精确匹配源节点和输出槽位。"""
+        if api[node]["inputs"].get(field) != value:
+            raise WorkflowValidationError(f"H3 refinement {field} binding is invalid")
+
+    if len(encoders) != 2 or len(samplers) != 2:
+        raise WorkflowValidationError("H3 requires one or two controlled sampling stages")
+    primary_pairs = [(sampler, encoder) for sampler in samplers for encoder in encoders
+                     if api[sampler]["inputs"].get("latent_image") == [encoder, 1]]
+    if len(primary_pairs) != 1:
+        raise WorkflowValidationError("H3 primary sampling stage is ambiguous")
+    primary_sampler, primary = primary_pairs[0]
+    secondary = next(key for key in encoders if key != primary)
+    final_sampler = next(key for key in samplers if key != primary_sampler)
+    split = unique("LTXVSeparateAVLatent")
+    upscale = unique("MinimaxH3LatentUpscaler3D")
+    concat = unique("LTXVConcatAVLatent")
+    require(split, "av_latent", [primary_sampler, 0])
+    require(upscale, "latent", [split, 0])
+    require(upscale, "mode", "scale by multiplier")
+    require(upscale, "mode.scale", 2.0)
+    require(concat, "video_latent", [upscale, 0])
+    require(concat, "audio_latent", [split, 1])
+    require(final_sampler, "latent_image", [concat, 0])
+    original = api[primary]["inputs"]
+    refined = api[secondary]["inputs"]
+    if api[primary]["class_type"] != api[secondary]["class_type"]:
+        raise WorkflowValidationError("H3 refinement encoder type differs")
+    image_field = ("ref_images.ref_image_0"
+                   if api[primary]["class_type"] == "MiniMaxH3ReferenceToVideo" else "first_frame")
+    encoder_fields = {"prompt", "clip", "vae", "width", "height", "length", image_field}
+    if api[primary]["class_type"] == "MiniMaxH3ReferenceToVideo":
+        encoder_fields.add("ref_image_size")
+    # 可达性不能证明素材已获授权；只开放当前单图协议使用的字段，拒绝视频、音频及尾帧。
+    if any(set(api[key]["inputs"]) - encoder_fields for key in encoders):
+        raise WorkflowValidationError("H3 refinement contains unsupported reference inputs")
+    # 第二个条件必须基于同一授权图和编码器，帧数保持不变，画布显式放大两倍。
+    for field in ("prompt", "clip", "vae", "length", "ref_image_size", "first_frame",
+                  "ref_images.ref_image_0"):
+        if original.get(field) != refined.get(field):
+            raise WorkflowValidationError("H3 refinement conditioning differs")
+    for field in ("width", "height"):
+        dimension = original.get(field)
+        if type(dimension) is not int or dimension <= 0 or refined.get(field) != dimension * 2:
+            raise WorkflowValidationError("H3 refinement dimensions must be twice the source")
+        align = api[upscale]["inputs"].get("align", 32)
+        if type(align) is not int or align <= 0:
+            raise WorkflowValidationError("H3 refinement alignment is invalid")
+        # 配套节点先按 align 对齐目标像素，再按 VAE 的 16 像素格对齐，条件必须匹配实际画布。
+        effective_dimension = round(round(dimension * 2 / align) * align / 16) * 16
+        if effective_dimension != refined[field]:
+            raise WorkflowValidationError("H3 refinement alignment changes the target canvas")
+    image = unique("LoadImage")
+    noise = unique("RandomNoise")
+    guider_ids = []
+    for sampler, encoder, latent in (
+        (primary_sampler, primary, [primary, 1]),
+        (final_sampler, secondary, [concat, 0]),
+    ):
+        require(sampler, "noise", [noise, 0])
+        guider_link = api[sampler]["inputs"].get("guider")
+        if not _is_api_link(guider_link) or guider_link[1] != 0:
+            raise WorkflowValidationError("H3 refinement guider is invalid")
+        guider = guider_link[0]
+        if api[guider]["class_type"] != "BasicGuider":
+            raise WorkflowValidationError("H3 refinement requires BasicGuider")
+        guider_ids.append(guider)
+        require(guider, "model", api[guider_ids[0]]["inputs"].get("model"))
+        conditioning = api[guider]["inputs"].get("conditioning")
+        if not _is_api_link(conditioning) or conditioning[1] != 0:
+            raise WorkflowValidationError("H3 refinement requires an image guide")
+        guide = conditioning[0]
+        if api[guide]["class_type"] != "MiniMaxH3AddGuide":
+            raise WorkflowValidationError("H3 refinement requires an image guide")
+        if set(api[guide]["inputs"]) - {"positive", "latent", "frame_idx", "vae", "image"}:
+            raise WorkflowValidationError("H3 refinement guide has unsupported reference inputs")
+        for field, value in (("positive", [encoder, 0]), ("latent", latent),
+                             ("image", [image, 0]), ("vae", original.get("vae")),
+                             ("frame_idx", 0)):
+            require(guide, field, value)
+    if len(set(guider_ids)) != 2:
+        raise WorkflowValidationError("H3 refinement guiders must be separate")
+    if len([n for n in api.values() if n["class_type"] == "BasicGuider"]) != 2:
+        raise WorkflowValidationError("H3 refinement contains an extra guider")
+    require(final_sampler, "sampler", api[primary_sampler]["inputs"].get("sampler"))
+    scheduler_link = api[final_sampler]["inputs"].get("sigmas")
+    if not _is_api_link(scheduler_link) or scheduler_link[1] != 0:
+        raise WorkflowValidationError("H3 refinement scheduler is invalid")
+    scheduler = scheduler_link[0]
+    schedule = api[scheduler]["inputs"]
+    if (api[scheduler]["class_type"] != "BasicScheduler"
+            or type(schedule.get("steps")) is not int or schedule["steps"] <= 0
+            or type(schedule.get("denoise")) not in (int, float)
+            or not 0 < schedule["denoise"] < 1):
+        raise WorkflowValidationError("H3 refinement requires a low denoise scheduler")
+    require(scheduler, "model", api[guider_ids[0]]["inputs"].get("model"))
+    video = unique("VAEDecode")
+    audio = unique("VAEDecodeAudio")
+    compose = unique("CreateVideo")
+    require(video, "samples", [final_sampler, 0])
+    require(video, "vae", original.get("vae"))
+    require(audio, "samples", [primary_sampler, 0])
+    require(compose, "images", [video, 0])
+    require(compose, "audio", [audio, 0])
+    # 严格拓扑不允许隐藏的编码器、图片或额外种子在未使用分支中执行。
+    output = unique("SaveVideo")
+    if _api_upstream_node_ids(api, output) | {output} != set(api):
+        raise WorkflowValidationError("H3 refinement contains disconnected nodes")
+    for key, node in api.items():
+        if key != noise and {"seed", "noise_seed"} & node["inputs"].keys():
+            raise WorkflowValidationError("H3 refinement requires a unique noise source")
+    return primary, primary_sampler
 
 
 def ui_to_video_api(payload: dict) -> dict:
@@ -52,11 +175,17 @@ def infer_video_bindings(api: dict) -> tuple[str, str, str, str]:
             raise WorkflowValidationError("H3 video bindings are ambiguous")
         return matches[0]
 
-    positive = unique(H3_TYPES)
+    encoders = [key for key, node in api.items() if node["class_type"] in H3_TYPES]
+    samplers = [key for key, node in api.items()
+                if node["class_type"] == "SamplerCustomAdvanced"]
+    refinement = len(encoders) != 1 or len(samplers) != 1
+    if refinement:
+        positive, sampler = _validate_refinement(api, encoders, samplers)
+    else:
+        positive, sampler = encoders[0], samplers[0]
     image = unique({"LoadImage"})
     noise = unique({"RandomNoise"})
     output = unique({"SaveVideo"})
-    sampler = unique({"SamplerCustomAdvanced"})
     inputs = api[positive]["inputs"]
     image_field = (
         "ref_images.ref_image_0"
@@ -71,7 +200,7 @@ def infer_video_bindings(api: dict) -> tuple[str, str, str, str]:
         raise WorkflowValidationError("H3 noise binding is disconnected")
     if api[sampler]["inputs"].get("latent_image") != [positive, 1]:
         raise WorkflowValidationError("H3 latent binding is disconnected")
-    guider = unique({"BasicGuider"})
+    guider = api[sampler]["inputs"]["guider"][0] if refinement else unique({"BasicGuider"})
     if api[sampler]["inputs"].get("guider") != [guider, 0]:
         raise WorkflowValidationError("H3 guider binding is disconnected")
     conditioning = api[guider]["inputs"].get("conditioning")

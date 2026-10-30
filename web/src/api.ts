@@ -1,4 +1,4 @@
-import type { BotInfo, ChatMessage, ChatResponse, DeadLetterClearResult, DeadLetterStatus, JsonValue, NapCatStatus, PluginInfo, ServiceStatus, SettingsSnapshot } from './types';
+import type { BotInfo, ChatMessage, ChatResponse, ComfyStatus, DeadLetterClearResult, DeadLetterStatus, JsonValue, NapCatStatus, PluginInfo, ServiceStatus, SettingsSnapshot } from './types';
 import { readChatEvents } from './stream';
 import type { BilibiliQr, BilibiliStatus } from './components/BilibiliPlugin';
 
@@ -42,6 +42,10 @@ export class ApiClient {
   }
   /** 用户显式启动所属 NapCat，不修改静态配置或重启后端。 */
   startNapcat() { return this.request<NapCatStatus>('napcat/start', 'POST', {}); }
+  /** 只读探测 ComfyUI 服务，页面离开时取消读取。 */
+  comfyStatus(signal?: AbortSignal) { return this.request<ComfyStatus>('comfy/status', 'GET', undefined, signal); }
+  /** 只提交启动意图，实际解释器、目录和参数由后端有效配置决定。 */
+  startComfy() { return this.request<ComfyStatus>('comfy/start', 'POST', {}); }
   /** 仅发送打开原生登录窗口的意图，WebUI 密钥不经过页面。 */
   openNapcatLogin() { return this.request<{ accepted: boolean }>('napcat/login', 'POST', {}); }
   /** 页面卸载时取消读取，避免过期响应覆盖插件草稿。 */

@@ -9,6 +9,7 @@ NapCatState = Literal["not_started", "starting", "running", "stopped", "failed",
 NapCatErrorCode = Literal[
     "PAYLOAD_INVALID", "CONFIG_INVALID", "CONFIG_CONFLICT", "INSTANCE_BUSY", "PORT_UNAVAILABLE",
     "START_FAILED", "PROCESS_EXITED", "WEBUI_UNAVAILABLE", "PLATFORM_UNSUPPORTED",
+    "AUTO_LOGIN_FAILED",
 ]
 
 

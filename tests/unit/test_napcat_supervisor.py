@@ -2,6 +2,8 @@
 
 import time
 
+import pytest
+
 from agent_bot.config import RuntimeConfig
 
 
@@ -127,18 +129,38 @@ def test_unresponsive_owned_webui_still_obeys_startup_deadline(tmp_path, monkeyp
     assert closed == ["process", "job"]
 
 
-def test_node_starts_without_registry_and_stops_owned_processes(tmp_path, monkeypatch):
-    """没有系统 QQ 安装也可启动；只观察所属就绪端口，停止时释放进程和锁。"""
+@pytest.mark.parametrize("save_error", [False, True])
+def test_node_starts_without_registry_and_stops_owned_processes(tmp_path, monkeypatch, save_error):
+    """无需系统 QQ 或打开管理页，后台记住账号；停止时释放进程和锁。"""
     import winreg
     from types import SimpleNamespace
 
     import httpx
 
     from agent_bot.napcat import supervisor as module
+    from agent_bot.napcat.contracts import NapCatLogin
+    from agent_bot.napcat.webui import WebUIError
     from napcat_fakes import make_payload
 
     closed = []
     launches = []
+    remembered = []
+
+    class FakeWebUI:
+        """模拟原生扫码已在线，只观察后台是否主动保存，不访问真实 QQ。"""
+
+        auto_login_configured = False
+
+        def __init__(self, *args):
+            """不初始化 HTTP 会话或读取本机凭据。"""
+
+        def login(self, *, refresh=False):
+            """记录没有前端请求时发生的保存。"""
+            remembered.append(True)
+            if save_error:
+                raise WebUIError("离线模拟保存失败")
+            self.auto_login_configured = True
+            return NapCatLogin("online")
 
     class FakeJob:
         """模拟后台 Node 的就绪生命周期，不运行第三方代码或连接 QQ。"""
@@ -169,6 +191,7 @@ def test_node_starts_without_registry_and_stops_owned_processes(tmp_path, monkey
     monkeypatch.setattr("agent_bot.napcat.windows_process.WindowsJob", FakeJob)
     monkeypatch.setattr("agent_bot.desktop_settings.check_port_available", lambda *_: None)
     monkeypatch.setattr(httpx.Client, "get", lambda *_: SimpleNamespace(status_code=200))
+    monkeypatch.setattr(module, "NapCatWebUI", FakeWebUI)
     supervisor = module.NapCatSupervisor(tmp_path, RuntimeConfig(
         onebot_v11_access_token="offline-onebot-32-characters-at-least-secret",
         chat_session_secret="offline-session-32-characters-at-least-secret",
@@ -182,6 +205,14 @@ def test_node_starts_without_registry_and_stops_owned_processes(tmp_path, monkey
         assert supervisor.snapshot().state == "running"
         assert supervisor.snapshot().webui_ready
         assert launches[0].command[0].endswith("node.exe")
+        while not remembered and time.monotonic() < limit:
+            time.sleep(0.02)
+        assert remembered == [True]
+        if save_error:
+            while supervisor.snapshot().error_code is None and time.monotonic() < limit:
+                time.sleep(0.02)
+            assert supervisor.snapshot().state == "running"
+            assert supervisor.snapshot().error_code == "AUTO_LOGIN_FAILED"
     finally:
         supervisor.stop()
     assert closed == ["process", "job"]

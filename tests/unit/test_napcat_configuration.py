@@ -61,9 +61,12 @@ def test_owned_config_inherits_current_token_and_preserves_webui_secret(tmp_path
     assert webui["token"] != client["token"]
     assert launch.environment["NAPCAT_DISABLE_MULTI_PROCESS"] == "1"
     assert client["token"] not in repr(launch)
+    webui["autoLoginAccount"] = "654321"
+    (folder / "webui.json").write_text(json.dumps(webui))
     (folder / "onebot11_12345.json").write_text(json.dumps(onebot))
     configure_instance(tmp_path, payload, current, "http://127.0.0.1:8090/")
     assert json.loads((folder / "webui.json").read_text())["token"] == webui["token"]
+    assert json.loads((folder / "webui.json").read_text())["autoLoginAccount"] == "654321"
     assert json.loads((folder / "onebot11_12345.json").read_text())[
         "network"]["websocketClients"][0]["url"].endswith(":8090/onebot/v11/ws")
 

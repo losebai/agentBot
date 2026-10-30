@@ -12,6 +12,7 @@ export const napcatErrors: Record<string, string> = {
   PROCESS_EXITED: 'NapCat 已意外退出，请通过桌面服务菜单重启。',
   WEBUI_UNAVAILABLE: '所属 NapCat 登录页未就绪或已停止，请检查端口配置。',
   PLATFORM_UNSUPPORTED: 'NapCat 托管仅支持 Windows 桌面版。',
+  AUTO_LOGIN_FAILED: '自动登录账号未能保存，当前连接不受影响；请刷新登录信息或检查后台管理设置。',
 };
 
 /** 进程运行与 QQ 在线分别判断，网页只展示状态，不提供本机进程控制。 */

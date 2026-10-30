@@ -118,6 +118,8 @@ class NapCatSupervisor:
                         and job.owns_listener("127.0.0.1", launch.webui_port)))
                 deadline = time.monotonic() + 30
                 ready = False
+                auto_login_failed = False
+                next_login_check = time.monotonic() + 2
                 with httpx.Client(trust_env=False, timeout=0.5) as client:
                     while not self._cancelled.wait(0.2):
                         if job.active_processes() == 0:
@@ -139,6 +141,21 @@ class NapCatSupervisor:
                         if not ready and time.monotonic() >= deadline:
                             self._publish("failed", "WEBUI_UNAVAILABLE")
                             return
+                        if (ready and self._webui is not None
+                                and self._webui.auto_login_configured
+                                and self.snapshot().error_code == "AUTO_LOGIN_FAILED"):
+                            self._publish("running", ready=True)
+                        # 与管理页面是否打开无关；只观察至保存成功，失败则等待用户显式重试。
+                        if (ready and not auto_login_failed and self._webui is not None
+                                and not self._webui.auto_login_configured
+                                and time.monotonic() >= next_login_check):
+                            next_login_check = time.monotonic() + 2
+                            try:
+                                self.login()
+                            except WebUIError:
+                                auto_login_failed = True
+                                if not self._cancelled.is_set():
+                                    self._publish("running", "AUTO_LOGIN_FAILED", ready=True)
         except PayloadError:
             self._publish("failed", "PAYLOAD_INVALID")
         except ConfigurationError:

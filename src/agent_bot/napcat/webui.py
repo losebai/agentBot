@@ -5,6 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -27,8 +28,15 @@ class NapCatWebUI:
         self._token = ""
         self._credential = ""
         self._expires = 0.0
+        self._auto_login_configured = False
 
-    def _post(self, client: httpx.Client, path: str, body: dict) -> dict:
+    @property
+    def auto_login_configured(self) -> bool:
+        """后台仅在完成缺省账号设置前观察登录，不持续覆盖用户后续修改。"""
+        with self._lock:
+            return self._auto_login_configured
+
+    def _post(self, client: httpx.Client, path: str, body: dict) -> Any:
         """发送固定接口前后确认归属，不向重定向地址转交凭据。"""
         if not self.owned():
             raise WebUIError("所属 NapCat 登录服务已停止。")
@@ -37,14 +45,29 @@ class NapCatWebUI:
         value = response.json()
         if not self.owned():
             raise WebUIError("所属 NapCat 登录服务已停止。")
-        if (not isinstance(value, dict) or value.get("code") != 0
-                or not isinstance(value.get("data"), dict)):
+        # 固定接口的 data 分别为对象、账号字符串或保存成功的 null。
+        if not isinstance(value, dict) or value.get("code") != 0 or "data" not in value:
             self._credential = ""
             raise WebUIError("NapCat 登录接口暂不可用，请刷新或打开后台管理界面。")
         return value["data"]
 
+    def _remember_account(self, client: httpx.Client) -> None:
+        """首次在线后通过上游配置接口记住账号，不保存密码或覆盖已有选择。"""
+        if self._auto_login_configured:
+            return
+        configured = self._post(client, "/api/QQLogin/GetQuickLoginQQ", {})
+        if not isinstance(configured, str):
+            raise WebUIError("NapCat 自动登录设置无法读取。")
+        if not configured:
+            info = self._post(client, "/api/QQLogin/GetQQLoginInfo", {})
+            account = str(info.get("uin", ""))
+            if not account.isdecimal() or int(account) == 0:
+                raise WebUIError("已登录的 QQ 账号无法读取，未保存自动登录设置。")
+            self._post(client, "/api/QQLogin/SetQuickLoginQQ", {"uin": account})
+        self._auto_login_configured = True
+
     def login(self, *, refresh: bool = False) -> NapCatLogin:
-        """获取当前扫码状态；只在用户请求刷新时更换二维码，不触发 QQ 登录。"""
+        """获取扫码状态，首次在线记住缺省账号；仅显式刷新时更换二维码。"""
         with self._lock:
             try:
                 if not self.owned():
@@ -72,6 +95,8 @@ class NapCatWebUI:
                     if refresh and not data.get("isLogin"):
                         self._post(client, "/api/QQLogin/RefreshQRcode", {})
                         data = self._post(client, "/api/QQLogin/CheckLoginStatus", {})
+                    if data.get("isLogin") is True and data.get("coreReady") is True:
+                        self._remember_account(client)
                 if data.get("isLogin") is True and data.get("coreReady") is True:
                     return NapCatLogin("online")
                 phase = data.get("loginPhase")

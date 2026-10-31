@@ -10,12 +10,12 @@
 
 ## 一键安装
 
-当前发布版本为 **0.6.1**，命令始终读取下载站 `latest.json` 中的可用版本。
+当前发布版本为 **0.6.2**，命令始终读取下载站 `latest.json` 中的可用版本。
 
-0.6.1 新增长期互动演化及管理能力、本机 ComfyUI 启动入口，并改进工作流处理。
-从 0.6.0 更新前停服备份，启动时自动执行适用演化增量。
-[本版升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.6.1.md) 与
-[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.6.1-sql.zip) 提供完整升级信息。
+0.6.2 将 NapCat 改为独立 Node 运行方式，首次登录后记住账号，后续启动尝试快速登录。
+从已完成数据库升级的 0.6.1 更新无需新增 SQL 迁移，保留配置、数据库和登录资料。
+[本版升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.6.2.md) 与
+[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.6.2-sql.zip) 提供完整升级信息。
 
 0.5.5 增加长期记忆版本、来源、冲突与遗忘管理，并统一模型身份与选择界面。
 从 0.5.4 升级前须停服备份，按

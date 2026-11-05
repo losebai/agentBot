@@ -13,6 +13,13 @@ DEFAULT_MULTI_REPLY_PROMPT = (
     "按自然聊天语义决定是否分成多条消息；简短回答只用一条，不为凑数拆句。"
     "每条应表达完整意思，不拆断代码块、引用或列表，不重复内容，不输出内部过程。"
 )
+PLAIN_REPLY_PROMPT = (
+    "[QQ 单条回复协议]\n"
+    "本轮最终聊天回复直接输出可发送的正文，以本轮协议为准。"
+    "不要为整条回复添加 JSON 字符串、数组、对象、花括号或首尾引号包装。"
+    "正文中必要的引用、代码和用户要求展示的数据格式照常保留。"
+    "工具调用仍使用原生工具协议，不把工具参数写成最终回复。"
+)
 
 
 def build_multi_reply_prompt(config: "RuntimeConfig") -> str:
@@ -49,10 +56,25 @@ def parse_multi_reply(text: str, maximum: int) -> tuple[str, ...]:
 
 
 def join_reply_array(text: str) -> str:
-    """关闭分条时解码字符串、数组及已确认的单字段包装，其他结构保持原样。"""
+    """关闭分条时解码消息包装；兼容花括号包单个字符串，保留真实对象和正文引用。"""
     try:
         messages = json.loads(text)
     except (ValueError, RecursionError):
+        stripped = text.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            # 已确认的 {"正文"} 并非 JSON 对象；内部必须完整解析为单个字符串。
+            # 不用 strip('{}\"')，避免损坏正文中的花括号、转义或真实键值结构。
+            stripped = stripped[1:-1].strip()
+            try:
+                message = json.loads(stripped)
+            except (ValueError, RecursionError):
+                pass
+            else:
+                return message if isinstance(message, str) else text
+        # 中文引号不是 JSON；只识别整条单对包装，避免改写“甲”与“乙”等正文引用。
+        if (stripped.startswith("“") and stripped.endswith("”")
+                and not any(mark in stripped[1:-1] for mark in ("“", "”"))):
+            return stripped[1:-1]
         # 此模式允许自由文本，解析失败不是协议错误，继续使用原有普通回复规则。
         return text
     if isinstance(messages, str):

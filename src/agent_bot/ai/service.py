@@ -9,6 +9,7 @@ from contextlib import aclosing, asynccontextmanager
 from datetime import datetime, timezone
 
 from agent_bot.ai.catalog import AiCatalog
+from agent_bot.ai.context import DEFAULT_CONTEXT_MAX_CHARS
 from agent_bot.ai.contracts import (
     AiCompletion,
     AiEvent,
@@ -41,11 +42,15 @@ class AiService:
         providers: Mapping[ProviderProtocol, TextProvider],
         *,
         max_concurrent_requests: int = 8,
+        maximum_context_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
     ):
-        """注入目录、记录与协议供应商，模型发现与生成共用并发预算。"""
+        """注入目录、协议供应商及服务端上下文预算，模型发现与生成共用并发限制。"""
         self.catalog, self.sessions, self.credentials = catalog, sessions, credentials
         self.providers = providers
         self._maximum = max_concurrent_requests
+        if maximum_context_chars <= 0:
+            raise ValueError("context character limit must be positive")
+        self.maximum_context_chars = maximum_context_chars
         self._active = 0
         self._active_requests = 0
         self._closed = False
@@ -100,7 +105,9 @@ class AiService:
                 self._active_requests -= 1
 
     async def _prepare(self, request: TextRequest):
-        """从数据库固定本次调用的模型、地址和凭据，不跨请求缓存配置。"""
+        """先检查运行快照中的总上下文预算，再固定本次模型、地址和凭据。"""
+        if sum(len(message.content) for message in request.messages) > self.maximum_context_chars:
+            raise AiError("AI_CONTEXT_TOO_LARGE", status_code=422)
         resolved = await self.catalog.resolve(request.model)
         provider = self.providers.get(resolved.provider.protocol)
         if provider is None:

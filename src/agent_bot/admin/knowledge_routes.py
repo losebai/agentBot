@@ -4,7 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Path, Query
 
-from agent_bot.ai.contracts import Page
+from agent_bot.ai.contracts import CatalogPage, Page
 from agent_bot.database_pool import finish_database_write
 from agent_bot.integrations.tagged_memory_store import (
     TaggedMemoryCapacityError,
@@ -61,6 +61,7 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
         read_only = action in {
             "admin_list", "admin_get", "admin_revisions", "admin_conflicts",
             "admin_tags", "admin_scopes",
+            "admin_reviews",
         }
         async with runtime.lease(read_only=read_only):
             store = getattr(runtime, "tagged_memory_store", None)
@@ -106,7 +107,7 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
 
     @router.get("/knowledge", response_model=Page[KnowledgeView])
     async def list_knowledge(
-        limit: int = Query(20, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = Query(None, max_length=4096),
         query: str = Query("", max_length=200),
         tag: str = Query("", max_length=64),
@@ -145,10 +146,11 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
         """仅返回有效知识的主题计数。"""
         return await knowledge("tags")
 
-    @router.get("/memories", response_model=Page[MemoryView])
+    @router.get("/memories", response_model=CatalogPage[MemoryView])
     async def list_memories(
-        limit: int = Query(20, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = Query(None, max_length=4096),
+        page: int | None = Query(None, ge=1),
         query: str = Query("", max_length=200),
         tag: str = Query("", max_length=64),
         scope: MemoryScope | None = None,
@@ -163,6 +165,7 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
             "admin_list",
             limit=limit,
             cursor=cursor,
+            page=page,
             query=query.strip(),
             tag=normalized_tag(tag),
             scope=scope,
@@ -177,6 +180,14 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
     async def create_memory(body: MemoryCreate):
         """重复事实由存储去重，已有键冲突不通过换键或恢复绕开。"""
         return await memory("admin_create", body)
+
+    @router.get("/memory-reviews")
+    async def memory_reviews(
+        limit: int = Query(30, ge=1, le=100),
+        before: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    ):
+        """复盘只向已认证管理员提供，日期游标支持逐页追踪历史快照。"""
+        return await memory("admin_reviews", limit=limit, before=before)
 
     @router.post("/memories/merge-preview")
     async def preview_memory_merge(body: MemoryMerge):
@@ -216,14 +227,15 @@ def install_knowledge_routes(router: APIRouter, runtime) -> None:
         """保留未提交字段；陈旧版本返回冲突而不自动覆盖当前事实。"""
         return await memory("admin_update", id, body)
 
-    @router.get("/memories/{id}/revisions", response_model=Page[MemoryRevisionView])
+    @router.get("/memories/{id}/revisions", response_model=CatalogPage[MemoryRevisionView])
     async def memory_revisions(
         id: int = Path(ge=1),
-        limit: int = Query(20, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = Query(None, max_length=4096),
+        page: int | None = Query(None, ge=1),
     ):
         """版本原文仅供管理认证审计，不暴露给 QQ 历史读取工具。"""
-        return await memory("admin_revisions", id, limit=limit, cursor=cursor)
+        return await memory("admin_revisions", id, limit=limit, cursor=cursor, page=page)
 
     @router.get("/memories/{id}/conflicts", response_model=Page[MemoryView])
     async def memory_conflicts(id: int = Path(ge=1)):

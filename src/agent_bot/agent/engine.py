@@ -21,6 +21,7 @@ from agent_bot.agent.contracts import (
 from agent_bot.agent.graph import build_agent_graph
 from agent_bot.agent.tools.langchain import LangChainTools
 from agent_bot.agent.tools.runtime import BoundTools
+from agent_bot.ai.context import DEFAULT_CONTEXT_MAX_CHARS
 from agent_bot.media.contracts import MediaScope, ValidatedImage
 
 if TYPE_CHECKING:
@@ -44,6 +45,8 @@ class PreparedRun:
     model_router: AgentModelRouter | None = None
     # 固定表达建议独立于管理员角色预算，仍受图中的总提示预算约束。
     evolution_prompt: str = ''
+    # 服务端运行快照决定预算；不能从管理对话或模型参数覆盖。
+    maximum_context_chars: int = DEFAULT_CONTEXT_MAX_CHARS
 
 
 class AgentEngine:

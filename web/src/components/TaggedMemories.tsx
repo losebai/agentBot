@@ -1,7 +1,7 @@
 import { ChoiceSelect } from './ChoiceSelect';
 import { Alert, Button, Tag } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Page } from '../ai-types';
+import type { CatalogPage } from '../ai-types';
 import { errorMessage } from '../api';
 import { KnowledgeApi } from '../knowledge-api';
 import type { MemoryEntry, MemoryFilters, MemoryKind, MemoryScope, MemoryScopeInfo, MemoryStatus, TagCount } from '../knowledge-types';
@@ -10,6 +10,7 @@ import { MemoryBatchDialog, type MemoryBatch } from './MemoryBatchDialog';
 import { MemoryDetail } from './MemoryDetail';
 import { MemoryEditor } from './MemoryEditor';
 import { memoryKindNames, memoryScopeLabel, memoryScopeNames, memorySourceNames, memoryStatusNames } from './MemoryFacts';
+import { RecordPagination } from './RecordPagination';
 
 const emptyFilters: MemoryFilters = {query: '', tag: '', scope: '', scope_id: '', topic: '', kind: '', status: ''};
 
@@ -17,9 +18,9 @@ const emptyFilters: MemoryFilters = {query: '', tag: '', scope: '', scope_id: ''
 export function TaggedMemories({token}: {token: string}) {
   const api = useMemo(() => new KnowledgeApi(token), [token]);
   const [filters, setFilters] = useState<MemoryFilters>(emptyFilters), [filterDraft, setFilterDraft] = useState<MemoryFilters>(emptyFilters);
-  const [page, setPage] = useState<Page<MemoryEntry>>({items: [], next_cursor: null});
+  const [page, setPage] = useState<CatalogPage<MemoryEntry>>({items: [], next_cursor: null, total: 0});
   const [tags, setTags] = useState<TagCount[]>([]), [scopes, setScopes] = useState<MemoryScopeInfo[]>([]);
-  const [cursor, setCursor] = useState<string>(), [history, setHistory] = useState<(string | undefined)[]>([]);
+  const [pageNumber, setPageNumber] = useState(1), [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
   const [detail, setDetail] = useState<number>(), [editor, setEditor] = useState<{id?: number}>();
   const [checked, setChecked] = useState<number[]>([]), [batch, setBatch] = useState<MemoryBatch>();
@@ -38,20 +39,20 @@ export function TaggedMemories({token}: {token: string}) {
     async function load() {
       try {
         const [records, catalog, owners] = await Promise.all([
-          api.listMemories(filters, cursor, controller.signal), api.memoryTags(filters, controller.signal), api.memoryScopes(controller.signal),
+          api.listMemories(filters, undefined, controller.signal, {page: pageNumber, limit: pageSize}), api.memoryTags(filters, controller.signal), api.memoryScopes(controller.signal),
         ]);
-        if (!controller.signal.aborted) { setPage(records); setTags(catalog); setScopes(owners); }
+        if (!controller.signal.aborted) { setPage(records); setTags(catalog); setScopes(owners); const last=Math.max(1,Math.ceil(records.total/pageSize)); if(pageNumber>last)setPageNumber(last); }
       } catch (failure) { if (!controller.signal.aborted) setError(errorMessage(failure)); }
       finally { if (!controller.signal.aborted) setLoading(false); }
     }
     void load();
     return () => controller.abort();
-  }, [api, filters, cursor, refresh]);
+  }, [api, filters, pageNumber, pageSize, refresh]);
 
   /** 写操作成功后回第一页读取当前快照，不在客户端推测新的版本或来源。 */
   function saved() {
     setEditor(undefined); setBatch(undefined); setDeleting(undefined); setDetail(undefined);
-    setCursor(undefined); setHistory([]); setChecked([]); setRefresh(value => value + 1);
+    setPageNumber(1); setChecked([]); setRefresh(value => value + 1);
   }
 
   /** 遗忘只提交看到的版本，冲突或失败时保持确认框并展示服务端原因。 */
@@ -72,7 +73,7 @@ export function TaggedMemories({token}: {token: string}) {
     </div><div className="heading-actions"><Button loading={loading} onClick={() => setRefresh(value => value + 1)}>刷新</Button>
       <Button type="primary" disabled={loading} onClick={() => setEditor({})}>新增记忆</Button></div></div>
     {error && <Alert type="error" showIcon message={error} className="notice" />}
-    <form className="record-filter" onSubmit={event => { event.preventDefault(); setCursor(undefined); setHistory([]); setFilters({...filterDraft}); }}>
+    <form className="record-filter" onSubmit={event => { event.preventDefault(); setPageNumber(1); setFilters({...filterDraft}); }}>
       <label>关键词<input maxLength={200} value={filterDraft.query} onChange={event => setFilterDraft({...filterDraft, query: event.target.value})} /></label>
       <label>标签<ChoiceSelect aria-label="标签" value={filterDraft.tag} onChange={event => setFilterDraft({...filterDraft, tag: event})}>
         <option value="">全部标签</option>{tags.map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}（{tag.count}）</option>)}</ChoiceSelect></label>
@@ -116,8 +117,8 @@ export function TaggedMemories({token}: {token: string}) {
         </div></td>
       </tr>;
     })}</tbody></table>{!page.items.length && <p className="empty-list">{loading ? '正在加载…' : '暂无符合条件的记忆。'}</p>}</div>
-    <div className="catalog-pagination"><Button disabled={loading || !history.length} onClick={() => { setCursor(history.at(-1)); setHistory(history.slice(0, -1)); }}>上一页</Button>
-      <Button disabled={loading || !page.next_cursor} onClick={() => { setHistory([...history, cursor]); setCursor(page.next_cursor!); }}>下一页</Button></div>
+    <RecordPagination current={pageNumber} pageSize={pageSize} total={page.total} loading={loading}
+      hasNext={Boolean(page.next_cursor)} onChange={(number,size)=>{setPageNumber(number);setPageSize(size);}}/>
     {editor && <MemoryEditor api={api} id={editor.id} scopes={scopes} tags={tags} onClose={() => setEditor(undefined)} onSaved={saved} />}
     {detail !== undefined && <MemoryDetail key={detail} api={api} id={detail} onClose={() => setDetail(undefined)} onChanged={saved} />}
     {batch && <MemoryBatchDialog api={api} batch={batch} onClose={() => setBatch(undefined)} onSaved={saved} />}

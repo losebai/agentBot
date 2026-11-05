@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 import pymysql
 
 from agent_bot.ai.contracts import (
+    CatalogPage,
     CatalogReadiness,
     ModelCreate,
     ModelImportResult,
     ModelUpdate,
     ModelView,
-    Page,
     ProviderCreate,
     ProviderUpdate,
     ProviderView,
@@ -35,6 +35,7 @@ _COLUMNS = {
         "name",
         "protocol",
         "base_url",
+        "user_agent",
         "credential",
         "credential_required",
         "enabled",
@@ -98,9 +99,13 @@ class AiCatalog(AiDatabase):
             else ProviderView.model_validate(row_values(row, ProviderView))
         )
 
-    async def _list(self, kind: str, limit: int, cursor: str | None, provider_id=None):
-        """按稳定主键分页并批量读取媒体能力。"""
+    async def _list(
+        self, kind: str, limit: int, cursor: str | None, provider_id=None, page: int | None = None
+    ):
+        """目录选择器使用稳定游标，管理页面使用带总数的页码，两者不能混用。"""
         page_limit(limit)
+        if page is not None and (isinstance(page, bool) or page < 1 or cursor is not None):
+            raise AiError("AI_INVALID_PAGE", status_code=422)
         try:
             after = 0 if cursor is None else int(cursor)
             if after < 0:
@@ -110,13 +115,31 @@ class AiCatalog(AiDatabase):
 
         def read(connection):
             """分页与能力查询保持在一次数据库事务中。"""
-            rows = query(
+            provider_filter = " WHERE provider_id=%s" if provider_id is not None else ""
+            total = query(
                 connection,
-                f"SELECT * FROM {_TABLES[kind]} WHERE id>%s"
-                + (" AND provider_id=%s" if provider_id is not None else "")
-                + " ORDER BY id LIMIT %s",
-                (after, provider_id, limit + 1) if provider_id is not None else (after, limit + 1),
-            )
+                f"SELECT COUNT(*) AS total FROM {_TABLES[kind]}" + provider_filter,
+                (provider_id,) if provider_id is not None else (),
+                one=True,
+            )["total"]
+            if page is None:
+                rows = query(
+                    connection,
+                    f"SELECT * FROM {_TABLES[kind]} WHERE id>%s"
+                    + (" AND provider_id=%s" if provider_id is not None else "")
+                    + " ORDER BY id LIMIT %s",
+                    (after, provider_id, limit + 1)
+                    if provider_id is not None
+                    else (after, limit + 1),
+                )
+            else:
+                rows = query(
+                    connection,
+                    f"SELECT * FROM {_TABLES[kind]}" + provider_filter
+                    + " ORDER BY id LIMIT %s OFFSET %s",
+                    ((provider_id,) if provider_id is not None else ())
+                    + (limit + 1, (page - 1) * limit),
+                )
             if kind == "model":
                 provider_ids = tuple({row["provider_id"] for row in rows})
                 providers = query(
@@ -134,26 +157,28 @@ class AiCatalog(AiDatabase):
                         provider_name=names[row["provider_id"]],
                         media=capabilities.get(row["id"], {}), media_initialized=initialized,
                     )
-            return rows
+            return rows, total
 
-        rows = await self.run(read)
-        return Page[_VIEW[kind]](
+        rows, total = await self.run(read)
+        return CatalogPage[_VIEW[kind]](
             items=[
                 _VIEW[kind].model_validate(row_values(row, _VIEW[kind])) for row in rows[:limit]
             ],
             next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
+            total=total,
         )
 
     async def list_providers(
-        self, limit: int = 50, cursor: str | None = None
-    ) -> Page[ProviderView]:
-        return await self._list("provider", limit, cursor)
+        self, limit: int = 10, cursor: str | None = None, page: int | None = None
+    ) -> CatalogPage[ProviderView]:
+        return await self._list("provider", limit, cursor, page=page)
 
     async def list_models(
-        self, limit: int = 50, cursor: str | None = None, provider_id=None
-    ) -> Page[ModelView]:
+        self, limit: int = 10, cursor: str | None = None, provider_id=None,
+        page: int | None = None,
+    ) -> CatalogPage[ModelView]:
         """按供应商过滤已登记模型，避免相同上游 ID 的服务串用。"""
-        return await self._list("model", limit, cursor, provider_id)
+        return await self._list("model", limit, cursor, provider_id, page)
 
     async def get_provider(self, id: int, expected_revision: int):
         """管理员可以检查停用供应商，但必须基于当前版本发现模型。"""
@@ -168,7 +193,7 @@ class AiCatalog(AiDatabase):
         return await self.run(read)
 
     async def import_models(self, provider_id, body):
-        """事务内保留已登记项；同步可显式报告别名冲突，严格导入仍整批回滚。"""
+        """批量查重与写入减少同步往返；保留已登记项，严格导入仍整批回滚。"""
 
         def write(connection):
             """沿用目录写入的供应商加锁顺序，保护导入依据的版本。"""
@@ -176,39 +201,59 @@ class AiCatalog(AiDatabase):
             provider = self._get(connection, "provider", provider_id, lock=True)
             if provider.revision != body.expected_revision:
                 raise AiError("AI_CONFIG_CONFLICT", status_code=409)
-            imported, skipped, conflicts = [], [], []
+            imported, skipped, conflicts, pending = [], [], [], []
             stamp = datetime.now(timezone.utc).replace(tzinfo=None)
+            names = tuple(item.upstream_model for item in body.models)
+            existing = {row["upstream_model"] for row in query(
+                connection,
+                "SELECT upstream_model FROM agent_bot_ai_model WHERE provider_id=%s "
+                f"AND upstream_model IN ({','.join('%s' for _ in names)})",
+                (provider_id, *names),
+            )}
+            # 只检查仍待导入项的显式旧别名；已存在的模型优先跳过，不改其配置。
+            aliases = tuple(item.alias for item in body.models
+                            if item.upstream_model not in existing and item.alias is not None)
+            occupied = {row["alias"] for row in query(
+                connection,
+                f"SELECT alias FROM agent_bot_ai_model WHERE alias IN "
+                f"({','.join('%s' for _ in aliases)})",
+                aliases,
+            )} if aliases else set()
             for item in body.models:
-                exists = query(
-                    connection,
-                    "SELECT id FROM agent_bot_ai_model WHERE provider_id=%s AND upstream_model=%s",
-                    (provider_id, item.upstream_model),
-                    one=True,
-                )
-                if exists:
+                if item.upstream_model in existing:
                     skipped.append(item.upstream_model)
                     continue
-                # 仅检查旧客户端显式提供的别名；新导入始终保存 NULL。
-                occupied = query(
-                    connection,
-                    "SELECT id FROM agent_bot_ai_model WHERE alias=%s",
-                    (item.alias,),
-                    one=True,
-                ) if item.alias is not None else None
-                if occupied:
+                if item.alias in occupied:
                     if not body.skip_alias_conflicts:
                         raise AiError("AI_MODEL_ALIAS_CONFLICT", status_code=409)
                     conflicts.append(item)
                     continue
+                pending.append(item)
+            if pending:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         "INSERT INTO agent_bot_ai_model "
                         "(alias,upstream_model,provider_id,enabled,revision,created_at,updated_at) "
-                        "VALUES (%s,%s,%s,0,1,%s,%s)",
-                        (item.alias, item.upstream_model, provider_id, stamp, stamp),
+                        "VALUES " + ",".join("(%s,%s,%s,0,1,%s,%s)" for _ in pending),
+                        tuple(value for item in pending for value in (
+                            item.alias, item.upstream_model, provider_id, stamp, stamp,
+                        )),
                     )
-                    id = cursor.lastrowid
-                imported.append(self._get(connection, "model", id))
+                # 不推算批量自增 ID；按供应商与原始名称重读，结果仍按请求顺序返回。
+                rows = query(
+                    connection,
+                    "SELECT * FROM agent_bot_ai_model WHERE provider_id=%s "
+                    f"AND upstream_model IN ({','.join('%s' for _ in pending)})",
+                    (provider_id, *(item.upstream_model for item in pending)),
+                )
+                capabilities, initialized = read_media_batch(
+                    connection, [row["id"] for row in rows],
+                )
+                saved = {row["upstream_model"]: ModelView.model_validate({
+                    **row, "provider_name": provider.name,
+                    "media": capabilities.get(row["id"], {}), "media_initialized": initialized,
+                }) for row in rows}
+                imported = [saved[item.upstream_model] for item in pending]
             return ModelImportResult(
                 provider_id=provider_id,
                 revision=provider.revision,
@@ -264,12 +309,11 @@ class AiCatalog(AiDatabase):
             current = self._get(connection, kind, id, lock=True)
             if current.revision != body.expected_revision:
                 raise AiError("AI_CONFIG_CONFLICT", status_code=409)
-            validated = _CREATE[kind].model_validate(
-                {
-                    **current.model_dump(include=set(_CREATE[kind].model_fields)),
-                    **changes,
-                }
-            )
+            snapshot = current.model_dump(include=set(_CREATE[kind].model_fields))
+            if kind == "provider":
+                # 公开序列化会排除密钥；事务内校验必须带上私有快照，才能区分保留和清除。
+                snapshot["credential"] = current.credential
+            validated = _CREATE[kind].model_validate({**snapshot, **changes})
             values = validated.model_dump(include=set(_COLUMNS[kind]))
             if kind == "provider":
                 write_credential(values, body, current)

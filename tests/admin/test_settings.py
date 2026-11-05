@@ -99,6 +99,26 @@ def test_robot_system_prompt_can_be_explicitly_cleared(admin_store, admin_runtim
     assert field.value == ""
 
 
+@pytest.mark.parametrize("maximum", [1, 120_000, 500_000, 2_000_000])
+def test_context_budget_is_saved_as_runtime_setting(admin_store, admin_runtime, maximum):
+    """上下文正整数预算可超过旧硬编码值，保存后等待现有热刷新而非进程重启。"""
+    manager = service(admin_store, admin_runtime)
+    result = manager.update(update(1, chat_llm_context_max_chars=maximum))
+    field = next(f for f in result.fields if f.name == "chat_llm_context_max_chars")
+    assert field.kind == "number" and field.value == maximum
+    assert not field.restart_required and not field.nullable
+    assert admin_store.load().config.chat_llm_context_max_chars == maximum
+    assert result.database_revision == 2 and result.applied_revision == 1
+
+
+@pytest.mark.parametrize("value", [0, -1, None, 1.5])
+def test_context_budget_rejects_invalid_values(admin_store, admin_runtime, value):
+    """上下文预算必须是正整数，不能把空值或非整数静默转换为默认值。"""
+    with pytest.raises(ValidationError):
+        service(admin_store, admin_runtime).update(update(1, chat_llm_context_max_chars=value))
+    assert admin_store.load().revision == 1
+
+
 def test_conflicting_revision_preserves_saved_configuration(admin_store, admin_runtime):
     from agent_bot.settings import SettingsRevisionConflictError
 

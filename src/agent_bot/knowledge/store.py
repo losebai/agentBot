@@ -118,7 +118,7 @@ class KnowledgeStore(AiDatabase):
         return await self.run(read)
 
     async def list(
-        self, *, limit: int = 20, cursor: str | None = None, query: str = "", tag: str = "",
+        self, *, limit: int = 10, cursor: str | None = None, query: str = "", tag: str = "",
         page: int | None = None,
     ) -> Page[KnowledgeView]:
         """兼容筛选绑定的旧游标与直接页码；分页请求不重复统计总数。"""

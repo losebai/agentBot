@@ -88,6 +88,8 @@ class EmbeddingClient:
                       model.id, model.revision, model.upstream_model)
         model_key = hashlib.sha256(json.dumps(descriptor).encode()).hexdigest()
         headers = {}
+        if provider.user_agent:
+            headers["User-Agent"] = provider.user_agent
         if provider.credential is not None:
             headers["Authorization"] = f"Bearer {provider.credential.get_secret_value()}"
         ollama = provider.protocol == "ollama"

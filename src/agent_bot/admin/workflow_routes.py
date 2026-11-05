@@ -56,9 +56,11 @@ def install_workflow_routes(router: APIRouter, runtime, settings: SettingsServic
             raise WorkflowManagementError("WORKFLOW_NOT_READY", status_code=503)
         return value
 
-    def catalog(after: str | None = None) -> WorkflowCatalog:
+    def catalog(
+        after: str | None = None, page: int | None = None, limit: int = 10
+    ) -> WorkflowCatalog:
         """返回当前目录和持久默认项；默认保存版本与应用版本由配置页区分。"""
-        definitions, next_cursor = store().list_page(after=after)
+        definitions, next_cursor, total = store().list_page(after=after, page=page, limit=limit)
         snapshot = settings.store.load()
         return WorkflowCatalog(
             items=[_summary(item) for item in definitions],
@@ -66,15 +68,17 @@ def install_workflow_routes(router: APIRouter, runtime, settings: SettingsServic
             settings_revision=snapshot.revision,
             directory_configured=bool(runtime.config.chat_local_workflow_directory),
             next_cursor=next_cursor,
+            total=total,
         )
 
     @router.get("/workflows", response_model=WorkflowCatalog)
     async def list_workflows(
         after: str | None = Query(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,127}$"),
+        page: int | None = Query(None, ge=1), limit: int = Query(10, ge=1, le=100),
     ) -> WorkflowCatalog:
         """数据库目录可在刷新排空时读取，不访问 Comfy 服务或扫描磁盘。"""
         async with runtime.lease(read_only=True):
-            return await asyncio.to_thread(catalog, after)
+            return await asyncio.to_thread(catalog, after, page, limit)
 
     @router.post("/workflows/import", response_model=WorkflowImportResult)
     async def import_workflow(request: Request) -> WorkflowImportResult:

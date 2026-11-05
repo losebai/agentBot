@@ -28,7 +28,6 @@ export function SettingsModelSelect({ id, value, readOnly, nullable, directory, 
     {missing && !busy && <small id={`${id}-help`}>{ambiguous ? '当前配置存在模型身份歧义，请先完成模型身份升级。' : error
       ? '当前配置尚未确认，请重新打开模型选择框。'
       : current?.enabled && vision && !current.media?.vision_enabled ? '当前配置的模型未开启视觉能力，请选择支持识图的模型。'
-      : page.next_cursor ? '当前配置不在已加载的启用模型中，请加载更多或重新选择。'
-        : '当前配置的模型未启用或不存在，请重新选择。'}</small>}
+      : '当前配置的模型未启用或不存在，请重新选择。'}</small>}
   </>;
 }

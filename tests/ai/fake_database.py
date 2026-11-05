@@ -77,6 +77,7 @@ class FakeDatabase:
         PRAGMA foreign_keys=ON;
         CREATE TABLE agent_bot_ai_provider (
             id INTEGER PRIMARY KEY, name TEXT UNIQUE, protocol TEXT, base_url TEXT,
+            user_agent TEXT NOT NULL DEFAULT '',
             credential TEXT, credential_required INTEGER NOT NULL DEFAULT 0,
             enabled INTEGER, description TEXT, revision INTEGER,
             created_at TEXT, updated_at TEXT);
@@ -92,6 +93,10 @@ class FakeDatabase:
         # 统一记录参与原存储事务，替身同样安装真实增量结构。
         self.connection.executescript(
             Path('sql/2026-10-13-unified-call-records.sqlite.sql').read_text(encoding='utf-8')
+        )
+        # 分类生成列及索引与真实升级一致，测试不再依赖运行时 JSON 分类表达式。
+        self.connection.executescript(
+            Path('sql/call-record-classification.sqlite.sql').read_text(encoding='utf-8')
         )
 
     def connect(self, **kwargs):

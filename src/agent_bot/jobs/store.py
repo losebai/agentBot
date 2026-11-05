@@ -8,6 +8,9 @@ from agent_bot.ai.database import AiDatabase, query
 from agent_bot.ai.errors import AiError
 from agent_bot.jobs.contracts import JOB_ID, QQ_ID, JobRecord, JobView
 
+LEASE_SECONDS = 360
+MAX_ATTEMPTS = 3
+
 
 class JobStore(AiDatabase):
     """所有写入均沿用等待线程完成的事务边界，不自动执行 DDL。"""
@@ -24,7 +27,10 @@ class JobStore(AiDatabase):
     def _view(self, row, *, internal=False, summary=False):
         """按明确白名单构造对外视图，内部字段不进入工具结果。"""
         model = JobRecord if internal else JobView
-        values = {key: row[key] for key in model.model_fields}
+        values = {key: row[key] for key in model.model_fields if key != 'autonomy_profile_id'}
+        reference = row.get('model', '')
+        if reference.startswith('autonomy:'):
+            values['autonomy_profile_id'] = reference.split(':')[1]
         if summary:
             values.update(prompt=values["prompt"][:256], result=None)
         return model.model_validate(values)
@@ -158,68 +164,109 @@ class JobStore(AiDatabase):
                     "WHERE id=%s AND owner_key=%s AND status IN ('PENDING','RUNNING')",
                     (self.now(), id, owner.owner_key),
                 )
+                cursor.execute(
+                    "UPDATE agent_bot_job_attempt SET status='CANCELLED',completed_at=%s "
+                    "WHERE job_id=%s AND status='RUNNING'",
+                    (self.now(), id),
+                )
             return self._view(self._owned(connection, owner, id))
 
         return await self.run(write, write=True)
 
     async def claim_due(self):
-        """先标记旧中断任务，再以条件更新抢占最多一个到期任务。"""
+        """领取到期或租约过期的任务，中断最多恢复至三次执行。"""
         now = self.now()
 
         def write(connection):
             """数据库决定唯一执行者，模型调用在提交抢占后开始。"""
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "UPDATE agent_bot_job SET status='FAILED',error_code='EXECUTION_INTERRUPTED',"
-                    "completed_at=%s WHERE status='RUNNING' AND started_at<%s",
-                    (now, now - timedelta(minutes=6)),
-                )
             row = query(
                 connection,
-                "SELECT * FROM agent_bot_job WHERE status='PENDING' AND run_at<=%s "
+                "SELECT * FROM agent_bot_job WHERE (status='PENDING' AND run_at<=%s) "
+                "OR (status='RUNNING' AND started_at<=%s) "
                 "ORDER BY run_at,id LIMIT 1 FOR UPDATE",
-                (now,),
+                (now, now - timedelta(seconds=LEASE_SECONDS)),
                 one=True,
             )
             if row is None:
                 return None
+            attempts = query(
+                connection, "SELECT id FROM agent_bot_job_attempt WHERE job_id=%s",
+                (row["id"],),
+            )
+            token = uuid.uuid4().hex
             with connection.cursor() as cursor:
-                claimed = cursor.execute(
-                    "UPDATE agent_bot_job SET status='RUNNING',started_at=%s "
-                    "WHERE id=%s AND status='PENDING' AND run_at<=%s",
-                    (now, row["id"], now),
+                cursor.execute(
+                    "UPDATE agent_bot_job_attempt SET status='INTERRUPTED',completed_at=%s,"
+                    "error_code='EXECUTION_INTERRUPTED' WHERE job_id=%s AND status='RUNNING'",
+                    (now, row["id"]),
                 )
-            if not claimed:
-                return None
+                if len(attempts) >= MAX_ATTEMPTS:
+                    cursor.execute(
+                        "UPDATE agent_bot_job SET status='FAILED',completed_at=%s,"
+                        "error_code='RECOVERY_LIMIT_REACHED' WHERE id=%s",
+                        (now, row["id"]),
+                    )
+                    return None
+                cursor.execute(
+                    "INSERT INTO agent_bot_job_attempt "
+                    "(id,job_id,status,started_at,lease_expires_at) "
+                    "VALUES (%s,%s,'RUNNING',%s,%s)",
+                    (token, row["id"], now, now + timedelta(seconds=LEASE_SECONDS)),
+                )
+                cursor.execute(
+                    "UPDATE agent_bot_job SET status='RUNNING',started_at=%s,"
+                    "error_code=NULL,completed_at=NULL WHERE id=%s",
+                    (now, row["id"]),
+                )
             row["status"] = "RUNNING"
+            row["lease_token"] = token
             return self._view(row, internal=True)
 
         return await self.run(write, write=True)
 
-    async def finish(self, id, *, result=None, error_code=None):
-        """只允许完成仍在执行的任务，取消状态不能被迟到结果覆盖。"""
+    async def finish(self, id, *, lease_token, result=None, error_code=None):
+        """仅有效租约能提交结果；中断回到待执行，取消和旧租约不能覆盖新状态。"""
         self._id(id)
+        self._id(lease_token)
         if error_code is None and (
             not isinstance(result, str) or not result.strip() or len(result) > 64000
         ):
             raise AiError("JOB_RESULT_INVALID", status_code=502)
 
         def write(connection):
-            """一次条件更新提交成功或固定错误，不自动重试模型。"""
+            """先锁任务再检查租约，与领取、取消共用相同锁顺序。"""
+            now = self.now()
+            job = query(connection, "SELECT status FROM agent_bot_job WHERE id=%s FOR UPDATE",
+                        (id,), one=True)
+            attempt = query(
+                connection, "SELECT id FROM agent_bot_job_attempt WHERE id=%s AND job_id=%s "
+                "AND status='RUNNING' AND lease_expires_at>%s",
+                (lease_token, id, now), one=True,
+            )
+            if job is None or job["status"] != "RUNNING" or attempt is None:
+                return False
+            interrupted = error_code == "EXECUTION_INTERRUPTED"
+            status = "PENDING" if interrupted else "FAILED" if error_code else "SUCCEEDED"
             with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE agent_bot_job_attempt SET status=%s,error_code=%s,completed_at=%s "
+                    "WHERE id=%s",
+                    ("INTERRUPTED" if interrupted else status, error_code, now, lease_token),
+                )
                 cursor.execute(
                     "UPDATE agent_bot_job SET status=%s,result=%s,error_code=%s,completed_at=%s "
                     "WHERE id=%s AND status='RUNNING'",
                     (
-                        "FAILED" if error_code else "SUCCEEDED",
+                        status,
                         None if error_code else result,
                         error_code,
-                        self.now(),
+                        None if interrupted else now,
                         id,
                     ),
                 )
+            return True
 
-        await self.run(write, write=True)
+        return await self.run(write, write=True)
 
     async def pending_results(self, bot_id, after_id=None):
         """只读读取一页成功未确认结果，不以轮询替代投递确认。"""
@@ -237,6 +284,26 @@ class JobStore(AiDatabase):
                 )
             )
         )
+
+    async def inspect(self, id):
+        """本机运维入口读取任务与执行历史，不暴露系统提示、幂等摘要或凭据。"""
+        self._id(id)
+
+        def read(connection):
+            """历史与任务在同一读事务中返回，不改变任务和投递状态。"""
+            row = query(connection, "SELECT * FROM agent_bot_job WHERE id=%s", (id,), one=True)
+            if row is None:
+                raise AiError("JOB_NOT_FOUND", status_code=404)
+            return {
+                "job": self._view(row).model_dump(mode="json", by_alias=True),
+                "delivered_at": row["delivered_at"],
+                "attempts": query(
+                    connection, "SELECT * FROM agent_bot_job_attempt WHERE job_id=%s "
+                    "ORDER BY started_at,id", (id,),
+                ),
+            }
+
+        return await self.run(read)
 
     async def acknowledge(self, bot_id, id):
         """仅机器人匹配的成功任务可幂等确认，保留历史记录。"""

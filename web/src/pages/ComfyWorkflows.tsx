@@ -6,6 +6,7 @@ import { errorMessage } from '../api';
 import { CatalogDialog } from '../components/CatalogDialog';
 import { WorkflowApi } from '../workflow-api';
 import type { WorkflowCatalog, WorkflowDetail, WorkflowMetadata, WorkflowSummary } from '../workflow-types';
+import { RecordPagination } from '../components/RecordPagination';
 
 const MAX_FILE_BYTES = 1_048_576;
 
@@ -43,7 +44,7 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
   const fileInput = useRef<HTMLInputElement>(null);
   const [catalog, setCatalog] = useState<WorkflowCatalog>();
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [pageNumber,setPageNumber]=useState(1),[pageSize,setPageSize]=useState(10);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState('');
   const [status, setStatus] = useState('all');
@@ -54,13 +55,14 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
   const [editNotice, setEditNotice] = useState('');
   const [preview, setPreview] = useState<WorkflowDetail>();
   const [jsonFormat, setJsonFormat] = useState<'api' | 'ui'>('api');
-  const blocked = busy || loading || loadingMore || disabled;
+  const blocked = busy || loading || disabled;
 
   /** 读取最新目录，失败交给调用者显示，避免保存成功后静默留下过时列表。 */
   async function reload(signal: AbortSignal) {
-    const result = await api.list(undefined, signal);
+    const result = await api.page(pageNumber, pageSize, signal);
     signal.throwIfAborted();
     setCatalog(result);
+    const last=Math.max(1,Math.ceil(result.total/pageSize));if(pageNumber>last)setPageNumber(last);
   }
 
   useEffect(() => {
@@ -72,7 +74,7 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
     }).finally(() => { if (!current.signal.aborted) setLoading(false); });
     // 页面离开后停止等待 HTTP 与文件读取；已保存的修改由下次目录读取反映。
     return () => current.abort();
-  }, [api]);
+  }, [api,pageNumber,pageSize]);
   useEffect(() => {
     onBusyChange(busy);
     return () => onBusyChange(false);
@@ -189,24 +191,6 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
     finally { if (!signal.aborted) setLoading(false); }
   }
 
-  /** 按最后一个工作流键读取下一页，重叠项保留新元数据且不重复展示。 */
-  async function loadMore() {
-    if (blocked || !catalog?.next_cursor) return;
-    const signal = controller.current!.signal;
-    setLoadingMore(true); setError('');
-    try {
-      const page = await api.list(catalog.next_cursor, signal);
-      signal.throwIfAborted();
-      setCatalog(previous => {
-        if (!previous) return page;
-        const items = new Map(previous.items.map(item => [item.workflow_key, item]));
-        for (const item of page.items) items.set(item.workflow_key, item);
-        return { ...page, items: [...items.values()] };
-      });
-    } catch (failure) { if (!signal.aborted) setError(errorMessage(failure)); }
-    finally { if (!signal.aborted) setLoadingMore(false); }
-  }
-
   const items = catalog?.items.filter(item => `${item.display_name} ${item.description}`.toLowerCase().includes(filter.toLowerCase())
     && (status === 'all' || (status === 'enabled' ? item.enabled : !item.enabled))) || [];
   const jsonContent = preview ? jsonFormat === 'api' ? preview.api_json : preview.ui_json : null;
@@ -225,9 +209,9 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
       <Button disabled={blocked || !catalog?.directory_configured} onClick={() => void mutate(async signal => {
         const result = await api.sync(signal); return `已同步 ${result.imported} 个工作流。`;
       })}>同步配置目录</Button>
-      <Button disabled={busy || loadingMore || disabled} loading={loading} onClick={() => void refresh()}>刷新工作流</Button>
+      <Button disabled={busy || disabled} loading={loading} onClick={() => void refresh()}>刷新工作流</Button>
     </div>
-    {catalog && <div className="workflow-pagination-info"><span>已加载 {catalog.items.length} 个工作流</span><span>筛选已加载工作流</span></div>}
+    {catalog && <div className="workflow-pagination-info"><span>共 {catalog.total} 个工作流</span><span>筛选当前页工作流</span></div>}
     {catalog && !catalog.directory_configured && <p className="workflow-note">尚未配置工作流目录，可先导入 JSON 文件；配置目录后重启服务即可同步。</p>}
     {loading ? <div className="loading"><Spin /></div> : <div className="workflow-list">
       {!items.length && <Empty description={catalog?.items.length ? '没有符合筛选条件的工作流' : '暂无工作流，请导入 JSON 文件或同步配置目录'} />}
@@ -255,8 +239,9 @@ export function ComfyWorkflows({ token, disabled, onSettingsChanged, onBusyChang
         </div>
       </article>)}
     </div>}
-    {catalog && <div className="workflow-pagination"><Button disabled={!catalog.next_cursor || busy || loading || disabled}
-      loading={loadingMore} onClick={() => void loadMore()}>加载更多</Button></div>}
+    {catalog && <RecordPagination current={pageNumber} pageSize={pageSize} total={catalog.total}
+      loading={loading} hasNext={Boolean(catalog.next_cursor)}
+      onChange={(number,size)=>{setPageNumber(number);setPageSize(size);}}/>}
     {editing && draft && <CatalogDialog title="编辑工作流" busy={busy} error={error}
       onCancel={() => { setEditing(undefined); setDraft(undefined); setError(''); }}>
       {error && <Button className="notice" disabled={blocked} onClick={() => void reloadEditing()}>读取最新版本并保留修改</Button>}

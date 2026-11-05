@@ -30,6 +30,7 @@ from agent_bot.services.chat_tools import (
     build_chat_tool_registry,
 )
 from agent_bot.services.conversation_queue import (
+    ConversationDeliveryPausedError,
     ConversationJob,
     ConversationJobExpiredError,
     ConversationQueueFullError,
@@ -162,6 +163,19 @@ def queued_job(**overrides: object) -> ConversationJob:
     return ConversationJob.model_validate(values)
 
 
+async def test_host_pause_prevents_queued_auto_speech_from_starting_inference(
+    monkeypatch, chat_plugin,
+):
+    """已入队的群主动发言在生成前复核总暂停，暂停期间不启动模型请求。"""
+    generate = AsyncMock()
+    monkeypatch.setattr(chat_plugin.plugin_config, "chat_active_actions_paused", True)
+    monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", generate)
+    with pytest.raises(ConversationDeliveryPausedError):
+        await chat_plugin._ConversationProcessor().generate(
+            queued_job(chatTools=(), autoSpeakMaxReplyChars=100))
+    generate.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "job_fields,operation",
@@ -200,6 +214,21 @@ async def test_failure_operation_uses_task_type_instead_of_available_tools(
     assert "private upstream body" not in composer.intents[0].model_dump_json()
 
 
+async def test_model_failure_explanation_receives_successful_tool_count(monkeypatch, chat_plugin):
+    """电脑查询成功后模型失败，独立失败说明须获得成功回执数与模型错误码。"""
+    composer = RecordingComposer()
+    monkeypatch.setattr(chat_plugin, "_reply_composer", composer)
+    monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: onebot_mock())
+    await chat_plugin._ConversationProcessor().deliver_failure(
+        queued_job(prompt="查看电脑状态"),
+        ChatAiProtocolError("private", error_code="AI_RESPONSE_INVALID", completed_tool_calls=2),
+    )
+    facts = composer.intents[0].facts
+    assert facts.completed_tool_calls == 2
+    assert facts.error_code == "AI_RESPONSE_INVALID" and facts.operation == "conversation"
+    assert "private" not in facts.model_dump_json()
+
+
 @pytest.fixture
 def multi_reply_session(monkeypatch, chat_plugin):
     """只替代 QQ 令牌租约，不连接实际 MCP 或 QQ 服务。"""
@@ -216,21 +245,31 @@ def multi_reply_session(monkeypatch, chat_plugin):
 @pytest.mark.parametrize(("answer", "expected"), [
     ('["第一句。", "第二句。", "第三句。", "第四句。"]', "第一句。第二句。第三句。第四句。"),
     ('"核心差别：\\n1. 交互\\n2. 能力"', "核心差别：\n1. 交互\n2. 能力"),
+    ('“真嘟，我刚看的就是群里的最新消息。”', '真嘟，我刚看的就是群里的最新消息。'),
+    ('{"参数不清楚就先别冲，具体型号、显卡功耗和实测散热出来再说。"}',
+     '参数不清楚就先别冲，具体型号、显卡功耗和实测散热出来再说。'),
     ('{"消息内容":"92都快九块了，加满一箱心都在滴血，95这是要奔十去啊\uff08笑\uff09"}',
      "92都快九块了，加满一箱心都在滴血，95这是要奔十去啊\uff08笑\uff09"),
 ])
+@pytest.mark.parametrize("auto_speak", [False, True])
 async def test_disabled_multi_reply_sends_decoded_messages_without_json_wrapping(
-    monkeypatch, chat_plugin, tools, multi_reply_session, answer, expected,
+    monkeypatch, chat_plugin, tools, multi_reply_session, answer, expected, auto_speak,
 ):
-    """JSON字符串、数组及已确认包装在投递前解码，工具和普通回复均只发送正文。"""
+    """普通及主动发言都指定纯正文协议，工具和无工具投递移除已确认的包装。"""
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_max_messages", 1)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(return_value=answer))
     bot = onebot_mock()
     monkeypatch.setattr(chat_plugin, "_queued_bot", lambda _: bot)
     processor = chat_plugin._ConversationProcessor()
-    job = queued_job(chatTools=tools)
+    job = queued_job(
+        chatTools=tools, autoSpeakMaxReplyChars=100 if auto_speak else None,
+        systemPromptAppend="按人设回应",
+    )
     result = await processor.generate(job)
+    prompt = chat_plugin.chat_service.generate_queued.await_args.kwargs["system_prompt_append"]
+    assert prompt.startswith("按人设回应")
+    assert "[QQ 单条回复协议]" in prompt
     assert result.reply.text == expected
     assert result.delivery_parts == (expected,)
     assert not result.multi_reply
@@ -266,11 +305,14 @@ async def test_auto_reply_removes_internal_at_before_length_limit_and_delivery(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer", ['["第一条", "第二条"]', '{"消息内容":"第一条第二条"}'])
+@pytest.mark.parametrize("answer", [
+    '["第一条", "第二条"]', '{"消息内容":"第一条第二条"}', '“第一条第二条”',
+    '{"第一条第二条"}',
+])
 async def test_disabled_multi_reply_applies_auto_speak_limit_after_join(
     monkeypatch, chat_plugin, answer,
 ):
-    """主动发言的专用上限按解码后正文计算，不先截断JSON包装。"""
+    """主动发言的专用上限按去除包装后的正文计算，不先截断 JSON 或中文引号。"""
     monkeypatch.setattr(chat_plugin.plugin_config, "chat_multi_reply_enabled", False)
     monkeypatch.setattr(chat_plugin.chat_service, "generate_queued", AsyncMock(
         return_value=answer,

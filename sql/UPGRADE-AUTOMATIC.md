@@ -1,5 +1,40 @@
 # 启动数据库版本检测与自动升级
 
+## 调用记录分类索引（0.6.2）
+
+适用已具备完整统一归档表 `agent_bot_call_record` 的旧业务库。
+备份并停止共享该库的旧实例后，启动清单在既有迁移之后执行
+`call-record-classification.sql` / `call-record-classification.sqlite.sql`，
+以 `call-record-classification-v1` 登记；同版本缺少流水时也执行。
+完整新库已含相同生成列和索引，首次启动只核验结构并登记流水。
+
+只新增虚拟生成列 `system_kind` 和联合索引 `idx_call_system_time`。
+沿用原来的历史决策、指令识别规则和决策优先级，NULL 仍表示普通对话；
+不改写正文、JSON、原类型、状态或密钥。索引保存分类结果，写入与更新自动维护，
+分类计数无需逐行解析大 JSON；列表也可复用分类和时间索引。
+
+首次建立索引会扫描既有归档，耗时与记录量、JSON 大小有关，需预留升级时间。
+SQLite 原地增加虚拟列，不重建表，整个升级同一事务提交；
+MySQL DDL 隐式提交，中断后按已有列和索引恢复，不重复 ADD。
+手工执行 SQL 前须核对状态，两条增量语句不可盲目重复执行。
+缺资源或结构不匹配时停止启动，不回退到无索引的 JSON 全表计数。
+
+## 定时任务恢复租约（0.6.2）
+
+适用已具备 `agent_bot_job_owner`、`agent_bot_job` 的完整旧业务库。
+停止旧代码的所有实例并备份后，由启动清单在既有迁移之后执行
+`job-recovery.sql` / `job-recovery.sqlite.sql`，登记 `job-recovery-v1`。
+即使版本已为 0.6.2，缺少该迁移流水时仍执行；新库完整初始化脚本已含相同结构。
+
+仅新增 `agent_bot_job_attempt` 及索引和外键，不修改任务、身份、密钥或历史结果。
+未完成任务保留；旧 RUNNING 任务在原领取时间六分钟后可恢复，
+新执行开始记录租约历史，不为升级前的执行补造记录。已有 FAILED 任务不自动复活。
+正常退出可释放任务重新领取，硬中断须等租约到期；累计三次执行仍中断则停止恢复。
+恢复不保证供应商侧请求幂等，可能产生重复模型费用。
+MySQL DDL 可重入，SQLite 同一事务提交；升级失败停止启动，不扫描历史 SQL。
+
+下面为通用升级机制及既有迁移说明。
+
 正常启动 `agent-bot`、`chat` 或桌面后端时，在读取运行配置、装配插件和监听网络之前，
 检查所选业务数据库的程序版本，并按 `database_upgrade.MIGRATIONS` 的明确顺序执行适用 SQL。
 不会扫描并执行全部 SQL、归档脚本或重新运行完整初始化脚本。独立队列库不在本清单内。
@@ -111,6 +146,21 @@ UTC 日期且跨度七天、反向抵消后净支持三次才调整一档，档�
 管理端 `/evolution/records` 独立分页显示各范围的反馈、变化和重置，并支持类型与范围筛选。
 旧 `/agents/{id}/evolution` 接口继续仅作用于对应角色范围。
 完整初始化、增量和包资源一起更新，发布包缺失任一后端脚本时明确失败。
+
+## 四阶段持续智能体（0.6.3）
+
+在 `call-record-classification-v1` 之后登记 `persistent-agent-v1`，执行
+`persistent-agent.sql` / `persistent-agent.sqlite.sql`。完整 0.6.2 业务库更新至 0.6.3
+时自动执行；0.6.3 同版本缺少该流水时仍追加执行，更早部署先完成前述历史兼容起点。
+
+只新增 `agent_bot_autonomy_profile`、`agent_bot_autonomy_task`、
+`agent_bot_autonomy_episode`、`agent_bot_autonomy_proposal`、`agent_bot_autonomy_audit`
+及索引、外键。不重建旧表、不回填推测身份、不更改凭据、配置或已有任务。
+新身份默认暂停，升级本身不启动自主模型调用。两种完整初始化包含相同定义。
+
+SQLite 在升级事务内原子提交；MySQL 的 `CREATE TABLE IF NOT EXISTS` 可中断重入，
+恢复后须完整核验结构，异常同名表不会被自动删除。旧库基线仅允许缺少新增五表，
+不放宽历史业务结构要求。两种增量均为发布必需资源，缺失则构建、包检查或启动失败。
 
 ## 版本、校验和与失败
 

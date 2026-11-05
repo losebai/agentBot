@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { expect, it, vi } from 'vitest';
 import { ModelSelect } from './ModelSelect';
@@ -24,7 +24,7 @@ it('键盘选择保留 Agent 整数类型，清空提交 null，必填状态阻�
   const input = screen.getByRole('combobox', { name: '模型' });
   input.focus();
   fireEvent.keyDown(input, { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 });
-  await screen.findByRole('option', { name: '供应商 / text' });
+  await screen.findByRole('option', { name: 'text' });
   fireEvent.keyDown(input, { key: 'Enter', code: 'Enter', keyCode: 13 });
   expect(changed).toHaveBeenLastCalledWith(1);
   expect(form.checkValidity()).toBe(true);
@@ -37,9 +37,23 @@ it('图片路由明确禁用没有识图能力的模型，不触发错误选择'
   const changed = vi.fn();
   render(<ModelSelect ariaLabel="图片模型" models={models} value={null} numeric vision onChange={changed} />);
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '图片模型' }));
-  const text = await screen.findByRole('option', { name: '供应商 / text' });
+  const text = await screen.findByRole('option', { name: 'text' });
   fireEvent.click(text);
   expect(changed).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('option', { name: '供应商 / vision' }));
+  fireEvent.click(screen.getByRole('option', { name: 'vision' }));
   expect(changed).toHaveBeenLastCalledWith(2);
+});
+
+it('供应商只用于分组，上游自带前缀原样显示且不改变稳定身份', async () => {
+  const changed = vi.fn();
+  const item = { ...models[0], provider_name: 'zcode', upstream_model: 'zcode/GLM-5.3' };
+  render(<ModelSelect ariaLabel="模型" models={[item]} value="model:1" onChange={changed} />);
+  expect(screen.getByText('zcode/GLM-5.3')).toBeVisible();
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: '模型' }));
+  await waitFor(() => expect(screen.getByText('zcode', { selector: '.ant-select-item-group' })).toBeVisible());
+  const option = screen.getByRole('option', { name: 'zcode/GLM-5.3' });
+  expect(option).toHaveTextContent(/^zcode\/GLM-5.3$/);
+  expect(screen.queryByText('zcode / zcode/GLM-5.3')).not.toBeInTheDocument();
+  fireEvent.click(option);
+  expect(changed).not.toHaveBeenCalled();
 });

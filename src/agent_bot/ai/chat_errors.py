@@ -10,12 +10,14 @@ class ChatAiError(RuntimeError):
         *,
         status_code: int | None = None,
         error_code: str | None = None,
+        completed_tool_calls: int = 0,
     ) -> None:
-        """保留可安全分类的状态，避免上层解析异常文本。"""
+        """保留错误类别和成功工具回执数，避免上层解析异常或复制工具正文。"""
 
         super().__init__(message)
         self.status_code = status_code
         self.error_code = error_code
+        self.completed_tool_calls = completed_tool_calls
 
 
 class ChatAiUnavailableError(ChatAiError):

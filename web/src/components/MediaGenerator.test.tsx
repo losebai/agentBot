@@ -11,8 +11,8 @@ it('仅列出具备能力的模型，切模式取消正在生成的请求',async
     generation=options.signal;return new Promise(()=>{});
   }));
   render(<MediaGenerator token="offline"/>);
-  await chooseSelect(screen.getByRole('combobox', { name: '生成模型' }), '测试供应商 / image');
-  expect(screen.queryByRole('option',{name:'测试供应商 / plain'})).toBeNull();
+  await chooseSelect(screen.getByRole('combobox', { name: '生成模型' }), 'image');
+  expect(screen.queryByRole('option',{name:'plain'})).toBeNull();
   fireEvent.change(screen.getByLabelText('生成描述'),{target:{value:'猫'}});
   fireEvent.click(screen.getByRole('button',{name:'开始生成'}));await waitFor(()=>expect(generation).toBeDefined());
   await chooseSelect(screen.getByRole('combobox', { name: '生成类型' }), '对话音频');expect(generation!.aborted).toBe(true);

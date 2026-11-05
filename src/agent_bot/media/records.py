@@ -6,7 +6,7 @@ import json
 import re
 from datetime import datetime
 
-from agent_bot.ai.contracts import Page
+from agent_bot.ai.contracts import CatalogPage
 from agent_bot.ai.database import AiDatabase, page_limit, query
 from agent_bot.media.contracts import MediaRunDetail, MediaRunSummary
 from agent_bot.media.errors import MediaError
@@ -15,9 +15,50 @@ from agent_bot.media.errors import MediaError
 class MediaRunStore(AiDatabase):
     """运行记录可尽力保存，文件元数据独立且不可省略。"""
 
+    @staticmethod
+    def _add_model_display_names(connection, rows):
+        """按稳定引用或唯一旧别名补齐供应商名称，失效身份保留记录原值。"""
+        references = {row["model"] for row in rows}
+        ids = {
+            int(reference.removeprefix("model:"))
+            for reference in references
+            if re.fullmatch(r"model:[1-9][0-9]*", reference)
+        }
+        conditions, args = [], []
+        if ids:
+            conditions.append("m.id IN (" + ",".join("%s" for _ in ids) + ")")
+            args.extend(ids)
+        if references:
+            placeholders = ",".join("%s" for _ in references)
+            conditions.append(
+                f"(m.alias IN ({placeholders}) OR m.upstream_model IN ({placeholders}))"
+            )
+            args.extend(references)
+            args.extend(references)
+        models = query(
+            connection,
+            "SELECT m.id,m.alias,m.upstream_model,p.name AS provider_name "
+            "FROM agent_bot_ai_model m JOIN agent_bot_ai_provider p ON p.id=m.provider_id WHERE "
+            + " OR ".join(conditions),
+            tuple(args),
+        ) if conditions else []
+        for row in rows:
+            candidates = [
+                model for model in models
+                if row["model"] in {
+                    f'model:{model["id"]}', model["alias"], model["upstream_model"]
+                }
+            ]
+            row["model_display_name"] = (
+                f'{candidates[0]["provider_name"]} / {candidates[0]["upstream_model"]}'
+                if len(candidates) == 1
+                else row["model"]
+            )
+        return rows
+
     async def begin(self, run):
         """开始时保存有限文本，不写入媒体字节或上游凭据。"""
-        values = run.model_dump()
+        values = run.model_dump(exclude={"model_display_name"})
         await self.run(
             lambda c: query(
                 c,
@@ -59,21 +100,29 @@ class MediaRunStore(AiDatabase):
         """查询完整文本记录，附件由已认证 API 按可信运行归属补齐。"""
         if not re.fullmatch(r"[0-9a-f]{32}", execution_id):
             raise MediaError("MEDIA_RECORD_NOT_FOUND", status_code=404)
-        row = await self.run(
-            lambda c: query(
-                c,
+
+        def read(connection):
+            """不存在的记录保持空值，避免展示名补全掩盖标准 404。"""
+            row = query(
+                connection,
                 "SELECT * FROM agent_bot_media_run WHERE execution_id=%s",
                 (execution_id,),
                 one=True,
             )
-        )
+            return self._add_model_display_names(connection, [row])[0] if row else None
+
+        row = await self.run(read)
         if row is None:
             raise MediaError("MEDIA_RECORD_NOT_FOUND", status_code=404)
         return MediaRunDetail.model_validate(row)
 
-    async def list_runs(self, *, limit=50, cursor=None, session_id=None, status=None, entry=None):
-        """按时间和 ID 倒序分页，游标不能移用于其他筛选条件。"""
+    async def list_runs(
+        self, *, limit=10, cursor=None, page=None, session_id=None, status=None, entry=None
+    ):
+        """管理页按页码倒序读取，兼容调用的游标仍与全部筛选条件绑定。"""
         page_limit(limit)
+        if page is not None and (isinstance(page, bool) or page < 1 or cursor is not None):
+            raise MediaError("MEDIA_INVALID_PAGE", status_code=422)
         conditions, args = [], []
         if entry is not None:
             if entry not in {"admin", "qq"}:
@@ -109,16 +158,31 @@ class MediaRunStore(AiDatabase):
             conditions.append("(created_at<%s OR (created_at=%s AND execution_id<%s))")
             args.extend((stamp, stamp, id))
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
-        rows = await self.run(
-            lambda c: query(
-                c,
-                "SELECT "
-                + ",".join(MediaRunSummary.model_fields)
-                + f" FROM agent_bot_media_run{where} "
-                "ORDER BY created_at DESC,execution_id DESC LIMIT %s",
-                (*args, limit + 1),
-            )
+        stored_fields = tuple(
+            field for field in MediaRunSummary.model_fields if field != "model_display_name"
         )
+        def read(connection):
+            """在一次数据库事务内读取筛选总数和页内容。"""
+            total = query(
+                connection,
+                f"SELECT COUNT(*) AS total FROM agent_bot_media_run{where}",
+                tuple(args),
+                one=True,
+            )["total"]
+            pagination = " LIMIT %s OFFSET %s" if page is not None else " LIMIT %s"
+            pagination_args = (limit + 1, (page - 1) * limit) if page is not None else (limit + 1,)
+            rows = query(
+                connection,
+                "SELECT "
+                + ",".join(stored_fields)
+                + f" FROM agent_bot_media_run{where} "
+                + "ORDER BY created_at DESC,execution_id DESC"
+                + pagination,
+                (*args, *pagination_args),
+            )
+            return total, self._add_model_display_names(connection, rows)
+
+        total, rows = await self.run(read)
         items = [MediaRunSummary.model_validate(row) for row in rows[:limit]]
         after = (
             base64.urlsafe_b64encode(
@@ -135,4 +199,4 @@ class MediaRunStore(AiDatabase):
             if len(rows) > limit
             else None
         )
-        return Page[MediaRunSummary](items=items, next_cursor=after)
+        return CatalogPage[MediaRunSummary](items=items, next_cursor=after, total=total)

@@ -49,6 +49,10 @@ class ConversationJobExpiredError(ConversationQueueError):
     """The queued request exceeded its allowed processing lifetime."""
 
 
+class ConversationDeliveryPausedError(ConversationQueueError):
+    """定时结果暂时禁止投递，保留进度等待恢复，不消耗重试次数。"""
+
+
 class ConversationEntryDiscardedError(ConversationQueueError):
     """存储边界已隔离损坏条目，编排器不得通知或重试。"""
 
@@ -114,6 +118,9 @@ class ConversationJob(BaseModel):
     media_output: MediaOutputType | None = Field(default=None, alias="mediaOutput")
     laya_decision: bool = Field(default=False, alias="layaDecision")
     ai_job_id: str | None = Field(default=None, alias="aiJobId", pattern=r"^[a-f0-9]{32}$")
+    autonomy_profile_id: str | None = Field(default=None, alias='autonomyProfileId',
+                                           pattern=r'^[a-f0-9]{32}$',
+                                           exclude_if=lambda value: value is None)
     ai_job_reply: PersistedGeneratedReply | None = Field(default=None, alias="aiJobReply")
     background_image: bool = Field(default=False, alias="backgroundImage")
     workflow_request: WorkflowImageRequest | None = Field(default=None, alias="workflowRequest")
@@ -187,6 +194,8 @@ class ConversationJob(BaseModel):
             raise ValueError("generated jobs cannot carry received materials")
         if (self.ai_job_id is None) != (self.ai_job_reply is None):
             raise ValueError("AI job result requires both identifier and generated reply")
+        if self.autonomy_profile_id is not None and self.ai_job_id is None:
+            raise ValueError('autonomy report requires persisted AI job')
         if self.ai_job_id is not None:
             if (
                 self.job_id != f"ai-job-{self.ai_job_id}" or self.request_id != self.job_id
@@ -558,8 +567,10 @@ class ConversationQueueStore(Protocol):
 
         ...
 
-    async def save_result(self, stream_id: str, result: ConversationResult) -> None:
-        """持久化可供投递重试复用的生成结果。"""
+    async def save_result(
+        self, stream_id: str, result: ConversationResult, *, persistent: bool = False,
+    ) -> None:
+        """持久化投递结果；定时消息保留到确认，避免长时间暂停丢失分段。"""
 
         ...
 
@@ -785,7 +796,7 @@ class ConversationQueue:
             raise ConversationSessionBusyError("conversation session is busy")
 
     async def process_entry(self, entry: QueuedConversation) -> None:
-        """为图片工作任务绑定可持久化取消的执行上下文。"""
+        """绑定图片取消上下文；定时投递暂停时释放运行时租约并休眠。"""
 
         execution = self.image_tasks.execution(entry.job.job_id) if self.image_tasks else None
         token = active_image_task.set(execution)
@@ -805,6 +816,8 @@ class ConversationQueue:
                             await execution.finish("cancelled")
                         await self.store.complete(entry.stream_id)
                     return
+                except ConversationDeliveryPausedError:
+                    await asyncio.sleep(1)
                 except self.store.transient_errors:
                     await asyncio.sleep(1)
         finally:
@@ -832,9 +845,12 @@ class ConversationQueue:
             await self._fail_and_notify(entry, await self.store.load_state(entry.stream_id), exc)
 
     def _remaining_seconds(self, entry: QueuedConversation) -> float:
-        """按入队绝对时间计算剩余预算，重试不能刷新生命周期。"""
+        """普通请求使用绝对期限；持久定时结果每轮限时，暂停和离线不丢结果。"""
 
-        remaining = entry.job.created_at + self.policy.job_ttl_seconds - self._clock()
+        remaining = (
+            self.policy.job_ttl_seconds if entry.job.ai_job_id is not None
+            else entry.job.created_at + self.policy.job_ttl_seconds - self._clock()
+        )
         if remaining <= 0:
             raise ConversationJobExpiredError("conversation job expired")
         try:
@@ -935,7 +951,10 @@ class ConversationQueue:
                         if execution is not None:
                             await execution.check_cancelled()
                         self._remaining_seconds(entry)
-                        await self.store.save_result(entry.stream_id, result)
+                        if entry.job.ai_job_id is not None:
+                            await self.store.save_result(entry.stream_id, result, persistent=True)
+                        else:
+                            await self.store.save_result(entry.stream_id, result)
                         state = QueueState(
                             attempt=state.attempt,
                             available_at=state.available_at,
@@ -990,6 +1009,8 @@ class ConversationQueue:
             except ConversationEntryDiscardedError:
                 return
             except ConversationJobExpiredError:
+                raise
+            except ConversationDeliveryPausedError:
                 raise
             except Exception as exc:
                 execution = active_image_task.get()

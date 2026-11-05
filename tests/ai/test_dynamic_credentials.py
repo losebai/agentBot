@@ -1,6 +1,7 @@
 """数据库凭据更新和执行快照不读取环境变量。"""
 
 import pytest
+from pydantic import ValidationError
 
 from agent_bot.ai.contracts import ModelCreate, ProviderCreate, ProviderUpdate
 from agent_bot.ai.credentials import CredentialResolver
@@ -51,7 +52,22 @@ async def test_credential_replacement_clear_and_snapshot(catalog, monkeypatch):
         .get_secret_value()
         == "database-second"
     )
-    await catalog.update_provider(provider.id, ProviderUpdate(expected_revision=3, credential=None))
+    with pytest.raises(ValidationError):
+        await catalog.update_provider(
+            provider.id, ProviderUpdate(expected_revision=3, credential=None)
+        )
+    assert (
+        CredentialResolver()
+        .resolve((await catalog.resolve(model.alias)).provider)
+        .get_secret_value()
+        == "database-second"
+    )
+    local = await catalog.update_provider(
+        provider.id, ProviderUpdate(expected_revision=3, protocol="ollama")
+    )
+    await catalog.update_provider(
+        provider.id, ProviderUpdate(expected_revision=local.revision, credential=None)
+    )
     assert CredentialResolver().resolve((await catalog.resolve(model.alias)).provider) is None
 
 

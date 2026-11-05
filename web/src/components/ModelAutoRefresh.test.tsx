@@ -38,7 +38,7 @@ it.each(['Agent', '设置', '对话', '媒体'] as const)('%s 每次打开模型
     await waitFor(() => {
       const options = document.getElementById(input.getAttribute('aria-controls') ?? '');
       expect(options).not.toBeNull();
-      expect(within(options!).getByText(`供应商 / ${next}`)).toBeVisible();
+      expect(within(options!).getByRole('option', { name: `${next}` })).toBeVisible();
     });
     fireEvent.keyDown(input, { key: 'Escape', code: 'Escape', keyCode: 27 });
     await waitFor(() => expect(input).toHaveAttribute('aria-expanded', 'false'));
@@ -62,17 +62,17 @@ it('重新打开会取消慢目录请求，迟到结果不能覆盖新候选', a
   }));
   const changed = vi.fn();
   render(<AgentModelSelect token="offline" value={1} onChange={changed} />);
-  await screen.findByText('供应商 / 原模型');
+  await screen.findByText('原模型');
   const input = screen.getByRole('combobox', { name: '默认模型' });
   fireEvent.mouseDown(input);
   await waitFor(() => expect(staleSignal).toBeDefined());
-  fireEvent.click(screen.getByRole('option', { name: '供应商 / 原模型' }));
+  fireEvent.click(screen.getByRole('option', { name: '原模型' }));
   expect(changed).not.toHaveBeenCalled();
   fireEvent.keyDown(input, { key: 'Escape', keyCode: 27 });
   fireEvent.mouseDown(input);
   await waitFor(() => expect(staleSignal?.aborted).toBe(true));
-  await waitFor(() => expect(screen.getByRole('option', { name: '供应商 / 最新模型' })).toBeVisible());
+  await waitFor(() => expect(screen.getByRole('option', { name: '最新模型' })).toBeVisible());
   await act(async () => { finishStale(Response.json(page('迟到模型'))); });
-  expect(screen.queryByText('供应商 / 迟到模型')).not.toBeInTheDocument();
+  expect(screen.queryByText('迟到模型')).not.toBeInTheDocument();
   expect(changed).not.toHaveBeenCalled();
 });

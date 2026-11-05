@@ -16,6 +16,7 @@ import { PluginConfiguration } from './pages/PluginConfiguration';
 import { PluginMenu } from './components/PluginMenu';
 import { hasPluginConfiguration } from './plugin-runtime';
 import { Knowledge } from './pages/Knowledge';
+import { Autonomy } from './pages/Autonomy';
 
 // 组件库与页面共享白粉蓝主题，统一控件尺寸、可读性和状态反馈。
 const workspaceTheme = {
@@ -44,6 +45,7 @@ const titles: Record<string, string> = {overview:'运行概览', settings:'机�
   'plugin-stickers':'表情包配置',
   chat:'对话测试', providers:'供应商与模型', sessions:'会话记录', agents:'角色配置',
   'agent-evolution':'自我演进',
+  autonomy: '持续智能体',
   'remote-services':'远程服务', knowledge:'标签与知识库'};
 
 /** 按服务端登录模式进入工作台；插件设置保留草稿，离开配置页取消专属读取。 */
@@ -102,11 +104,11 @@ export function App() {
         { key: 'agents', label: '角色和人格', icon: <RobotOutlined /> },
         { key: 'settings', label: '机器人配置', icon: <SettingOutlined /> },
         { key: 'providers', label: '供应商与模型', icon: <ApiOutlined /> },
+        { key: 'knowledge', label: '标签与知识库', icon: <TagsOutlined /> },
         { key: 'chat', label: '对话测试', icon: <MessageOutlined /> },
         { key: 'sessions', label: '会话记录', icon: <HistoryOutlined /> },
         { key: 'remote-services', label: '远程服务', icon: <ApiOutlined /> },
         { key: 'plugins', label: '插件管理', icon: <ApiOutlined /> },
-        { key: 'knowledge', label: '标签与知识库', icon: <TagsOutlined /> },
       ].map(item => item.key === 'agents' ? <AgentMenu key={item.key} page={page} onNavigate={navigate} />
         : item.key === 'plugins' ? <PluginMenu key={item.key} token={token} page={page} onNavigate={navigate} />
         : <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
@@ -133,6 +135,7 @@ export function App() {
           <section hidden={page !== 'agents'}>{visited.includes('agents') && <AgentManagement token={token}
             active={page === 'agents'} />}</section>
           {page === 'agent-evolution' && <AgentEvolutionPage token={token} />}
+          {page === 'autonomy' && <Autonomy token={token} />}
           <section hidden={page !== 'remote-services'}>{visited.includes('remote-services') && <McpServers token={token} />}</section>
         </main></div>}
   </ConfigProvider>;

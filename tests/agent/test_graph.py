@@ -20,6 +20,8 @@ from agent_bot.agent.contracts import (
 from agent_bot.agent.engine import PreparedRun
 from agent_bot.agent.tools.runtime import BoundTools
 
+_DSML = "\uff5c\uff5cDSML\uff5c\uff5c"
+
 
 def prepared(rounds):
     """构造无需数据库的已授权运行快照。"""
@@ -99,6 +101,55 @@ async def test_graph_runs_configured_calls_then_one_final_call(rounds):
     assert [event.delta for event in events if event.kind == "text_delta"][-1] == "最终答案"
 
 
+@pytest.mark.parametrize("maximum", [120_000, 300_000])
+async def test_accumulated_tool_results_use_configured_context_budget(maximum):
+    """工具结果累积超过旧上限时，后续模型轮次仍按当前配置校验且不重放工具。"""
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.agent.graph import build_agent_graph
+    from agent_bot.agent.tools.langchain import LangChainTools
+
+    invoked, model_calls = [], []
+
+    class Provider:
+        """首轮查询四项资料，工具额度用尽后根据已有结果收尾。"""
+
+        async def stream_turn(self, call):
+            """记录模型轮次，确认超限检查发生在调用上游之前。"""
+            model_calls.append(call)
+            if call.final_only:
+                yield ModelEvent(kind="text_delta", delta="完成")
+                yield ModelEvent(kind="turn_end", turn=ModelTurn(content="完成", model="actual"))
+            else:
+                yield ModelEvent(kind="turn_end", turn=ModelTurn(model="actual", calls=tuple(
+                    ToolCall(call_id=f"lookup-{i}", name="lookup", arguments={})
+                    for i in range(4)
+                )))
+
+    async def handle(call):
+        """生成多项工具结果，验证总预算按所有结果的累计内容检查。"""
+        invoked.append(call.call_id)
+        return ToolResult(call_id=call.call_id, name=call.name, content="x" * 32_000)
+
+    bound = BoundTools(
+        (ToolDefinition(name="lookup", source="builtin", input_schema={"type": "object"}),),
+        {"lookup": handle},
+    )
+    run = prepared(4)
+    run.maximum_context_chars = maximum
+    graph = build_agent_graph(Provider(), run, LangChainTools(bound))
+    events = []
+    if maximum == 120_000:
+        with pytest.raises(AgentError, match="AGENT_CONTEXT_TOO_LARGE"):
+            async for event in graph.astream({}, stream_mode="custom"):
+                events.append(event)
+        assert len(model_calls) == 1
+    else:
+        events = [event async for event in graph.astream({}, stream_mode="custom")]
+        assert len(model_calls) == 2 and model_calls[-1].final_only
+        assert events[-1].kind == "done"
+    assert invoked == [f"lookup-{i}" for i in range(4)]
+
+
 async def test_cancel_joins_graph_before_tools_close():
     """关闭图事件流会取消并等待正在运行的模型节点。"""
     from agent_bot.agent.graph import build_agent_graph
@@ -171,6 +222,232 @@ async def test_qq_queued_image_finishes_before_waiting_again(name: str, same_bat
     assert len(calls) == 1
     assert [event.tool for event in events if event.kind == "tool_result"] == [name]
     assert any(event.kind == "text_delta" and event.delta.strip() for event in events)
+
+
+@pytest.mark.parametrize("has_tools", [False, True])
+async def test_model_markup_pollution_is_corrected_once(has_tools):
+    """纠正保留原工具权限，通知或额度耗尽时的收尾轮不得重新开启工具。"""
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.agent.graph import build_agent_graph
+    from agent_bot.agent.tools.langchain import LangChainTools
+
+    attempts: list[str] = []
+
+    class Provider:
+        """第一次把工具调用写成正文标记，收到纠正提示后正常收尾。"""
+
+        async def stream_turn(self, call):
+            """依据真实可用工具检查纠正提示，避免收尾时鼓励工具执行。"""
+            assert call.final_only is not has_tools
+            assert bool(call.tools) is has_tools
+            attempts.append(call.messages[-1].text)
+            if len(attempts) == 1:
+                polluted = (
+                    "先看文档。"
+                    f"<{_DSML} calls>"
+                    f'<{_DSML} invoke name="read_url">'
+                    f"</{_DSML} invoke></{_DSML} calls>"
+                )
+                yield ModelEvent(kind="text_delta", delta=polluted)
+                raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+            yield ModelEvent(kind="text_delta", delta="干净答案")
+            yield ModelEvent(kind="turn_end", turn=ModelTurn(
+                model="actual", content="干净答案",
+            ))
+
+    bound = BoundTools((
+        ToolDefinition(name="read_url", source="builtin", input_schema={"type": "object"}),
+    ), {})
+    if not has_tools:
+        bound = BoundTools((), {})
+    graph = build_agent_graph(Provider(), prepared(1), LangChainTools(bound))
+    events = [event async for event in graph.astream({}, stream_mode="custom")]
+    assert len(attempts) == 2
+    assert "[系统提示]" in attempts[1] and "DSML" in attempts[1]
+    assert ("权限和剩余额度保持不变" in attempts[1]) is has_tools
+    assert [event.code for event in events if event.kind == "warning"] == [
+        "AGENT_MODEL_MARKUP_RETRIED"
+    ]
+    assert [event.delta for event in events if event.kind == "text_delta"][-1] == "干净答案"
+    assert events[-1].kind == "done"
+
+
+async def test_markup_correction_keeps_prior_results_and_executes_only_new_calls():
+    """工具执行后的污染只重问当前模型轮，旧结果保留且工具副作用不重放。"""
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.agent.graph import build_agent_graph
+    from agent_bot.agent.tools.langchain import LangChainTools
+
+    attempts, invoked = [], []
+
+    class Provider:
+        """先执行一次工具，再产生污染，纠正后继续执行剩余调用。"""
+
+        async def stream_turn(self, call):
+            """检查纠正后仍可使用工具，原工具结果和用户目标保持有效。"""
+            attempts.append(call)
+            number = len(attempts)
+            if number == 2:
+                yield ModelEvent(kind="text_delta", delta=f"继续<{_DSML} calls>未执行")
+                raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+            if number == 3:
+                assert call.tools and not call.final_only
+                results = [m.tool_result for m in call.messages if m.tool_result]
+                assert [r.call_id for r in results] == ["first"]
+                assert any(m.text == "lookup" for m in call.messages)
+                assert not any("未执行" in m.text for m in call.messages[:-1])
+            if number in {1, 3}:
+                yield ModelEvent(kind="turn_end", turn=ModelTurn(model="actual", calls=(
+                    ToolCall(call_id="first" if number == 1 else "second",
+                             name="lookup", arguments={}),
+                )))
+            else:
+                assert call.final_only and not call.tools
+                yield ModelEvent(kind="text_delta", delta="已根据两次查询完成")
+                yield ModelEvent(kind="turn_end", turn=ModelTurn(
+                    model="actual", content="已根据两次查询完成",
+                ))
+
+    async def handle(call):
+        """记录真实副作用次数，防止通过重跑整段会话恢复工具调用。"""
+        invoked.append(call.call_id)
+        return ToolResult(call_id=call.call_id, name=call.name, content="已核实资料")
+
+    bound = BoundTools((ToolDefinition(
+        name="lookup", source="builtin", input_schema={"type": "object"},
+    ),), {"lookup": handle})
+    graph = build_agent_graph(Provider(), prepared(2), LangChainTools(bound))
+    events = [e async for e in graph.astream({}, stream_mode="custom")]
+    assert invoked == ["first", "second"] and len(attempts) == 4
+    assert [e.turn for e in events if e.kind == "model_start"] == [1, 2, 2, 3]
+    assert events[-1].kind == "done"
+
+
+async def test_markup_correction_cannot_extend_expired_deadline(monkeypatch):
+    """纠正使用原总期限，到期后不得发出新的模型请求。"""
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.agent.graph import build_agent_graph
+    from agent_bot.agent.tools.langchain import LangChainTools
+    from agent_bot.services.request_deadline import request_deadline
+
+    now, attempts = [0.0], []
+    monkeypatch.setattr("agent_bot.services.request_deadline.monotonic", lambda: now[0])
+
+    class Provider:
+        """输出异常时耗尽总期限，不使用真实等待或网络。"""
+
+        async def stream_turn(self, call):
+            """模型尝试仅记录一次，随后纠正必须服从原期限。"""
+            attempts.append(call)
+            yield ModelEvent(kind="text_delta", delta=f"<{_DSML} calls>")
+            now[0] = 31.0
+            raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+
+    graph = build_agent_graph(Provider(), prepared(1), LangChainTools(BoundTools((), {})))
+    with request_deadline(30), pytest.raises(asyncio.TimeoutError):
+        [e async for e in graph.astream({}, stream_mode="custom")]
+    assert len(attempts) == 1
+
+
+async def test_model_markup_pollution_fails_after_one_retry():
+    """纠正后仍输出伪工具标记则维持原有硬失败，不会无限重问。"""
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.agent.graph import build_agent_graph
+    from agent_bot.agent.tools.langchain import LangChainTools
+
+    attempts: list[str] = []
+
+    class Provider:
+        """两次都把工具调用写进正文，应只重问一次后失败。"""
+
+        async def stream_turn(self, call):
+            attempts.append(call.messages[-1].text)
+            yield ModelEvent(kind="text_delta", delta=f"<{_DSML} calls>再试</{_DSML} calls>")
+            raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+
+    bound = BoundTools((
+        ToolDefinition(name="read_url", source="builtin", input_schema={"type": "object"}),
+    ), {})
+    graph = build_agent_graph(Provider(), prepared(1), LangChainTools(bound))
+    with pytest.raises(AgentError, match="AGENT_MODEL_RESPONSE_INVALID"):
+        [event async for event in graph.astream({}, stream_mode="custom")]
+    assert len(attempts) == 2
+
+
+async def test_model_markup_pollution_with_plain_prefix_still_fails_after_retry():
+    """纠正无效时，即使有进度正文也不能把未完成的工具任务归档为成功。"""
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.agent.graph import build_agent_graph
+    from agent_bot.agent.tools.langchain import LangChainTools
+
+    attempts: list[str] = []
+
+    class Provider:
+        """两次均输出进度和伪调用，不能删掉伪调用后冒充最终答案。"""
+
+        async def stream_turn(self, call):
+            attempts.append(call.messages[-1].text)
+            polluted = (
+                "先看文档，稍后再试。"
+                f"<{_DSML} calls>"
+                f'<{_DSML} invoke name="read_url">'
+                f"</{_DSML} invoke></{_DSML} calls>"
+            )
+            yield ModelEvent(kind="text_delta", delta=polluted)
+            raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+
+    bound = BoundTools((
+        ToolDefinition(name="read_url", source="builtin", input_schema={"type": "object"}),
+    ), {})
+    graph = build_agent_graph(Provider(), prepared(1), LangChainTools(bound))
+    events = []
+    with pytest.raises(AgentError, match="AGENT_MODEL_RESPONSE_INVALID"):
+        async for event in graph.astream({}, stream_mode="custom"):
+            events.append(event)
+    assert len(attempts) == 2
+    assert [event.code for event in events if event.kind == "warning"] == [
+        "AGENT_MODEL_MARKUP_RETRIED",
+    ]
+    assert not any(event.kind == "done" for event in events)
+
+
+@pytest.mark.parametrize("polluted,expected", [
+    (f"先看文档，稍后再试。<{_DSML} calls>参数不可见</{_DSML} calls>", "先看文档，稍后再试。"),
+    ("前缀<||DSML|| invoke name=\"x\">值</||DSML|| invoke>后缀", "前缀后缀"),
+    (f"截断场景<{_DSML} calls>被截断的参数", "截断场景"),
+    (f"<{_DSML} calls>只有标记</{_DSML} calls>", ""),
+    ("无标记正文保持原样", "无标记正文保持原样"),
+])
+def test_strip_tool_call_markup_keeps_plain_text_only(polluted, expected):
+    """剥离范围是首个开标记到最后一个闭标签；块内参数和截断尾部都不入回复。"""
+    from agent_bot.services.reply_text import strip_tool_call_markup
+
+    assert strip_tool_call_markup(polluted) == expected
+
+
+async def test_other_invalid_responses_still_fail_without_retry():
+    """非伪工具标记导致的响应异常不占用纠正额度，直接失败。"""
+    from agent_bot.agent.errors import AgentError
+    from agent_bot.agent.graph import build_agent_graph
+    from agent_bot.agent.tools.langchain import LangChainTools
+
+    attempts: list[str] = []
+
+    class Provider:
+        """正文干净但协议异常，不属于纠正重问范围。"""
+
+        async def stream_turn(self, call):
+            attempts.append(call.messages[-1].text)
+            raise AgentError("AGENT_MODEL_RESPONSE_INVALID")
+            yield  # pragma: no cover — 仅为构成异步生成器
+
+    bound = BoundTools((
+        ToolDefinition(name="read_url", source="builtin", input_schema={"type": "object"}),
+    ), {})
+    graph = build_agent_graph(Provider(), prepared(1), LangChainTools(bound))
+    with pytest.raises(AgentError, match="AGENT_MODEL_RESPONSE_INVALID"):
+        [event async for event in graph.astream({}, stream_mode="custom")]
+    assert len(attempts) == 1
 
 
 @pytest.mark.parametrize("entry,source,content,is_error", [

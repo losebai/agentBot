@@ -1,12 +1,15 @@
 import { ApiClient } from './api';
-import type { AiModel, ModelDraft, Page, Provider, ProviderDraft, UpstreamModels, ModelImportItem, ModelImportResult, SessionDetail, SessionSummary } from './ai-types';
+import type { AiModel, CatalogPage, ModelDraft, Page, Provider, ProviderCredential, ProviderDraft, UpstreamModels, ModelImportItem, ModelImportResult, SessionDetail, SessionSummary } from './ai-types';
 
 export class AiApi extends ApiClient {
   /** 供应商版本冲突后允许取消目录重读，避免旧面板继续更新选择。 */
-  providers(cursor?: string, signal?: AbortSignal) { return this.request<Page<Provider>>(`ai/providers?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, 'GET', undefined, signal); }
-  models(cursor?: string, providerId?: number, signal?: AbortSignal) { return this.request<Page<AiModel>>(`ai/models?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${providerId ? `&provider_id=${providerId}` : ''}`, 'GET', undefined, signal); }
+  providers(cursor?: string, signal?: AbortSignal) { return this.request<CatalogPage<Provider>>(`ai/providers?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, 'GET', undefined, signal); }
+  models(cursor?: string, providerId?: number, signal?: AbortSignal) { return this.request<CatalogPage<AiModel>>(`ai/models?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${providerId ? `&provider_id=${providerId}` : ''}`, 'GET', undefined, signal); }
+  modelPage(providerId: number, page: number, limit: number, signal?: AbortSignal) { return this.request<CatalogPage<AiModel>>(`ai/models?limit=${limit}&provider_id=${providerId}&page=${page}`, 'GET', undefined, signal); }
   // 模型发现只传供应商身份与版本，实际 Key 留在服务器端。
   upstreamModels(id: number, revision: number, signal?: AbortSignal) { return this.request<UpstreamModels>(`ai/providers/${id}/upstream-models?expected_revision=${revision}`, 'GET', undefined, signal); }
+  /** 明文密钥仅在编辑弹窗显式查看时按身份和版本读取。 */
+  providerCredential(id: number, revision: number, signal?: AbortSignal) { return this.request<ProviderCredential>(`ai/providers/${id}/credential?expected_revision=${revision}`, 'GET', undefined, signal); }
   /** 按供应商和上游标识严格导入，不生成第二套模型名称。 */
   importModels(id: number, revision: number, models: ModelImportItem[], signal?: AbortSignal) { return this.request<ModelImportResult>(`ai/providers/${id}/models/import`, 'POST', {expected_revision: revision, models}, signal); }
   /** 已登记项保留配置，同名模型可属于不同供应商。 */
@@ -14,7 +17,7 @@ export class AiApi extends ApiClient {
     const discovered = await this.upstreamModels(id, revision, signal);
     let added = 0;
     const conflicts: ModelImportItem[] = [];
-    // 导入接口每批最多 100 项；中断时停止后续批次，再次选择供应商可继续同步。
+    // 导入接口每批最多 100 项；中断时停止后续批次，管理员可再次点击按钮继续同步。
     for (let offset = 0; offset < discovered.models.length; offset += 100) {
       signal?.throwIfAborted();
       const models = discovered.models.slice(offset, offset + 100).map(upstream_model => ({

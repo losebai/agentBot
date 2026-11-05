@@ -8,7 +8,7 @@ from datetime import datetime
 from agent_bot.agent.contracts import RunDetail, RunSummary, StepView
 from agent_bot.agent.errors import AgentError
 from agent_bot.ai.call_records import insert_record, json_value, python_record, sanitize_context
-from agent_bot.ai.contracts import Page
+from agent_bot.ai.contracts import CatalogPage
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
 from agent_bot.media.contracts import MediaOwner, MediaScope
@@ -151,9 +151,13 @@ class AgentRunStore(AiDatabase):
             detail = detail.model_copy(update={"attachments": attachments})
         return detail
 
-    async def list_runs(self, *, limit=50, cursor=None, session_id=None, status=None):
-        """按稳定游标读取运行摘要，引用 usage 等保留字列名以兼容两种后端。"""
+    async def list_runs(
+        self, *, limit=10, cursor=None, page=None, session_id=None, status=None
+    ):
+        """管理页按页码读取运行摘要，兼容调用仍可使用绑定筛选条件的稳定游标。"""
         page_limit(limit)
+        if page is not None and (isinstance(page, bool) or page < 1 or cursor is not None):
+            raise AgentError("AGENT_INVALID_PAGE", status_code=422)
         conditions, args = [], []
         if session_id is not None:
             if len(session_id) > 256:
@@ -182,14 +186,25 @@ class AgentRunStore(AiDatabase):
             conditions.append("(created_at<%s OR (created_at=%s AND execution_id<%s))")
             args.extend((stamp, stamp, id))
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
-        rows = await self.run(
-            lambda c: query(
-                c,
+        def read(connection):
+            """计数和当前页在同一数据库事务中读取，保证页码与总数口径一致。"""
+            total = query(
+                connection,
+                f"SELECT COUNT(*) AS total FROM agent_bot_agent_run{where}",
+                tuple(args),
+                one=True,
+            )["total"]
+            pagination = " LIMIT %s OFFSET %s" if page is not None else " LIMIT %s"
+            pagination_args = (limit + 1, (page - 1) * limit) if page is not None else (limit + 1,)
+            rows = query(
+                connection,
                 f"SELECT {sql_columns(RunSummary.model_fields)} FROM agent_bot_agent_run{where} "
-                "ORDER BY created_at DESC,execution_id DESC LIMIT %s",
-                (*args, limit + 1),
+                "ORDER BY created_at DESC,execution_id DESC" + pagination,
+                (*args, *pagination_args),
             )
-        )
+            return total, rows
+
+        total, rows = await self.run(read)
         items = [RunSummary.model_validate(decode(row)) for row in rows[:limit]]
         after = (
             base64.urlsafe_b64encode(
@@ -205,11 +220,13 @@ class AgentRunStore(AiDatabase):
             if len(rows) > limit
             else None
         )
-        return Page[RunSummary](items=items, next_cursor=after)
+        return CatalogPage[RunSummary](items=items, next_cursor=after, total=total)
 
-    async def list_steps(self, execution_id, *, limit=50, cursor=None):
-        """顺序分页读取保存的工具负载，未知或旧步骤不伪造返回值。"""
+    async def list_steps(self, execution_id, *, limit=10, cursor=None, page=None):
+        """管理页按页码读取步骤，兼容调用仍可使用与执行记录绑定的游标。"""
         page_limit(limit)
+        if page is not None and (isinstance(page, bool) or page < 1 or cursor is not None):
+            raise AgentError("AGENT_INVALID_PAGE", status_code=422)
         await self.get_run(execution_id)
         after = 0
         if cursor is not None:
@@ -222,16 +239,34 @@ class AgentRunStore(AiDatabase):
                     raise ValueError
             except (ValueError, TypeError) as error:
                 raise AgentError("AGENT_INVALID_PAGE", status_code=422) from error
-        rows = await self.run(
-            lambda c: query(
-                c,
-                "SELECT * FROM agent_bot_agent_step "
-                "WHERE execution_id=%s AND sequence>%s ORDER BY sequence LIMIT %s",
-                (execution_id, after, limit + 1),
-            )
-        )
+        def read(connection):
+            """步骤总数和页内容共用执行标识，避免跨运行记录计数。"""
+            total = query(
+                connection,
+                "SELECT COUNT(*) AS total FROM agent_bot_agent_step WHERE execution_id=%s",
+                (execution_id,),
+                one=True,
+            )["total"]
+            if page is not None:
+                rows = query(
+                    connection,
+                    "SELECT * FROM agent_bot_agent_step WHERE execution_id=%s "
+                    "ORDER BY sequence LIMIT %s OFFSET %s",
+                    (execution_id, limit + 1, (page - 1) * limit),
+                )
+            else:
+                rows = query(
+                    connection,
+                    "SELECT * FROM agent_bot_agent_step "
+                    "WHERE execution_id=%s AND sequence>%s ORDER BY sequence LIMIT %s",
+                    (execution_id, after, limit + 1),
+                )
+            return total, rows
+
+        total, rows = await self.run(read)
         items = [StepView.model_validate(decode(row)) for row in rows[:limit]]
-        return Page[StepView](
+        return CatalogPage[StepView](
             items=items,
             next_cursor=f"{execution_id}:{items[-1].sequence}" if len(rows) > limit else None,
+            total=total,
         )

@@ -72,6 +72,7 @@ def test_config_has_safe_operational_defaults() -> None:
     assert config.chat_auto_speak_message_interval_seconds == 0
     assert config.chat_config_refresh_interval_seconds == 5
     assert config.chat_llm_max_tokens is None
+    assert config.chat_llm_context_max_chars == 120_000
     assert config.chat_llm_temperature is None
     assert config.chat_llm_top_p is None
     assert config.chat_llm_top_k is None

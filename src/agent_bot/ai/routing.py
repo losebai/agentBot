@@ -199,6 +199,48 @@ class RoutingAiClient:
             raise exception(error.code, status_code=error.status_code,
                             error_code=error.code) from error
 
+    async def autonomy_delivery_allowed(self, job_id: str, secret: str) -> bool:
+        """每段自主汇报发送前检查数据库宿主策略，关闭权限后已入队结果也需等待。"""
+        from agent_bot.autonomy.store import AutonomyStore
+
+        if self.job_service is None:
+            return False
+        jobs = self.job_service.store
+        store = AutonomyStore(jobs.params, connect=jobs.connect, secret=secret)
+        return await store.delivery_allowed(job_id)
+
+    async def autonomy_context(self, job, secret: str) -> str:
+        """为明确启用的真实会话恢复已有身份，原话归档不从模型拼装提示词提取。"""
+        import json
+        from datetime import datetime, timezone
+
+        from agent_bot.autonomy.contracts import EpisodeCreate
+        from agent_bot.autonomy.store import AutonomyStore
+        from agent_bot.jobs.contracts import JobOwner
+
+        if self.job_service is None:
+            return ''
+        jobs = self.job_service.store
+        store = AutonomyStore(jobs.params, connect=jobs.connect, secret=secret)
+        owner = JobOwner(bot_id=job.bot_id, session_id=job.session_id, sender_id=job.user_id,
+                         scene=job.scene, group_id=job.group_id)
+        profile = await store.for_owner(owner)
+        if profile is None:
+            return ''
+        if not profile['policy']['paused'] and job.memory_source_text:
+            await store.ingest(profile['id'], EpisodeCreate(
+                event_id='qq:' + str(job.source_message_id or job.request_id),
+                text=job.memory_source_text[:8000],
+                occurred_at=datetime.fromtimestamp(
+                    job.source_message_time or job.created_at, timezone.utc),
+                task_requested=job.memory_source_text.startswith('/自主任务 '),
+            ))
+        return ('持续身份设定：' + json.dumps(profile['identity'], ensure_ascii=False)
+                + '\n当前状态(与事实记忆分开)：'
+                + json.dumps(profile['state'], ensure_ascii=False)
+                + '\n以上身份来自持久设定。状态不是用户事实，'
+                + '不宣称具有意识或已执行尚未完成的任务。')
+
     def route(self, request: AiRouteRequest) -> RouteDecision:
         """仅无命名 Agent 时采用全局服务；预设绑定在执行快照中读取。"""
         if request.agent and not self.agent_code and self.mcp_services:
@@ -330,7 +372,10 @@ class RoutingAiClient:
             else:
                 exception = ChatAiRejectedError
             raise exception(
-                error.code, status_code=error.status_code, error_code=error.code
+                error.code, status_code=error.status_code, error_code=error.code,
+                completed_tool_calls=(
+                    error.completed_tool_calls if isinstance(error, AgentError) else 0
+                ),
             ) from error
 
     async def generate_media(

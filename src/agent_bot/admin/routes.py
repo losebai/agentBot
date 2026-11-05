@@ -228,6 +228,9 @@ def install_admin(app: FastAPI, store, runtime, admin: AdminConfig) -> None:
 
     install_ai_routes(router, runtime)
     install_knowledge_routes(router, runtime)
+    from agent_bot.autonomy.routes import install_autonomy_routes
+
+    install_autonomy_routes(router, runtime)
     install_plugin_routes(router, runtime, manager)
     from agent_bot.plugins.bilibili.routes import install_bilibili_routes
 

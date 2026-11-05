@@ -10,6 +10,16 @@ def check(path: Path) -> None:
     with ZipFile(path) as archive:
         names = archive.namelist()
         required = {
+            'agent_bot/resources/UPGRADE-0.6.3.md',
+            'agent_bot/resources/persistent-agent.sql',
+            'agent_bot/resources/persistent-agent.sqlite.sql',
+            'agent_bot/autonomy/worker.py',
+            'agent_bot/autonomy/store.py',
+            'agent_bot/resources/call-record-classification.sql',
+            'agent_bot/resources/call-record-classification.sqlite.sql',
+            'agent_bot/jobs/worker.py',
+            'agent_bot/resources/job-recovery.sql',
+            'agent_bot/resources/job-recovery.sqlite.sql',
             'agent_bot/evolution/__init__.py',
             'agent_bot/evolution/contracts.py',
             'agent_bot/evolution/rules.py',
@@ -41,6 +51,8 @@ def check(path: Path) -> None:
             'agent_bot/sql_scripts.py',
             'agent_bot/resources/2026-10-28-comfy-plugin.sql',
             'agent_bot/resources/2026-10-28-comfy-plugin.sqlite.sql',
+            'agent_bot/resources/provider-user-agent.sql',
+            'agent_bot/resources/provider-user-agent.sqlite.sql',
             'agent_bot/resources/startup-versioning.sql',
             'agent_bot/resources/startup-versioning.sqlite.sql',
             'agent_bot/resources/UPGRADE-AUTOMATIC.md',

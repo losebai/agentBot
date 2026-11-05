@@ -11,6 +11,7 @@ from agent_bot.ai.providers.ollama import OllamaProvider
 from agent_bot.ai.providers.transport import ProviderTransport
 from agent_bot.ai.service import AiService
 from agent_bot.ai.sessions import AiSessionStore
+from agent_bot.models import ChatMessage
 from agent_bot.services.request_deadline import request_deadline
 
 from .test_providers import ByteStream, stream_body
@@ -58,6 +59,48 @@ async def test_complete_records_without_losing_result(catalog, ai_params, ai_dat
         service.sessions.save = AsyncMock(side_effect=RuntimeError("private upstream input"))
         second = await service.complete(request())
         assert second.content == "已生成的回复" and not second.record_saved
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("maximum", [120_000, 300_000])
+async def test_plain_context_budget_is_checked_before_upstream_call(
+    catalog, ai_params, ai_database, streaming, maximum,
+):
+    """普通及流式入口按运行预算校验总量，大于旧限制的合法请求可以正常发送。"""
+    sent = []
+
+    def handle(req):
+        """只记录离线请求；额度不足时不应进入传输层。"""
+        sent.append(req)
+        if streaming:
+            return httpx.Response(200, stream=ByteStream(stream_body("ollama")))
+        return httpx.Response(200, json={"model": "exact/model", "message": {
+            "role": "assistant", "content": "已生成回复",
+        }, "done": True})
+
+    service = await make_service(catalog, ai_params, ai_database, handle)
+    service.maximum_context_chars = maximum
+    incoming = TextRequest(
+        model="local", session_id="s", request_id="r", prompt="继续", messages=tuple(
+            ChatMessage(role="user", content="资料" * 15_000) for _ in range(5)
+        ),
+    )
+    try:
+        if streaming:
+            events = [e async for e in service.stream(incoming)]
+            if maximum == 120_000:
+                assert events[-1].code == "AI_CONTEXT_TOO_LARGE"
+            else:
+                assert events[-1].kind == "done"
+        elif maximum == 120_000:
+            with pytest.raises(AiError, match="AI_CONTEXT_TOO_LARGE"):
+                await service.complete(incoming)
+        else:
+            assert (await service.complete(incoming)).content == "已生成回复"
+        assert len(sent) == (0 if maximum == 120_000 else 1)
+        assert service.active_requests == 0
     finally:
         await service.aclose()
 

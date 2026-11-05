@@ -11,6 +11,15 @@ _INTERNAL_MENTION = re.compile(
 _TOOL_CALL_MARKUP = re.compile(
     r"</?[|\uff5c]+DSML[|\uff5c]+\s*(?:function_calls|calls|invoke|parameter)\b", re.IGNORECASE,
 )
+# 剥离兜底只认完整开闭标签；属性中的引号文本不属于标签本体。
+_TOOL_MARKUP_OPEN = re.compile(
+    r"<[|\uff5c]+DSML[|\uff5c]+\s*(?:function_calls|calls|invoke|parameter)\b[^>]*>",
+    re.IGNORECASE,
+)
+_TOOL_MARKUP_CLOSE = re.compile(
+    r"</[|\uff5c]+DSML[|\uff5c]+\s*(?:function_calls|calls|invoke|parameter)\s*>",
+    re.IGNORECASE,
+)
 # 此规则只用于已确认图片送达后的可选通知；出现失败或未完成措辞时保守跳过。
 _IMAGE_COMPLETION_CONTRADICTION = re.compile(
     r"失败|报错|出错|(?:没(?:有|能)?|还没|尚未|未能|无法|不能|未)(?:成功)?"
@@ -27,6 +36,22 @@ def contradicts_image_completion(text: str) -> bool:
 def contains_tool_call_markup(text: str) -> bool:
     """识别正文中的伪工具控制标记，不解析参数或把生成文字升级为真实工具调用。"""
     return _TOOL_CALL_MARKUP.search(text) is not None
+
+
+def strip_tool_call_markup(text: str) -> str:
+    """丢弃首个伪工具开标记到最后一个闭标记之间的全部内容，只保留正常正文。
+
+    闭标签缺失时从开标记处截断；标记块的参数一律不进入回复。
+    """
+    opened = [match.start() for match in _TOOL_MARKUP_OPEN.finditer(text)]
+    if not opened:
+        return text
+    closed = [
+        match.end() for match in _TOOL_MARKUP_CLOSE.finditer(text)
+        if match.end() > opened[0]
+    ]
+    cleaned = text[: opened[0]] + (text[closed[-1]:] if closed else "")
+    return cleaned.strip()
 
 
 def clean_internal_reply_text(text: str) -> str:

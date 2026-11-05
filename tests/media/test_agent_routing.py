@@ -579,6 +579,7 @@ async def test_forward_uses_backup_provider_protocol(media_database, agent_param
             name="备用供应商",
             protocol="openai-responses",
             base_url="https://backup.invalid/v1",
+            credential="backup-key",
             enabled=True,
         )
     )

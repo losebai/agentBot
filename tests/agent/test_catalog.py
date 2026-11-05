@@ -116,3 +116,22 @@ async def test_readiness_accepts_reserved_usage_column(
     ready = await AgentCatalog(agent_params, connect=agent_database.connect).readiness()
     assert ready.initialized
     assert ready.code is None
+
+
+async def test_role_pages_pin_current_before_creation_time(
+    agent_database, agent_params, seeded_model
+):
+    """运行身份跨页置顶，多个启用角色只标记实际选择项，其余按创建时间排序。"""
+    catalog = AgentCatalog(agent_params, connect=agent_database.connect)
+    for code in ("oldest", "middle", "current", "newest"):
+        await catalog.create_agent(AgentCreate(code=code, name=code,
+                                               model_id=seeded_model[2].id, enabled=True))
+    first = await catalog.list_agents(page=1, limit=2, preferred_code="current")
+    second = await catalog.list_agents(page=2, limit=2, preferred_code="current")
+    assert [item.code for item in first.items + second.items] == [
+        "current", "oldest", "middle", "newest"
+    ]
+    assert [item.code for item in first.items + second.items if item.is_current] == ["current"]
+    assert first.total == second.total == 4
+    missing = await catalog.list_agents(page=1, limit=10, preferred_code="missing")
+    assert not any(item.is_current for item in missing.items)

@@ -26,8 +26,8 @@ from agent_bot.agent.contracts import (
     ToolDefinition,
 )
 from agent_bot.agent.errors import AgentError
-from agent_bot.ai.contracts import Page, VersionDelete
-from agent_bot.evolution.contracts import EvolutionConfigUpdate, EvolutionReset
+from agent_bot.ai.contracts import CatalogPage, VersionDelete
+from agent_bot.evolution.contracts import EvolutionAdvance, EvolutionConfigUpdate, EvolutionReset
 
 
 def install_agent_routes(router: APIRouter, runtime):
@@ -37,7 +37,7 @@ def install_agent_routes(router: APIRouter, runtime):
     async def evolution_operation(action, *args, **kwargs):
         """演化管理沿用外层管理员认证，变更必须持有正常运行时租约。"""
         async with runtime.lease(read_only=action in {'profiles', 'history', 'records',
-                                                     'record_history'}):
+                                                     'record_history', 'preview'}):
             evolution = chat.service().evolution
             if evolution is None:
                 raise AgentError('AGENT_NOT_INITIALIZED', status_code=503)
@@ -46,9 +46,10 @@ def install_agent_routes(router: APIRouter, runtime):
     @router.get('/evolution')
     async def independent_evolution_profiles(
         agent_id: int | None = Query(None, ge=1), cursor: int = Query(0, ge=0),
+        page: int | None = Query(None, ge=1), limit: int = Query(10, ge=1, le=100),
     ):
         """默认查询无需角色的通用范围，也可显式选择关联角色。"""
-        return await evolution_operation('profiles', agent_id, after=cursor)
+        return await evolution_operation('profiles', agent_id, after=cursor, page=page, limit=limit)
 
     @router.patch('/evolution')
     async def independent_evolution_config(
@@ -60,27 +61,46 @@ def install_agent_routes(router: APIRouter, runtime):
     @router.get('/evolution/records')
     async def evolution_records(
         cursor: int = Query(0, ge=0),
+        page: int | None = Query(None, ge=1), limit: int = Query(10, ge=1, le=100),
         kind: Literal['feedback', 'change', 'reset'] | None = None,
         agent_id: int | None = Query(None, ge=1), unbound: bool = False,
     ):
         """独立分页展示跨范围记录；筛选可选角色或所有未关联范围。"""
-        return await evolution_operation('records', before=cursor, kind=kind,
-                                         agent_id=agent_id, unbound=unbound)
+        return await evolution_operation('records', before=cursor, page=page, limit=limit,
+                                         kind=kind, agent_id=agent_id, unbound=unbound)
 
     @router.get('/evolution/profiles/{profile_id}')
-    async def evolution_record_history(profile_id: int, cursor: int = Query(0, ge=0)):
+    async def evolution_record_history(
+        profile_id: int, cursor: int = Query(0, ge=0),
+        page: int | None = Query(None, ge=1), limit: int = Query(10, ge=1, le=100),
+    ):
         """列表直接定位画像依据，角色已删除也不会使历史失联。"""
-        return await evolution_operation('record_history', profile_id, before=cursor)
+        return await evolution_operation(
+            'record_history', profile_id, before=cursor, page=page, limit=limit
+        )
 
     @router.post('/evolution/profiles/{profile_id}/reset')
     async def independent_evolution_reset(profile_id: int, body: EvolutionReset):
         """重置独立画像，角色关联不是管理前提，仍校验当前版本。"""
         return await evolution_operation('reset_profile', profile_id, **body.model_dump())
 
+    @router.get('/evolution/profiles/{profile_id}/preview')
+    async def evolution_preview(profile_id: int):
+        """只读研究成熟度、预计档位与原始证据，不触发应用。"""
+        return await evolution_operation('preview', profile_id)
+
+    @router.post('/evolution/profiles/{profile_id}/advance')
+    async def evolution_advance(profile_id: int, body: EvolutionAdvance):
+        """按所见研究摘要手动执行一次演进，既有阈值和暂停保持有效。"""
+        return await evolution_operation('advance_profile', profile_id, **body.model_dump())
+
     @router.get('/agents/{id}/evolution')
-    async def evolution_profiles(id: int, cursor: int = Query(0, ge=0)):
+    async def evolution_profiles(
+        id: int, cursor: int = Query(0, ge=0), page: int | None = Query(None, ge=1),
+        limit: int = Query(10, ge=1, le=100),
+    ):
         """分页查看匿名互动对象及当前演化状态。"""
-        return await evolution_operation('profiles', id, after=cursor)
+        return await evolution_operation('profiles', id, after=cursor, page=page, limit=limit)
 
     @router.patch('/agents/{id}/evolution')
     async def evolution_config(id: int, body: EvolutionConfigUpdate):
@@ -88,9 +108,14 @@ def install_agent_routes(router: APIRouter, runtime):
         return await evolution_operation('configure', id, **body.model_dump())
 
     @router.get('/agents/{id}/evolution/profiles/{profile_id}')
-    async def evolution_history(id: int, profile_id: int, cursor: int = Query(0, ge=0)):
+    async def evolution_history(
+        id: int, profile_id: int, cursor: int = Query(0, ge=0),
+        page: int | None = Query(None, ge=1), limit: int = Query(10, ge=1, le=100),
+    ):
         """历史包含原话和变化引用，分页不会跨 Agent 查询。"""
-        return await evolution_operation('history', id, profile_id, before=cursor)
+        return await evolution_operation(
+            'history', id, profile_id, before=cursor, page=page, limit=limit
+        )
 
     @router.post('/agents/{id}/evolution/profiles/{profile_id}/reset')
     async def evolution_reset(id: int, profile_id: int, body: EvolutionReset):
@@ -111,12 +136,13 @@ def install_agent_routes(router: APIRouter, runtime):
 
             return result
 
-    @router.get("/agents", response_model=Page[AgentView])
+    @router.get("/agents", response_model=CatalogPage[AgentView])
     async def list_agents(
-        limit: int = Query(50, ge=1, le=100), cursor: str | None = Query(None, max_length=512)
+        limit: int = Query(10, ge=1, le=100), cursor: str | None = Query(None, max_length=512),
+        page: int | None = Query(None, ge=1),
     ):
         """角色页面优先显示运行配置实际选中的启用角色，其余顺序及分页保持稳定。"""
-        return await operate("list_agents", limit=limit, cursor=cursor,
+        return await operate("list_agents", limit=limit, cursor=cursor, page=page,
                              preferred_code=runtime.config.chat_python_agent_code)
 
     @router.get("/agents/{id}", response_model=AgentView)
@@ -135,11 +161,12 @@ def install_agent_routes(router: APIRouter, runtime):
     async def delete_agent(id: int, body: VersionDelete):
         await operate("delete_agent", id, body.expected_revision)
 
-    @router.get("/skills", response_model=Page[SkillView])
+    @router.get("/skills", response_model=CatalogPage[SkillView])
     async def list_skills(
-        limit: int = Query(50, ge=1, le=100), cursor: str | None = Query(None, max_length=512)
+        limit: int = Query(10, ge=1, le=100), cursor: str | None = Query(None, max_length=512),
+        page: int | None = Query(None, ge=1),
     ):
-        return await operate("list_skills", limit=limit, cursor=cursor)
+        return await operate("list_skills", limit=limit, cursor=cursor, page=page)
 
     @router.get("/skills/{id}", response_model=SkillView)
     async def get_skill(id: int):
@@ -157,11 +184,12 @@ def install_agent_routes(router: APIRouter, runtime):
     async def delete_skill(id: int, body: VersionDelete):
         await operate("delete_skill", id, body.expected_revision)
 
-    @router.get("/mcp-servers", response_model=Page[McpView])
+    @router.get("/mcp-servers", response_model=CatalogPage[McpView])
     async def list_mcps(
-        limit: int = Query(50, ge=1, le=100), cursor: str | None = Query(None, max_length=512)
+        limit: int = Query(10, ge=1, le=100), cursor: str | None = Query(None, max_length=512),
+        page: int | None = Query(None, ge=1),
     ):
-        return await operate("list_mcps", limit=limit, cursor=cursor)
+        return await operate("list_mcps", limit=limit, cursor=cursor, page=page)
 
     @router.get("/mcp-servers/{id}", response_model=McpView)
     async def get_mcp(id: int):
@@ -213,10 +241,11 @@ def install_agent_routes(router: APIRouter, runtime):
             content(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"}
         )
 
-    @router.get("/agent-runs", response_model=Page[RunSummary])
+    @router.get("/agent-runs", response_model=CatalogPage[RunSummary])
     async def runs(
-        limit: int = Query(50, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = Query(None, max_length=1024),
+        page: int | None = Query(None, ge=1),
         session_id: str | None = Query(None, max_length=256),
         status: str | None = None,
     ):
@@ -225,6 +254,7 @@ def install_agent_routes(router: APIRouter, runtime):
             records=True,
             limit=limit,
             cursor=cursor,
+            page=page,
             session_id=session_id,
             status=status,
         )
@@ -233,10 +263,13 @@ def install_agent_routes(router: APIRouter, runtime):
     async def detail(execution_id: str):
         return await operate("get_run", execution_id, records=True)
 
-    @router.get("/agent-runs/{execution_id}/steps", response_model=Page[StepView])
+    @router.get("/agent-runs/{execution_id}/steps", response_model=CatalogPage[StepView])
     async def steps(
         execution_id: str,
-        limit: int = Query(50, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = Query(None, max_length=512),
+        page: int | None = Query(None, ge=1),
     ):
-        return await operate("list_steps", execution_id, records=True, limit=limit, cursor=cursor)
+        return await operate(
+            "list_steps", execution_id, records=True, limit=limit, cursor=cursor, page=page
+        )

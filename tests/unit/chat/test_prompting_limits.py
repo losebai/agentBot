@@ -31,6 +31,31 @@ def test_prompt_builder_drops_oldest_history_to_fit_total_character_budget():
                 messages=tuple(messages))
 
 
+@pytest.mark.parametrize("maximum", [90_000, 240_000])
+def test_custom_budget_controls_history_and_allows_more_than_old_limit(maximum):
+    """配置预算控制历史裁剪，调大后请求契约不能再按旧常量提前拒绝。"""
+    builder = ChatPromptBuilder(
+        system_prompt="s" * 30_000, max_input_chars=32_000, max_context_chars=maximum,
+    )
+    history = tuple(ChatMessage(role="assistant", content=str(i) * 30_000) for i in range(5))
+    messages = builder.messages("u" * 30_000, conversation_context=ConversationContext(
+        memory="", messages=history,
+    ))
+    assert len(messages) == (3 if maximum == 90_000 else 7)
+    assert sum(len(m.content) for m in messages) <= maximum
+    assert messages[0].content == "s" * 30_000 and messages[-1].content == "u" * 30_000
+    AgentRequest(prompt="继续", session_id="s", request_id="r", messages=tuple(messages))
+    TextRequest(model="local", prompt="继续", session_id="s", request_id="r",
+                messages=tuple(messages))
+
+
+def test_custom_budget_rejects_fixed_content_without_truncating_it():
+    """较小预算下保留系统和当前请求，固定内容过大时明确拒绝。"""
+    builder = ChatPromptBuilder(system_prompt="系统", max_input_chars=100, max_context_chars=3)
+    with pytest.raises(PromptTooLongError, match="3 characters"):
+        builder.messages("当前问题")
+
+
 def test_fixed_memory_group_system_and_current_are_preserved_when_history_is_removed():
     """固定背景资料保留完整包装和角色，预算不足时只移除旧历史。"""
     builder = ChatPromptBuilder(system_prompt="s" * 32000, max_input_chars=32000)

@@ -1,4 +1,4 @@
-"""验证定时执行只调用一次模型，故障和关闭都不重放。"""
+"""验证成功与明确失败不重复推理，中断任务可恢复且保留审计。"""
 
 import asyncio
 from datetime import timedelta
@@ -61,7 +61,7 @@ async def test_model_failure_is_bounded_and_not_retried(job_store, job_clock, re
 
 
 async def test_worker_cancel_joins_provider_and_marks_interruption(job_store, job_clock):
-    """取消执行等待供应商 finally，再写中断终态。"""
+    """关闭等待供应商释放资源，再回到待执行并保留中断历史。"""
     job = await scheduled(job_store, job_clock)
     started, cleaned = asyncio.Event(), asyncio.Event()
 
@@ -81,6 +81,15 @@ async def test_worker_cancel_joins_provider_and_marks_interruption(job_store, jo
         await task
     assert cleaned.is_set()
     assert (await job_store.get(scope(), job.id)).error_code == "EXECUTION_INTERRUPTED"
+    assert (await job_store.get(scope(), job.id)).status == "PENDING"
+    recovered_ai = SimpleNamespace(
+        complete=AsyncMock(return_value=SimpleNamespace(content="重启后完成")),
+    )
+    await JobService(job_store, recovered_ai).run_due()
+    assert (await job_store.get(scope(), job.id)).result == "重启后完成"
+    history = await job_store.inspect(job.id)
+    assert [item["status"] for item in history["attempts"]].count("INTERRUPTED") == 1
+    assert [item["status"] for item in history["attempts"]].count("SUCCEEDED") == 1
 
 
 async def test_cancelled_owner_not_overwritten_and_failed_commit_not_replayed(job_store, job_clock):

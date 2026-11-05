@@ -150,7 +150,10 @@ async def test_upload_generation_content_and_history(media_api):
     assert result["attachments"][0]["status"] == "ready" and "response" not in result
     history = (await api.get("/api/v1/media/runs", headers=HEADERS)).json()
     assert history["items"][0]["execution_id"] == result["execution_id"]
+    assert history["items"][0]["model"] == "local-model"
+    assert history["items"][0]["model_display_name"] == "local / exact/id"
     detail = (await api.get(f"/api/v1/media/runs/{result['execution_id']}", headers=HEADERS)).json()
+    assert detail["model_display_name"] == "local / exact/id"
     assert detail["attachments"] == result["attachments"]
     qq = await runtime.media_store.put(
         owner=MediaOwner(entry="qq", session_id="s"),

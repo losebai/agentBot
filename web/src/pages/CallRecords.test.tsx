@@ -5,6 +5,7 @@ import { chooseSelect } from '../test-select';
 
 const record = {
   id: 1, type: 'ordinary', session_Id: 'session', status: 'completed', model: 'model',
+  provider_name: '测试供应商',
   duration: 20, create_time: '2026-10-15T12:00:00', source: 'python', source_id: '1',
   request_id: 'request', execution_id: null, content: '输入正文', replay_context: '回复正文',
   user_certificate: null, request_context: null, data: null,
@@ -18,6 +19,7 @@ it.each(['conversation', 'system'] as const)('%s 列表和详情显示 Token 用
   render(<CallRecords token="offline" category={category} />);
   const button = await screen.findByRole('button', { name: '查看详情' });
   const row = within(button.closest('tr')!);
+  expect(row.getByText('model').parentElement).toHaveTextContent('测试供应商');
   expect(row.getByText('输入').parentElement).toHaveTextContent('1,000');
   expect(row.getByText('输出').parentElement).toHaveTextContent('200');
   expect(row.getByText('缓存').parentElement).toHaveTextContent('300');

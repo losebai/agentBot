@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from agent_bot.ai.context import DEFAULT_CONTEXT_MAX_CHARS
 from agent_bot.content_classifier import ContentCategory
 from agent_bot.database_pool import finish_database_write
 from agent_bot.model_router import ContentModelRouter
@@ -58,6 +59,7 @@ class ChatService:
         max_input_chars: int,
         cooldown_seconds: float,
         max_concurrent_requests: int,
+        max_context_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
         max_concurrent_media_requests: int = 1,
         max_rate_limit_entries: int = 1000,
         clock: Callable[[], float] = time.monotonic,
@@ -93,6 +95,7 @@ class ChatService:
         self._prompt_builder = ChatPromptBuilder(
             system_prompt=system_prompt,
             max_input_chars=max_input_chars,
+            max_context_chars=max_context_chars,
         )
         self._request_coordinator = ChatRequestCoordinator(
             cooldown_seconds=cooldown_seconds,

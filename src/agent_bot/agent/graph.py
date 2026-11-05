@@ -27,6 +27,7 @@ from agent_bot.agent.tools.schema import bounded_json
 from agent_bot.ai.contracts import TokenUsage
 from agent_bot.ai.errors import AiError
 from agent_bot.services.llm_timing import record_timing
+from agent_bot.services.reply_text import contains_tool_call_markup
 from agent_bot.services.request_deadline import remaining_timeout
 
 if TYPE_CHECKING:
@@ -101,7 +102,7 @@ def build_agent_graph(
                 and isinstance(receipt.get("task_id"), str) and bool(receipt["task_id"].strip()))
 
     async def model_node(state: AgentState, *, final_only: bool = False) -> AgentState:
-        """失败时只转交本轮公共对话，已完成工具及轮次保持不变。"""
+        """模型故障与伪调用纠正均保留工具授权、已有结果和本次总期限。"""
         turn = state.get("turn", 0) + 1
         base = state.get("messages", initial)
         prompt = AgentPromptBuilder.build(
@@ -121,13 +122,13 @@ def build_agent_graph(
         size = sum(
             len(
                 bounded_json(
-                    {**m.model_dump(), "continuation": m.continuation}, maximum=1048576, depth=32
+                    {**m.model_dump(), "continuation": m.continuation}, maximum=None, depth=32
                 )
             )
             for m in messages
         )
-        size += len(bounded_json([t.model_dump() for t in definitions], maximum=1048576))
-        if size > 120000:
+        size += len(bounded_json([t.model_dump() for t in definitions], maximum=None))
+        if size > prepared.maximum_context_chars:
             raise AgentError("AGENT_CONTEXT_TOO_LARGE", status_code=422)
         call = prepared.call.model_copy(
             update={
@@ -137,6 +138,7 @@ def build_agent_graph(
                 "timeout_seconds": remaining_timeout(prepared.request.timeout_seconds),
             }
         )
+        markup_retry = False
         while True:
             router = prepared.model_router
             selected_provider = provider
@@ -148,6 +150,9 @@ def build_agent_graph(
                     # 尝试从 model_start 前计时，包含服务保存开始记录及消费者背压。
                     # 备用重新发布该事件，让消费者清除失败模型的草稿。
                     await emit("model_start", turn)
+                    call = call.model_copy(update={
+                        "timeout_seconds": remaining_timeout(prepared.request.timeout_seconds),
+                    })
                     if router:
                         # 工具首次返回图片时的配置校验也纳入明确备用模型的接管边界。
                         call = router.bind_call(call)
@@ -183,6 +188,33 @@ def build_agent_graph(
                 # QQ 已有正文遇到模型超时直接结束；备用接管会清空这轮可投递内容。
                 if error.code == "AI_TIMEOUT" and prepared.authority.entry == "qq" and text.strip():
                     raise
+                if error.code == "AGENT_MODEL_RESPONSE_INVALID" and contains_tool_call_markup(text):
+                    if not markup_retry:
+                        # 仅重问产生异常的模型轮，不重放工具，也不消耗工具调用额度。
+                        # 下一次 model_start 清除异常草稿，工具定义和已完成结果原样保留。
+                        markup_retry = True
+                        feedback = TurnMessage(role="user", text=(
+                            "[系统提示] 上一条回复把工具调用标签写进了正文，已被拦截，"
+                            "其中的调用没有执行。此前真实工具的执行结果仍然有效，勿重复执行。"
+                            "请继续完成用户原始任务，不要只输出进度或声称未执行的操作已成功。"
+                            + (
+                                "本轮只允许给出最终正文，须根据已有结果说明任务完成情况，"
+                                "不得再请求工具。"
+                                if final_only else
+                                "本轮工具权限和剩余额度保持不变，需要工具时请使用原生工具调用协议。"
+                            )
+                            + "回复正文不得包含 DSML、invoke、parameter 等控制标签。"
+                        ))
+                        size += len(bounded_json(feedback.model_dump(), maximum=None, depth=32))
+                        if size > prepared.maximum_context_chars:
+                            raise AgentError("AGENT_CONTEXT_TOO_LARGE", status_code=422) from error
+                        base = [*base, feedback]
+                        call = call.model_copy(update={"messages": (*call.messages, feedback)})
+                        await emit(
+                            "warning", turn, code="AGENT_MODEL_MARKUP_RETRIED",
+                            message="正文混入工具调用标记，已要求模型重试",
+                        )
+                        continue
                 if router is None:
                     raise
                 message = router.forward(error)

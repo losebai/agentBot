@@ -1,4 +1,4 @@
--- 用途：统一初始化 agentBot 0.5.9 的业务表与可选本地队列表，供新独立数据库使用。
+-- 用途：统一初始化 agentBot 0.6.3 的业务表与可选本地队列表，供新独立数据库使用。
 -- Comfy 插件沿用配置及工作流表，无新增结构；新库默认不启用，旧库由 comfy-plugin-v1 流水保留原启用选择。
 -- 执行顺序：管理员先创建并选中数据库，再执行本文件，最后用 settings import-env 导入配置。
 -- 数据影响：仅创建不存在的表，不插入配置、不覆盖模型、不清空或迁移现有数据。
@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_provider (
   name VARCHAR(100) COLLATE utf8mb4_bin NOT NULL COMMENT '显示名称',
   protocol VARCHAR(32) NOT NULL COMMENT '供应商接口协议',
   base_url VARCHAR(2048) NOT NULL COMMENT '供应商接口根地址',
+  user_agent VARCHAR(512) NOT NULL DEFAULT '' COMMENT '请求上游时使用的自定义 User-Agent，空值沿用客户端默认值',
   credential TEXT NULL COMMENT '供应商或 MCP 实际凭据，仅写入和内部调用，不通过管理接口回显',
   credential_required TINYINT NOT NULL DEFAULT 0 COMMENT '是否要求鉴权：零无需凭据，一必须配置凭据',
   enabled TINYINT NOT NULL DEFAULT 0 COMMENT '是否启用：零禁用，一启用',
@@ -422,6 +423,22 @@ CREATE TABLE IF NOT EXISTS agent_bot_job (
   CONSTRAINT fk_job_owner FOREIGN KEY (owner_key) REFERENCES agent_bot_job_owner(owner_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Python 一次性文本任务及投递回执';
 
+-- 定时任务执行租约与审计；先创建所属任务，不修改既有历史。
+CREATE TABLE IF NOT EXISTS agent_bot_job_attempt (
+  id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '随机执行租约标识，拒绝旧执行器迟到提交',
+  job_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '所属持久任务标识',
+  status VARCHAR(16) NOT NULL COMMENT '执行状态 RUNNING、SUCCEEDED、FAILED、INTERRUPTED、CANCELLED',
+  started_at DATETIME(6) NOT NULL COMMENT '领取时间，UTC',
+  lease_expires_at DATETIME(6) NOT NULL COMMENT '执行权过期时间，UTC；晚于模型硬超时',
+  completed_at DATETIME(6) NULL COMMENT '执行结束或确认中断时间，UTC',
+  error_code VARCHAR(100) NULL COMMENT '稳定脱敏错误码，不记录凭据或供应商异常正文',
+  -- 主键使每次执行拥有独立令牌；任务索引支持恢复次数统计与审计查询。
+  PRIMARY KEY (id),
+  KEY idx_job_attempt_history (job_id,started_at,id),
+  -- 审计依附原任务，禁止删除仍有执行历史的任务。
+  CONSTRAINT fk_job_attempt_job FOREIGN KEY (job_id) REFERENCES agent_bot_job(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行租约和恢复审计';
+
 CREATE TABLE IF NOT EXISTS agent_bot_auto_speak_decision (
   id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '服务端决策记录标识',
   session_id VARCHAR(256) COLLATE utf8mb4_bin NOT NULL COMMENT '自动发言会话标识',
@@ -460,7 +477,27 @@ CREATE TABLE IF NOT EXISTS agent_bot_call_record (
   `source_id` VARCHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '来源记录原始主键',
   `execution_id` CHAR(32) COLLATE utf8mb4_bin DEFAULT NULL COMMENT '本地执行标识，保留步骤和附件关联',
   `status` VARCHAR(16) COLLATE utf8mb4_bin NOT NULL COMMENT '执行状态，缺失历史状态为 unknown',
+  -- 分类值由索引维护，保留历史标记语义，计数无需扫描大 JSON。
+  system_kind VARCHAR(16) COLLATE utf8mb4_bin GENERATED ALWAYS AS (
+  CASE WHEN (
+    type = 'auto_speak'
+    OR source = 'python:agent_bot_auto_speak_decision'
+    OR SUBSTR(request_id, 1, 14) = 'auto-decision-'
+    OR JSON_EXTRACT(data, '$.type') IN ('auto_speak_decision', '"auto_speak_decision"')
+    OR JSON_EXTRACT(data, '$.system_kind') IN ('auto_speak', '"auto_speak"')
+    OR (JSON_EXTRACT(request_context, '$.state') IS NOT NULL
+        AND JSON_EXTRACT(data, '$.shouldSpeak') IS NOT NULL)
+  ) THEN 'auto_speak' WHEN (
+    COALESCE(JSON_EXTRACT(data, '$.system_kind') IN ('command', '"command"'), 0)
+    OR JSON_EXTRACT(data, '$.original_data.system_kind') IN ('command', '"command"')
+    OR SUBSTR(request_id, 1, 11) = 'qq-summary-'
+    OR SUBSTR(request_id, 1, 8) = 'qq-draw-'
+    OR SUBSTR(session_Id, -15) = ':quoted-summary'
+    OR (SUBSTR(request_id, 1, 9) = 'qq-reply-' AND SUBSTR(content, 1, 1) = '/')
+  ) THEN 'command' ELSE NULL END
+  ) VIRTUAL COMMENT '系统分类：auto_speak、command；NULL 为普通对话，兼容历史标记',
   PRIMARY KEY (`id`),
+  KEY idx_call_system_time (system_kind, create_time, id) COMMENT '按系统分类计数和时间稳定分页，避免逐条解析归档 JSON',
   KEY idx_call_time (`create_time`, `id`) COMMENT '按调用时间稳定分页',
   KEY idx_call_source_created (`source`, `created_at_utc`, `execution_id`) COMMENT '普通来源按原始UTC微秒和执行标识分页',
   UNIQUE KEY uk_call_source (`source`, `source_id`) COMMENT '来源内去重，避免不同系统主键冲突',
@@ -865,3 +902,80 @@ CREATE TABLE IF NOT EXISTS agent_bot_evolution_record (
     CHECK (direction BETWEEN -1 AND 1),
     CHECK (consumed IN (0,1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='跨演化范围可查询的因果记录';
+
+-- 用途：为完整 0.6.2 业务库增加持续身份、任务、情节及审批审计；由显式升级清单执行。
+-- 顺序：现有任务恢复及调用分类迁移之后；仅新增表，不改旧数据、身份、密钥或启用状态。
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_profile (
+  id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '固定身份主键，修订设定不改变标识',
+  namespace CHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '会话密钥派生命名空间',
+  owner_key CHAR(64) COLLATE utf8mb4_bin NOT NULL COMMENT '可信机器人、会话与用户摘要',
+  revision INT NOT NULL COMMENT '管理设定及审批乐观锁版本',
+  document_json JSON NOT NULL COMMENT '身份、受信绑定、策略、运行状态及预算计数',
+  next_wake_at DATETIME(6) NOT NULL COMMENT '下次发现和复盘UTC时间',
+  created_at DATETIME(6) NOT NULL COMMENT '创建UTC时间',
+  updated_at DATETIME(6) NOT NULL COMMENT '最近状态提交UTC时间',
+  PRIMARY KEY(id),
+  -- 唯一约束防止重启后重复认领；索引只唤醒到期身份。
+  UNIQUE KEY uq_autonomy_owner(namespace,owner_key),
+  KEY idx_autonomy_wake(namespace,next_wake_at,id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='持续身份与宿主策略和动态状态';
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_task (
+  id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '任务及汇报幂等标识',
+  profile_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '所属持续身份',
+  request_id VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '原始创建事件幂等键',
+  revision INT NOT NULL COMMENT '审批及计划修订版本',
+  status VARCHAR(16) NOT NULL COMMENT 'pending/running/retry/blocked/approval/succeeded/failed/cancelled',
+  document_json JSON NOT NULL COMMENT '目标、计划、步骤检查点和身份快照',
+  attempts INT NOT NULL COMMENT '当前步骤领取次数，完成后清零',
+  lease_token CHAR(32) COLLATE utf8mb4_bin NULL COMMENT '随机执行令牌，拒绝迟到提交',
+  lease_expires_at DATETIME(6) NULL COMMENT '执行权到期UTC时间，晚于网络超时',
+  next_run_at DATETIME(6) NOT NULL COMMENT '重试或定时执行UTC时间',
+  created_at DATETIME(6) NOT NULL COMMENT '创建UTC时间',
+  updated_at DATETIME(6) NOT NULL COMMENT '最近提交UTC时间',
+  PRIMARY KEY(id),
+  -- 请求唯一键防重复发现；调度索引支持过期租约恢复。
+  UNIQUE KEY uq_autonomy_task_request(profile_id,request_id),
+  KEY idx_autonomy_task_due(profile_id,status,next_run_at),
+  -- 保留任务所有权，禁止删除仍有任务的身份。
+  CONSTRAINT fk_autonomy_task_profile FOREIGN KEY(profile_id) REFERENCES agent_bot_autonomy_profile(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='可恢复的自主任务和逐步执行检查点';
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_episode (
+  id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '身份及来源事件派生的情节标识',
+  profile_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '可信固定身份',
+  event_id VARCHAR(128) COLLATE utf8mb4_bin NOT NULL COMMENT '来源事件标识',
+  document_json JSON NOT NULL COMMENT '来源、原文、摘要及用户任务意图',
+  expires_at DATETIME(6) NOT NULL COMMENT '原情节到期UTC时间，不影响已确认事实',
+  created_at DATETIME(6) NOT NULL COMMENT '创建UTC时间',
+  PRIMARY KEY(id),
+  -- 来源唯一约束防止重复归档；到期索引支持有限遗忘。
+  UNIQUE KEY uq_autonomy_episode_event(profile_id,event_id),
+  KEY idx_autonomy_episode_expiry(profile_id,expires_at),
+  CONSTRAINT fk_autonomy_episode_profile FOREIGN KEY(profile_id) REFERENCES agent_bot_autonomy_profile(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='有来源和保留期限的情节记忆';
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_proposal (
+  id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '事实提取提案标识',
+  profile_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '所属身份',
+  episode_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '可追踪来源情节',
+  status VARCHAR(16) NOT NULL COMMENT 'pending/applying/applied/rejected/review',
+  revision INT NOT NULL COMMENT '审批所见版本',
+  document_json JSON NOT NULL COMMENT '操作参数、证据绑定和执行回执',
+  created_at DATETIME(6) NOT NULL COMMENT '创建UTC时间',
+  PRIMARY KEY(id),
+  -- 状态索引支持管理员查询待核对提案。
+  KEY idx_autonomy_proposal_status(profile_id,status,created_at),
+  -- 来源记录保留墓碑以维持审计关系。
+  CONSTRAINT fk_autonomy_proposal_profile FOREIGN KEY(profile_id) REFERENCES agent_bot_autonomy_profile(id),
+  CONSTRAINT fk_autonomy_proposal_episode FOREIGN KEY(episode_id) REFERENCES agent_bot_autonomy_episode(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='有版本审批和来源验证的长期事实提案';
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_audit (
+  id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT 'UTC时间前缀加随机后缀，支持稳定倒序分页',
+  profile_id CHAR(32) COLLATE utf8mb4_bin NOT NULL COMMENT '所属身份',
+  kind VARCHAR(40) NOT NULL COMMENT '受控事件类型',
+  subject_id CHAR(32) COLLATE utf8mb4_bin NULL COMMENT '对应任务或提案标识',
+  document_json JSON NOT NULL COMMENT '身份版本、状态变化或评估结果',
+  created_at DATETIME(6) NOT NULL COMMENT '事件UTC时间',
+  PRIMARY KEY(id),
+  -- 时间索引支持有界审计分页。
+  KEY idx_autonomy_audit_time(profile_id,created_at,id),
+  CONSTRAINT fk_autonomy_audit_profile FOREIGN KEY(profile_id) REFERENCES agent_bot_autonomy_profile(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='自主行为与身份修订不可变审计';

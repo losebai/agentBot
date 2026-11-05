@@ -7,7 +7,7 @@ export type CallCategory = 'conversation' | 'system';
 export type SystemKind = 'auto_speak' | 'command';
 export interface CallSummary {
   id: number; session_Id: string | null; create_time: string | null;
-  duration: number | null; model: string | null; request_id: string | null;
+  duration: number | null; model: string | null; provider_name: string | null; request_id: string | null;
   system_kind?: SystemKind | null;
   type: CallType; source: string; source_id: string; execution_id: string | null; status: string;
   /** 单次归档的累计用量；未上报字段保留 null，缓存输入已包含在输入总量中。 */
@@ -23,7 +23,7 @@ export interface CallFilters { type: string; session_id: string; status: string;
 /** 统一调用记录沿用管理员认证，列表和独立计数使用同一组筛选条件。 */
 export class CallRecordsApi extends ApiClient {
   /** 页码直接传给后端，不能先拉完前面的所有页再在浏览器切片。 */
-  list(filters: CallFilters, page = 1, pageSize = 20, signal?: AbortSignal) {
+  list(filters: CallFilters, page = 1, pageSize = 10, signal?: AbortSignal) {
     const query = this.filters(filters);
     query.set('limit', String(pageSize)); query.set('page', String(page));
     return this.request<Page<CallSummary>>(`ai/records?${query}`, 'GET', undefined, signal);

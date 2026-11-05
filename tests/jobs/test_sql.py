@@ -6,6 +6,31 @@ from pathlib import Path
 from tests.media.test_sql import definitions, normalized
 
 
+def test_recovery_schema_matches_new_database_in_both_backends():
+    """恢复增量与新库的字段、约束和索引一致，重复升级不改变结构。"""
+    import sqlite3
+
+    root = Path(__file__).resolve().parents[2] / "sql"
+    migration = definitions((root / "job-recovery.sql").read_text("utf-8"))
+    initial = definitions((root / "agent_bot_init.sql").read_text("utf-8"))
+    assert normalized(",".join(migration["agent_bot_job_attempt"])) == normalized(
+        ",".join(initial["agent_bot_job_attempt"]),
+    )
+    with sqlite3.connect(":memory:") as connection:
+        connection.executescript((root / "agent_bot_init.sqlite.sql").read_text("utf-8"))
+        before = connection.execute(
+            "SELECT name,sql FROM sqlite_master WHERE tbl_name='agent_bot_job_attempt' "
+            "ORDER BY name",
+        ).fetchall()
+        connection.execute("DROP TABLE agent_bot_job_attempt")
+        for _ in range(2):
+            connection.executescript((root / "job-recovery.sqlite.sql").read_text("utf-8"))
+        assert connection.execute(
+            "SELECT name,sql FROM sqlite_master WHERE tbl_name='agent_bot_job_attempt' "
+            "ORDER BY name",
+        ).fetchall() == before
+
+
 def test_incremental_jobs_schema_is_comment_complete_and_matches_initialization():
     """确认只有新增表、中文表列说明，以及幂等和所有者外键约束。"""
     root = Path(__file__).resolve().parents[2]

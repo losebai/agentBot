@@ -7,7 +7,7 @@ export function AgentMenu({ page, onNavigate }: {
 }) {
   const [expanded, setExpanded] = useState(true);
   useEffect(() => {
-    if (page === 'agents' || page === 'agent-evolution') setExpanded(true);
+    if (page === 'agents' || page === 'agent-evolution' || page === 'autonomy') setExpanded(true);
   }, [page]);
   return <div className="plugin-navigation">
     <button type="button" aria-expanded={expanded} aria-controls="agent-submenu"
@@ -15,7 +15,7 @@ export function AgentMenu({ page, onNavigate }: {
       <RobotOutlined />角色和人格<span className="plugin-menu-arrow">{expanded ? <DownOutlined /> : <RightOutlined />}</span>
     </button>
     {expanded && <div id="agent-submenu" className="plugin-submenu" role="group" aria-label="角色和人格子菜单">
-      {[{ key: 'agents', label: '角色配置' }, { key: 'agent-evolution', label: '自我演进' }].map(item => (
+      {[{ key: 'agents', label: '角色配置' }, { key: 'agent-evolution', label: '自我演进' }, { key: 'autonomy', label: '持续智能体' }].map(item => (
         <button type="button" key={item.key} className={page === item.key ? 'active' : ''}
           aria-current={page === item.key ? 'page' : undefined}
           onClick={() => onNavigate(item.key)}>{item.label}</button>

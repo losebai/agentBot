@@ -32,7 +32,7 @@ from agent_bot.bootstrap import (
     load_redis_bootstrap_config,
 )
 from agent_bot.config import PluginConfig, RuntimeConfig
-from agent_bot.database_pool import create_database_pool
+from agent_bot.database_pool import create_database_pool, finish_database_write
 from agent_bot.group_members import (
     GroupMemberStore,
 )
@@ -53,7 +53,7 @@ from agent_bot.integrations.onebot.ai_jobs import AiJobPoller, AiJobRunner
 from agent_bot.integrations.onebot.outgoing import DeliveryScope, OutgoingRecorder
 from agent_bot.integrations.onebot.replies import OneBotReplyGateway, OneBotReplyService
 from agent_bot.integrations.redis_queue import build_conversation_queue
-from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore
+from agent_bot.integrations.tagged_memory_store import TaggedMemoryStore, TaggedMemoryStoreError
 from agent_bot.integrations.tool_operations import RedisToolOperationStore
 from agent_bot.integrations.workflow_store import WorkflowStore
 from agent_bot.materials.onebot import install_material_receivers
@@ -557,14 +557,16 @@ async def initialize_chat_memory() -> None:
 
 
 async def _memory_cleanup_loop() -> None:
-    """仅清理独立的临时群背景，会话上下文没有过期或自动删除机制。"""
+    """清理临时群背景并推进长期事实的到期状态，整理不调用模型。"""
 
+    last_review_date = None
     while True:
         await asyncio.sleep(_MEMORY_CLEANUP_INTERVAL_SECONDS)
         try:
-            group_deleted = await asyncio.to_thread(
-                group_recent_context_store.cleanup_expired,
-                limit=_MEMORY_CLEANUP_BATCH_SIZE,
+            group_deleted = await finish_database_write(
+                lambda: group_recent_context_store.cleanup_expired(
+                    limit=_MEMORY_CLEANUP_BATCH_SIZE,
+                ),
             )
             if group_deleted:
                 logger.info(
@@ -574,7 +576,28 @@ async def _memory_cleanup_loop() -> None:
         except asyncio.CancelledError:
             raise
         except ChatMemoryStoreError as exc:
-            logger.warning("过期聊天记忆清理失败：{}", type(exc).__name__)
+            logger.warning("过期群背景清理失败：{}", type(exc).__name__)
+        if plugin_config.chat_tagged_memory_enabled:
+            try:
+                memory_expired = await finish_database_write(
+                    lambda: _tagged_memory_store.expire_due(limit=_MEMORY_CLEANUP_BATCH_SIZE),
+                )
+                if memory_expired:
+                    logger.info("长期记忆到期整理完成：facts={}", memory_expired)
+                review = await finish_database_write(_tagged_memory_store.record_daily_review)
+                if review["date"] != last_review_date:
+                    last_review_date = review["date"]
+                    logger.info(
+                        "长期记忆每日复盘：date={} statuses={} conflicts={} "
+                        "expiring={} stale_candidates={} revisions={}",
+                        review["date"], review["status_counts"], review["conflict_count"],
+                        review["expiring_count"], len(review["stale_candidates"]),
+                        review["revision_count"],
+                    )
+            except asyncio.CancelledError:
+                raise
+            except TaggedMemoryStoreError as exc:
+                logger.warning("长期记忆整理失败：{}", type(exc).__name__)
 
 
 @_legacy_startup

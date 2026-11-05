@@ -52,6 +52,7 @@ class WorkflowCatalog(ApiModel):
     settings_revision: int
     directory_configured: bool
     next_cursor: str | None
+    total: int = Field(ge=0)
 
 
 class WorkflowImport(ApiModel):

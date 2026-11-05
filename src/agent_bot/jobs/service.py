@@ -19,13 +19,14 @@ class JobService:
         self._lock = asyncio.Lock()
 
     async def run_due(self):
-        """领取后提交事务再调用模型；任何失败都不会重新领取同一任务。"""
+        """领取后提交事务再调用模型；明确失败不重试，中断由持久租约恢复。"""
         if self._lock.locked():
             return
         async with self._lock:
             job = await self.store.claim_due()
             if job is None:
                 return
+            logger.info("Job 开始执行：job=%s attempt=%s", job.id, job.lease_token)
             try:
                 messages = [ChatMessage(role="user", content=job.prompt)]
                 if job.system_prompt:
@@ -47,14 +48,21 @@ class JobService:
                 ):
                     raise ValueError("invalid job output")
             except asyncio.CancelledError:
-                await finish_cleanup(self.store.finish(job.id, error_code="EXECUTION_INTERRUPTED"))
+                await finish_cleanup(self.store.finish(
+                    job.id, lease_token=job.lease_token, error_code="EXECUTION_INTERRUPTED",
+                ))
                 raise
             except Exception as error:
                 logger.warning("Job 模型执行失败：job=%s error=%s", job.id, type(error).__name__)
-                await self.store.finish(job.id, error_code="MODEL_EXECUTION_FAILED")
+                await self.store.finish(
+                    job.id, lease_token=job.lease_token, error_code="MODEL_EXECUTION_FAILED",
+                )
             else:
-                # 写回失败保留 RUNNING，后续陈旧恢复标记中断；绝不重发已完成的模型调用。
-                await self.store.finish(job.id, result=result.content)
+                # 写回失败保留租约，过期后恢复；供应商不保证请求幂等，可能再次计费。
+                accepted = await self.store.finish(
+                    job.id, lease_token=job.lease_token, result=result.content,
+                )
+                logger.info("Job 结果提交：job=%s accepted=%s", job.id, accepted)
 
     async def pending_jobs(self, bot_id, after_id=None):
         """供现有机器人轮询器读取待投递成功结果。"""

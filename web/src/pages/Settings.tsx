@@ -7,6 +7,7 @@ import type { JsonValue, SettingField, SettingsSnapshot } from '../types';
 import { ComfyWorkflows } from './ComfyWorkflows';
 import { QueueMaintenance } from './QueueMaintenance';
 import { modelSettingNames, SettingsModelSelect, useSettingsModels } from '../components/SettingsModelSelect';
+import { SettingsAgentSelect } from '../components/SettingsAgentSelect';
 import { useRunningPlugins } from '../plugin-runtime';
 
 // 分类仅改变展示，共享同一草稿与版本；按字段用途归类，不用描述文本猜测。
@@ -193,7 +194,7 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
   const fields = snapshot?.fields.filter(field => !hiddenSettingNames.has(field.name) && fieldCategory(field) === currentCategory
     && visibleDecisionField(field.name, decisionBackend)
     && visibleTriggerField(field.name, triggerMode)
-    && `${field.name} ${field.description}`.toLowerCase().includes(filter.toLowerCase()))
+    && `${field.name} ${field.name === 'chat_python_agent_code' ? '角色 选择' : field.description}`.toLowerCase().includes(filter.toLowerCase()))
     // 名称是群聊触发入口，在 QQ 分类中优先展示。
     .sort((left, right) => Number(right.name === 'nickname') - Number(left.name === 'nickname')) || [];
   return <div className={embedded ? 'plugin-settings' : 'page-content'}>
@@ -243,10 +244,6 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
     <Input prefix={<SearchOutlined />} placeholder="搜索设置名称或描述" aria-label="搜索配置" value={filter} onChange={event => setFilter(event.target.value)} className="settings-search" />
     {showModels && <>
       {models.error && <Alert message={`模型列表读取失败：${models.error}`} type="error" showIcon className="notice" />}
-      <div className="heading-actions">
-        {models.page.next_cursor && <Button disabled={models.busy}
-          onClick={() => void models.load(models.page.next_cursor!)}>加载更多模型</Button>}
-      </div>
     </>}
     {loading ? <div className="loading"><Spin /></div> : <div className="settings-card">
       {!fields.length && <Empty description="没有可显示的配置" />}
@@ -267,9 +264,10 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
         // 可选模型用空字符串表示未配置，清空选择不会把字符串字段改成 null。
         const modelCanClear = field.nullable || ['chat_memory_embedding_model', 'chat_sticker_model'].includes(field.name);
         return <div className="setting-row" key={field.name}>
-          <div className="setting-description"><label htmlFor={id}>{field.description}</label>{field.restart_required && <Tag>重启生效</Tag>}<code>{field.name}</code></div>
+          <div className="setting-description"><label htmlFor={id}>{field.name === 'chat_python_agent_code' ? '角色 选择' : field.description}</label>{field.restart_required && <Tag>重启生效</Tag>}<code>{field.name}</code></div>
           <div className="setting-control">
-            {field.name === 'chat_auto_speak_decision_backend' ? <ChoiceSelect id={id} disabled={readOnly}
+            {field.name === 'chat_python_agent_code' ? <SettingsAgentSelect token={token} id={id} value={String(value)} readOnly={readOnly} onChange={change} />
+              : field.name === 'chat_auto_speak_decision_backend' ? <ChoiceSelect id={id} disabled={readOnly}
               value={String(value)} onChange={change}>
               <option value="laya">Laya</option><option value="llm">LLM</option>
             </ChoiceSelect>
@@ -290,7 +288,10 @@ export function Settings({ token, onPlugins, categoryKeys, embedded = false, tit
               : kind === 'boolean' ? <Switch id={id} disabled={readOnly} checked={value === true} onChange={change} />
               : kind === 'secret' ? <Input.Password id={id} disabled={readOnly} value={String(value)} placeholder={field.secret_is_set ? readOnly ? '已设置' : '已设置 · 留空保持原值' : '未设置'} autoComplete="new-password" onChange={event => change(event.target.value)} />
               : kind === 'json' || ['chat_auto_speak_llm_prompt', 'chat_auto_speak_prompt', 'chat_multi_reply_prompt', 'chat_sticker_vision_prompt'].includes(field.name) || (kind === 'string' && String(value).length > 160) ? <Input.TextArea id={id} disabled={readOnly} value={String(value)} autoSize={{ minRows: 2, maxRows: 8 }} onChange={event => change(event.target.value)} />
-              : <Input id={id} disabled={readOnly} type={kind === 'number' ? 'number' : 'text'} step="any" value={String(value)} onChange={event => change(event.target.value)} />}
+              : <Input id={id} disabled={readOnly} type={kind === 'number' ? 'number' : 'text'}
+              min={field.name === 'chat_llm_context_max_chars' ? 1 : undefined}
+              step={field.name === 'chat_llm_context_max_chars' ? 1 : 'any'}
+              value={String(value)} onChange={event => change(event.target.value)} />}
             {field.name === 'nickname' && <small>每行一个名称或别名，保存后热更新；留空关闭名字触发。</small>}
             {field.name === 'chat_sticker_model' && <small>独立选择已启用且开启视觉能力的模型，用于图片说明和文字语境匹配。留空可先维护图库，手动填写说明。</small>}
             {field.name === 'chat_sticker_vision_prompt' && <small>可补充希望识别的细节或表达风格；留空使用默认识图要求，自定义标签不会被识图覆盖。</small>}

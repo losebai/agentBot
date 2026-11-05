@@ -55,6 +55,8 @@ class MediaProvider:
                 "audio": {"voice": request.voice, "format": request.audio_format},
             }
         headers = {"Accept": "application/json"}
+        if resolved.provider.user_agent:
+            headers["User-Agent"] = resolved.provider.user_agent
         if credential is not None:
             headers["Authorization"] = "Bearer " + credential.get_secret_value()
         value = await self.transport.read_json(

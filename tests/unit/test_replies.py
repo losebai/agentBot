@@ -15,6 +15,7 @@ from agent_bot.services.replies import (
     GeneratedReply,
     LlmReplyComposer,
     ReplyIntent,
+    TaskFailedFacts,
     WorkflowStatusFacts,
 )
 
@@ -196,6 +197,9 @@ async def test_composer_returns_generated_reply_from_llm() -> None:
     ('"给你，画好啦\uff5e"', "给你，画好啦\uff5e"),
     ('{"消息内容":"给你，画好啦\uff5e"}', "给你，画好啦\uff5e"),
     ('{"消息内容":""}', None),
+    ('{"给你，画好啦"}', "给你，画好啦"),
+    ('{“给你，画好啦”}', "给你，画好啦"),
+    ('{""}', None),
     ('[]', None),
     ('["  "]', None),
 ])
@@ -206,6 +210,25 @@ async def test_notification_composer_normalizes_json_model_text(result, expected
     )
     reply = await composer.compose(valid_usage_intent())
     assert (reply.text if reply is not None else None) == expected
+
+
+@pytest.mark.parametrize("code", ["AI_RESPONSE_INVALID", "AGENT_MODEL_RESPONSE_INVALID"])
+async def test_model_failure_explanation_cannot_infer_missing_tools_from_isolated_call(code):
+    """说明只表达已知模型故障与工具回执，禁用工具不能成为权限缺失的证据。"""
+    chat = FakeReplyChatService(result="查询工具已返回，但整理回答时模型出错了。")
+    composer = LlmReplyComposer(lambda: chat, timeout_seconds_provider=lambda: 2)
+    reply = await composer.compose(ReplyIntent(
+        requestId="failed-desktop", sessionId="desktop", code="TASK_FAILED",
+        originalPrompt="查看电脑状态",
+        facts=TaskFailedFacts(operation="conversation", error_type="ChatAiProtocolError",
+                              error_code=code, completed_tool_calls=2),
+    ))
+    assert reply is not None
+    instruction = chat.calls[0].instruction
+    assert "已有 2 次工具调用返回成功回执" in instruction
+    assert "已知故障是模型回答格式无效" in instruction
+    assert "不能据此声称原任务没有工具" in instruction
+    assert chat.calls[0].use_agent
 
 
 @pytest.mark.parametrize("result,expected", [

@@ -7,16 +7,22 @@ const models = [
   { id: 2, revision: 1, provider_id: 20, provider_name: '供应商乙', upstream_model: 'shared', reference: 'model:2', alias: null, enabled: true },
 ];
 
-it('旧别名显示供应商与上游模型，搜索供应商后提交稳定引用', async () => {
+it('旧别名显示原始模型 ID，搜索供应商后提交对应稳定引用', async () => {
   const changed = vi.fn();
   render(<><label htmlFor="model">模型</label><SettingsModelSelect id="model" value="legacy" readOnly={false} nullable
     directory={{ page: { items: models, next_cursor: null }, busy: false, error: '', load: vi.fn() }} onChange={changed} /></>);
-  expect(screen.getByText('供应商甲 / shared')).toBeVisible();
+  expect(screen.getByText('shared')).toBeVisible();
   const input = screen.getByRole('combobox', { name: '模型' });
   fireEvent.mouseDown(input);
   fireEvent.change(input, { target: { value: '供应商乙' } });
-  fireEvent.click(await screen.findByText('供应商乙 / shared'));
+  fireEvent.click(await screen.findByRole('option', { name: 'shared' }));
   expect(changed).toHaveBeenCalledWith('model:2');
+});
+
+it('稳定引用的当前配置只显示上游模型 ID', () => {
+  render(<><label htmlFor="model-reference">模型</label><SettingsModelSelect id="model-reference" value="model:2" readOnly={false} nullable
+    directory={{ page: { items: models, next_cursor: null }, busy: false, error: '', load: vi.fn() }} onChange={vi.fn()} /></>);
+  expect(screen.getByText('shared')).toBeVisible();
 });
 
 it('加载失败保留未知引用，目录刷新与只读不会更换模型', () => {
@@ -46,7 +52,7 @@ it.each([null, 'next-page'])('规范格式旧别名指向其他ID时，即使目
   expect(screen.getByText('当前配置存在模型身份歧义，请先完成模型身份升级。')).toBeVisible();
   expect(changed).not.toHaveBeenCalled();
   fireEvent.mouseDown(screen.getByRole('combobox'));
-  fireEvent.click(await screen.findByText('供应商甲 / shared'));
+  fireEvent.click(await screen.findByRole('option', { name: 'shared' }));
   expect(changed).toHaveBeenCalledWith('model:1');
 });
 
@@ -59,8 +65,9 @@ it('表情包独立模型仅允许视觉模型，保留失效选择并允许清�
   expect(screen.getByText('当前配置的模型未开启视觉能力，请选择支持识图的模型。')).toBeVisible();
   expect(changed).not.toHaveBeenCalled();
   fireEvent.mouseDown(screen.getByRole('combobox'));
-  const textOnly = (await screen.findAllByText('供应商甲 / shared')).find(item => item.closest('.ant-select-item'))!;
+  const options = await screen.findAllByRole('option', { name: 'shared' });
+  const textOnly = options[0];
   expect(textOnly.closest('.ant-select-item')).toHaveClass('ant-select-item-option-disabled');
-  fireEvent.click(await screen.findByText('供应商乙 / shared'));
+  fireEvent.click(options[1]);
   expect(changed).toHaveBeenCalledWith('model:2');
 });

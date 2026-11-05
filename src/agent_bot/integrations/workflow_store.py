@@ -483,26 +483,30 @@ class WorkflowStore:
         return _row_to_definition(row)
 
     def list_page(
-        self, *, after: str | None = None, limit: int = 100,
-    ) -> tuple[tuple[WorkflowDefinition, ...], str | None]:
-        """按稳定键分页管理全部记录，多取一条只用于判断是否存在下一页。"""
-        if not 1 <= limit <= 100:
+        self, *, after: str | None = None, page: int | None = None, limit: int = 10,
+    ) -> tuple[tuple[WorkflowDefinition, ...], str | None, int]:
+        """管理页支持直接页码；兼容游标仍按稳定工作流键前进。"""
+        if not 1 <= limit <= 100 or (page is not None and (page < 1 or after is not None)):
             raise ValueError("workflow page limit is invalid")
         try:
             with closing(self._open()) as connection:
                 self._validate_schema(connection)
                 with connection.cursor() as cursor:
+                    cursor.execute(f"SELECT COUNT(*) AS total FROM `{self._table}`")
+                    total = cursor.fetchone()["total"]
                     cursor.execute(
                         f"SELECT {_SELECT_COLUMNS} FROM `{self._table}` "
-                        "WHERE workflow_key > %s ORDER BY workflow_key LIMIT %s",
-                        (after or "", limit + 1),
+                        "WHERE workflow_key > %s ORDER BY workflow_key LIMIT %s"
+                        + (" OFFSET %s" if page is not None else ""),
+                        (after or "", limit + 1,
+                         *(((page - 1) * limit,) if page is not None else ())),
                     )
                     rows = cursor.fetchall()
         except (InterfaceError, OperationalError, DatabaseError) as exc:
             raise WorkflowStoreError("workflow database operation failed") from exc
         definitions = tuple(_row_to_definition(row) for row in rows[:limit])
         next_cursor = definitions[-1].workflow_key if len(rows) > limit else None
-        return definitions, next_cursor
+        return definitions, next_cursor, total
 
     def update_metadata(
         self, workflow_key: str, *, expected_revision: str, values: WorkflowMetadataPatch,

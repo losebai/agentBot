@@ -56,7 +56,7 @@ export function MaterialLibrary({token}: {token: string}) {
   const api = useMemo(() => new MaterialLibraryApi(token), [token]);
   const [filters, setFilters] = useState(emptyFilters), [draft, setDraft] = useState(emptyFilters);
   const [page, setPage] = useState<Page<LibraryMaterial>>({items: [], next_cursor: null});
-  const [pageNumber, setPageNumber] = useState(1), [pageSize, setPageSize] = useState(20);
+  const [pageNumber, setPageNumber] = useState(1), [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState<number | null>(null), [countError, setCountError] = useState('');
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState<string>(), [detail, setDetail] = useState<LibraryMaterial>();

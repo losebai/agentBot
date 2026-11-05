@@ -18,6 +18,17 @@ def resource(name: str) -> str:
     return (ROOT / "sql" / name).read_text("utf-8")
 
 
+def released_resource(name: str) -> str:
+    """模拟0.6.2发行包的完整结构，不要求尚未发布的持续智能体表。"""
+    from agent_bot.sql_scripts import split_sql
+
+    script = resource(name)
+    if name == 'agent_bot_init.sqlite.sql':
+        return ';\n'.join(statement for statement in split_sql(script)
+                          if 'agent_bot_autonomy_' not in statement) + ';'
+    return script
+
+
 @pytest.fixture
 def legacy_database(tmp_path):
     """模拟尚无版本记录、没有 B站表的完整 0.5.5 至 0.5.7 基线。"""
@@ -25,6 +36,11 @@ def legacy_database(tmp_path):
     with sqlite3.connect(path) as connection:
         connection.executescript(resource("agent_bot_init.sqlite.sql"))
         for name in (
+            "agent_bot_autonomy_audit",
+            "agent_bot_autonomy_proposal",
+            "agent_bot_autonomy_episode",
+            "agent_bot_autonomy_task",
+            "agent_bot_autonomy_profile",
             "agent_bot_bilibili_account",
             "agent_bot_bilibili_operation",
             "agent_bot_schema_version",
@@ -32,8 +48,12 @@ def legacy_database(tmp_path):
             "chat_material_category",
             "chat_material_tag",
             "agent_bot_sticker",
+            "agent_bot_job_attempt",
         ):
             connection.execute(f"DROP TABLE IF EXISTS {name}")
+        connection.execute("ALTER TABLE agent_bot_ai_provider DROP COLUMN user_agent")
+        connection.execute("DROP INDEX idx_call_system_time")
+        connection.execute("ALTER TABLE agent_bot_call_record DROP COLUMN system_kind")
         connection.execute("CREATE TABLE private_business (value TEXT)")
         connection.execute("INSERT INTO private_business VALUES ('must-preserve')")
     return DatabaseParams(backend="sqlite", sqlite_path=str(path))
@@ -53,6 +73,8 @@ def test_unversioned_database_upgrades_and_second_start_has_no_ddl(legacy_databa
     assert first.applied == (
         "bilibili-v1", "comfy-plugin-v1", "material-classification-v1", "agent-personality-v1",
         "stickers-v1", "agent-evolution-v1", "evolution-independent-v2",
+        "provider-user-agent-v1", "job-recovery-v1", "call-record-classification-v1",
+        "persistent-agent-v1",
     )
     assert query(legacy_database, "SELECT value FROM private_business") == [("must-preserve",)]
     assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [
@@ -60,7 +82,12 @@ def test_unversioned_database_upgrades_and_second_start_has_no_ddl(legacy_databa
     ]
     second = upgrade_database(legacy_database, read_resource=resource)
     assert second.applied == () and second.previous_version == __version__
-    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(7,)]
+    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(11,)]
+    assert query(
+        legacy_database,
+        "SELECT count(*) FROM pragma_table_info('agent_bot_ai_provider') "
+        "WHERE name='user_agent'",
+    ) == [(1,)]
 
 
 def test_newer_database_is_rejected_without_changing_any_rows(legacy_database):
@@ -80,7 +107,7 @@ def test_sqlite_failure_rolls_back_ddl_and_preserves_old_version(legacy_database
     from agent_bot.database_upgrade import MIGRATIONS
 
     upgrade_database(legacy_database, read_resource=resource)
-    bad = Migration("0.6.0", "broken-test", "bad.sql", "bad.sql")
+    bad = Migration("0.6.4", "broken-test", "bad.sql", "bad.sql")
 
     def read(name):
         """以真实 SQL 执行中途失败，不通过 mock 假装回滚。"""
@@ -94,7 +121,7 @@ def test_sqlite_failure_rolls_back_ddl_and_preserves_old_version(legacy_database
         upgrade_database(
             legacy_database,
             read_resource=read,
-            target_version="0.6.0",
+            target_version="0.6.4",
             migrations=(*MIGRATIONS, bad),
         )
     assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [
@@ -152,7 +179,7 @@ def test_two_startups_serialize_and_only_one_applies_migration(legacy_database):
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: start(), range(2)))
-    assert sorted(len(result.applied) for result in results) == [0, 7]
+    assert sorted(len(result.applied) for result in results) == [0, 11]
 
 
 def test_missing_existing_sqlite_file_is_not_created(tmp_path):
@@ -175,15 +202,15 @@ def test_recorded_old_version_can_add_structure_required_by_new_version(legacy_d
             "SELECT sql FROM sqlite_master WHERE name='chat_workflow'"
         ).fetchone()[0]
         connection.execute("DROP TABLE chat_workflow")
-    next_step = Migration("0.6.0", "new-workflow-table", "workflow.sql", "workflow.sql")
+    next_step = Migration("0.6.4", "new-workflow-table", "workflow.sql", "workflow.sql")
     result = upgrade_database(
         legacy_database,
-        target_version="0.6.0",
+        target_version="0.6.4",
         migrations=(*MIGRATIONS, next_step),
         read_resource=lambda name: creation if name == "workflow.sql" else resource(name),
     )
     assert result.applied == ("new-workflow-table",)
-    assert result.current_version == "0.6.0"
+    assert result.current_version == "0.6.4"
 
 
 def test_sql_splitter_preserves_quoted_semicolons_and_comment_markers():
@@ -303,4 +330,50 @@ def test_material_upgrade_requires_original_table_and_orders_foreign_keys(legacy
         connection.execute("DROP TABLE chat_material_source")
         connection.execute("DROP TABLE chat_material")
     with pytest.raises(UpgradeError, match="chat_material"):
+        upgrade_database(legacy_database, read_resource=resource)
+
+
+def test_autonomy_upgrade_from_released_version_matches_fresh_schema(legacy_database, tmp_path):
+    """从0.6.2的十项流水更新，新增五表与新库结构一致，二次启动零DDL。"""
+    from agent_bot.database_upgrade import AUTONOMY_TABLES
+
+    old = upgrade_database(legacy_database, target_version='0.6.2', read_resource=released_resource)
+    assert len(old.applied) == 10
+    result = upgrade_database(legacy_database, read_resource=resource)
+    assert result.previous_version == '0.6.2'
+    assert result.applied == ('persistent-agent-v1',)
+    with sqlite3.connect(legacy_database.sqlite_path) as upgraded, sqlite3.connect(
+        tmp_path / 'fresh-autonomy.db'
+    ) as fresh:
+        fresh.executescript(resource('agent_bot_init.sqlite.sql'))
+        for table in AUTONOMY_TABLES:
+            for pragma in ('table_info', 'index_list', 'foreign_key_list'):
+                assert upgraded.execute(f'PRAGMA {pragma}({table})').fetchall() == (
+                    fresh.execute(f'PRAGMA {pragma}({table})').fetchall())
+    assert upgrade_database(legacy_database, read_resource=resource).applied == ()
+
+
+def test_autonomy_invalid_existing_table_rolls_back_migration_and_version(legacy_database):
+    """残缺同名表不能冒充完成，索引核验失败回滚DDL和新流水，保留原版本。"""
+    upgrade_database(legacy_database, target_version='0.6.2', read_resource=released_resource)
+    with sqlite3.connect(legacy_database.sqlite_path) as connection:
+        connection.executescript(resource('persistent-agent.sqlite.sql'))
+        # 模拟人工建了同名同列但没有唯一约束的表，不修改SQLite内部元数据。
+        columns = connection.execute('PRAGMA table_info(agent_bot_autonomy_profile)').fetchall()
+        connection.execute('DROP TABLE agent_bot_autonomy_profile')
+        declaration = ','.join(f'"{row[1]}" {row[2]}' for row in columns)
+        connection.execute('CREATE TABLE agent_bot_autonomy_profile (' + declaration + ')')
+    with pytest.raises(UpgradeError, match='索引或外键'):
+        upgrade_database(legacy_database, read_resource=resource)
+    assert query(legacy_database, 'SELECT version FROM agent_bot_schema_version') == [('0.6.2',)]
+    assert not query(legacy_database, "SELECT migration_id FROM agent_bot_schema_migration "
+                     "WHERE migration_id='persistent-agent-v1'")
+
+
+def test_applied_autonomy_is_revalidated_before_every_startup(legacy_database):
+    """已有applied流水不跳过实际结构核验，后续索引缺失也不能开启服务。"""
+    upgrade_database(legacy_database, read_resource=resource)
+    with sqlite3.connect(legacy_database.sqlite_path) as connection:
+        connection.execute('DROP INDEX idx_autonomy_task_due')
+    with pytest.raises(UpgradeError, match='索引或外键'):
         upgrade_database(legacy_database, read_resource=resource)

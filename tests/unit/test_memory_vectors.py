@@ -31,6 +31,7 @@ class Catalog:
                 revision=1,
                 protocol=protocol,
                 base_url="https://offline.invalid/v1",
+                user_agent="AgentBot-Memory-Test/1.0",
                 credential=SecretStr("private-test-key"),
                 credential_available=True,
             ),
@@ -52,6 +53,7 @@ async def test_embedding_protocol_and_order(protocol):
         assert body["model"] == "embedding-test"
         assert body["input"] == ["甲", "乙"]
         assert request.headers["authorization"] == "Bearer private-test-key"
+        assert request.headers["user-agent"] == "AgentBot-Memory-Test/1.0"
         if protocol == "ollama":
             assert request.url.path == "/v1/api/embed"
             assert body["truncate"] is False

@@ -1,4 +1,4 @@
-"""管理端只可暂停或重置演化，不能伪造互动证据和身份。"""
+"""管理端可研究既有反馈并手动应用，不能伪造互动证据、身份或任意档位。"""
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,3 +16,9 @@ class EvolutionReset(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
     expected_revision: int = Field(ge=1)
+
+
+class EvolutionAdvance(EvolutionReset):
+    """手动执行绑定只读预览的证据摘要，禁止网页提交任意档位或伪造反馈。"""
+
+    preview_key: str = Field(pattern=r'^[a-f0-9]{64}$')

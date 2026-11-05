@@ -37,7 +37,11 @@ code { font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .brand-lockup { display: flex; align-items: center; gap: 9px; padding: 0 10px; font-size: 16px; font-weight: 600; letter-spacing: -.3px; }
 .bot-mark { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid #d8e1ed; background: #fff; color: #2563eb; border-radius: 8px; font-size: 12px; font-weight: 650; }
 .nav-label { color: var(--text-secondary); font-size: 12px; margin: 32px 10px 10px; }
-.sidebar nav { display: grid; gap: 6px; }
+/* 菜单占用侧栏剩余高度并独立滚动，品牌与退出区不被长菜单挤出视口。 */
+.sidebar > .brand-lockup, .sidebar > .nav-label, .sidebar-footer { flex-shrink: 0; }
+.sidebar nav { display: grid; align-content: start; gap: 6px; min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #c5bfd5 transparent; scrollbar-gutter: stable; }
+.sidebar nav::-webkit-scrollbar { width: 6px; height: 6px; }
+.sidebar nav::-webkit-scrollbar-thumb { background: #c5bfd5; border-radius: 6px; }
 .sidebar nav button { border: 0; background: transparent; color: #596b83; padding: 10px 12px; min-height: 38px; border-radius: 6px; text-align: left; display: flex; gap: 10px; align-items: center; font-size: 14px; }
 .sidebar nav button:hover { background: #f0f5fc; color: var(--text); }
 .sidebar nav button.active { background: var(--selection-gradient); color: #535ca9; font-weight: 600; }
@@ -192,6 +196,9 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .catalog-form input:not([type=checkbox]), .catalog-form select, .record-filter input, .record-filter select, .chat-controls select {
   border: 1px solid #d8e1ed; background: white; border-radius: 6px; padding: 8px 10px; color: var(--text); min-width: 0;
 }
+.catalog-form .ant-input-password { width: 100%; min-height: 38px; border-color: #d8e1ed; border-radius: 6px; }
+.catalog-form .ant-input-password .ant-input { min-height: 0; border: 0; border-radius: 0; padding: 0; background: transparent; box-shadow: none; }
+.catalog-form .ant-input-password:focus-within { border-color: #76a5f6; box-shadow: 0 0 0 3px #2563eb12; }
 .catalog-form label:not(.checkbox-label) { display: flex; flex-direction: column; gap: 7px; font-size: 14px; }
 .catalog-form textarea, .composer textarea { width: 100%; min-height: 80px; border: 1px solid #d8e1ed; border-radius: 6px; padding: 10px; color: var(--text); resize: vertical; font: inherit; }
 .catalog-form fieldset { border: 1px solid var(--border); border-radius: 6px; display: flex; flex-direction: column; gap: 10px; padding: 14px; }
@@ -225,7 +232,7 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .agent-prompt-preview { min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
 .agent-prompt-preview summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
 .agent-prompt-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; font: inherit; font-size: 13px; margin: 12px 0 0; }
-/* Agent 以整页双栏编辑，切换按钮保留固定身份，表单不再受目录弹窗宽度限制。 */
+/* Agent 使用整页编辑，卡片切换保留固定身份；角色展示样式由 Agents.css 补充。 */
 .agent-switcher { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 20px; }
 .agent-editor.catalog-form { max-width: none; padding: 24px; }
 .agent-editor.catalog-form .agent-editor-fields { border: 0; padding: 0; min-width: 0; gap: 20px; }
@@ -244,11 +251,13 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 }
 
 /* 供应商列表和模型目录分别承载导航与编辑，窄屏仍保留完整操作。 */
-.provider-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; }
-.provider-list.panel { padding: 18px 12px; }
-.provider-list h2, .provider-models h2 { margin: 0 0 12px; font-size: 16px; font-weight: 550; }
-.provider-tabs { display: flex; flex-direction: column; gap: 4px; max-height: calc(100dvh - 280px); overflow-y: auto; }
-.provider-item { border-radius: 6px; overflow: hidden; }
+.provider-layout { display: grid; grid-template-columns: minmax(280px, 300px) minmax(0, 1fr); gap: 24px; align-items: start; }
+.provider-list.panel { display: flex; flex-direction: column; padding: 18px 12px; max-height: calc(100dvh - 170px); overflow: hidden; position: sticky; top: 18px; }
+.provider-list-heading { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.provider-list h2 { margin: 0; font-size: 16px; font-weight: 550; }
+.provider-models h2 { margin: 0 0 12px; font-size: 16px; font-weight: 550; }
+.provider-tabs { display: flex; flex: 1 1 auto; min-height: 120px; flex-direction: column; gap: 8px; overflow-y: auto; scrollbar-gutter: stable; padding-right: 6px; }
+.provider-item { flex: 0 0 auto; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .provider-item:has([aria-selected=true]) { background: var(--surface-selected); }
 .provider-item > button { width: 100%; display: flex; flex-direction: column; gap: 5px; align-items: flex-start; padding: 10px; border: 0; background: transparent; color: inherit; text-align: left; overflow-wrap: anywhere; font-size: 14px; }
 .provider-item > button strong { font-weight: 550; }
@@ -256,7 +265,6 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
 .provider-item > button[aria-selected=true] { background: var(--selection-gradient); color: #535ca9; }
 .provider-item span, .provider-item small { color: var(--text-secondary); font-size: 12px; }
 .provider-item-actions { display: flex; gap: 8px; padding: 0 10px 10px; }
-.provider-list .catalog-pagination { gap: 6px; flex-wrap: wrap; margin: 16px 0 0; }
 .provider-model-panel { min-width: 0; }
 .provider-models .page-heading { gap: 12px; }
 .provider-models .page-heading p { overflow-wrap: anywhere; font-size: 12px; }
@@ -317,12 +325,12 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
   .page-heading { align-items: flex-start; flex-wrap: wrap; }
   .heading-actions { flex-wrap: wrap; }
   .setting-row { grid-template-columns: 1fr; gap: 12px; }
-  .provider-layout { grid-template-columns: 200px minmax(0, 1fr); gap: 18px; }
+  .provider-layout { grid-template-columns: minmax(260px, 280px) minmax(0, 1fr); gap: 18px; }
 }
-@media (max-width: 900px) {
+@media (max-width: 960px) {
   .provider-layout { grid-template-columns: 1fr; }
-  .provider-list.panel { padding: 0 0 16px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .provider-tabs { max-height: 240px; }
+  .provider-list.panel { position: static; max-height: 360px; padding: 12px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .provider-tabs { min-height: 140px; }
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .metric { padding: 18px; }
   .metric:first-child { padding-left: 18px; }
@@ -338,7 +346,7 @@ h1 { font-size: 26px; line-height: 1.4; letter-spacing: -.4px; margin: 0 0 7px; 
   .sidebar { width: 100%; position: static; padding: 14px 16px 10px; border-right: 0; border-bottom: 1px solid var(--border); }
   .sidebar .brand-lockup { padding: 0; font-size: 15px; }
   .nav-label { display: none; }
-  .sidebar nav { display: flex; overflow-x: auto; gap: 4px; margin-top: 12px; padding-bottom: 4px; }
+  .sidebar nav { display: flex; flex: none; overflow-x: auto; overflow-y: hidden; scrollbar-gutter: auto; gap: 4px; margin-top: 12px; padding-bottom: 4px; }
   .sidebar nav button { flex: 0 0 auto; padding: 8px 10px; white-space: nowrap; gap: 7px; font-size: 13px; }
   .sidebar-footer { padding: 8px 0 0; margin-top: 0; }
   .main-area { width: 100%; margin: 0; }

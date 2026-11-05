@@ -21,14 +21,23 @@ def unified_db(ai_database):
 
 
 async def test_new_calls_share_table_and_keep_field_meanings(ai_params, unified_db):
-    """普通调用仅写统一记录，正文只在详情返回。"""
+    """普通调用仅写统一记录，正文只在详情返回，稳定模型引用补齐供应商。"""
+    unified_db.connection.executemany(
+        "INSERT INTO agent_bot_ai_provider (id,name) VALUES (?,?)",
+        [(7, "供应商甲"), (8, "供应商乙")],
+    )
+    unified_db.connection.executemany(
+        "INSERT INTO agent_bot_ai_model (id,upstream_model,provider_id) VALUES (?,?,?)",
+        [(11, "upstream", 7), (12, "upstream", 8)],
+    )
+    unified_db.connection.commit()
     old = AiSessionStore(ai_params, connect=unified_db.connect)
     await old.save(
         SessionWrite(
             execution_id="a" * 32,
             session_id="s",
             request_id="r",
-            configured_model="alias",
+            configured_model="model:11",
             model="upstream",
             status="completed",
             duration_ms=15,
@@ -43,9 +52,11 @@ async def test_new_calls_share_table_and_keep_field_meanings(ai_params, unified_
     page = await store.list_calls()
     assert len(page.items) == 1
     assert page.items[0].type == "ordinary"
+    assert page.items[0].provider_name == "供应商甲"
     assert "content" not in page.items[0].model_dump()
     detail = await store.get_call(page.items[0].id)
     assert (detail.content, detail.replay_context, detail.duration) == ("输入", "回复", 15)
+    assert detail.provider_name == "供应商甲"
     assert detail.data["usage"]["total_tokens"] == 4
 
 

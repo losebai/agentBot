@@ -5,7 +5,7 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Sequence
 
-from agent_bot.ai.context import format_qq_context
+from agent_bot.ai.context import DEFAULT_CONTEXT_MAX_CHARS, format_qq_context
 from agent_bot.models import ChatContext, ChatMessage
 from agent_bot.services.chat.errors import EmptyPromptError, PromptTooLongError
 from agent_bot.state import ConversationContext
@@ -34,7 +34,6 @@ _RECENT_GROUP_CONTEXT_ACKNOWLEDGEMENT = (
 _CURRENT_USER_CONTEXT_TEMPLATE = "我是{name}\n{prompt}"
 _MAX_CURRENT_USER_NAME_UTF16_UNITS = 128
 _MAX_REQUEST_MESSAGES = 100
-_MAX_REQUEST_CHARS = 120_000
 _MAX_MESSAGE_CHARS = 32_000
 
 
@@ -46,11 +45,15 @@ class ChatPromptBuilder:
         *,
         system_prompt: str,
         max_input_chars: int,
+        max_context_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
     ) -> None:
-        """初始化提示构建器；机器人提示词留空时不注入系统消息。"""
+        """注入输入与总上下文预算；机器人提示词留空时不注入系统消息。"""
 
         if max_input_chars <= 0:
             raise ValueError("max input characters must be positive")
+        if max_context_chars <= 0:
+            raise ValueError("context character limit must be positive")
+        self._max_context_chars = max_context_chars
         normalized_system_prompt = system_prompt.strip()
         self._max_input_chars = max_input_chars
         self._system_messages = (
@@ -175,8 +178,10 @@ class ChatPromptBuilder:
         if any(len(message.content) > _MAX_MESSAGE_CHARS for message in budget_messages):
             raise PromptTooLongError("fixed prompt message cannot exceed 32000 characters")
         fixed_chars = sum(len(message.content) for message in budget_messages)
-        if fixed_chars > _MAX_REQUEST_CHARS:
-            raise PromptTooLongError("fixed prompt cannot exceed 120000 characters")
+        if fixed_chars > self._max_context_chars:
+            raise PromptTooLongError(
+                f"fixed prompt cannot exceed {self._max_context_chars} characters"
+            )
 
         history_budget = _MAX_REQUEST_MESSAGES - len(budget_messages)
         history = (
@@ -186,7 +191,7 @@ class ChatPromptBuilder:
         history_chars = sum(len(message.content) for message in history)
         start = 0
         # 日志允许独立、连续的助手事件，逐条移除最旧消息，不补造用户或要求配对。
-        while history_chars + fixed_chars > _MAX_REQUEST_CHARS:
+        while history_chars + fixed_chars > self._max_context_chars:
             history_chars -= len(history[start].content)
             start += 1
         messages.extend(history[start:])

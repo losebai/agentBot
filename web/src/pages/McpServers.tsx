@@ -10,7 +10,7 @@ const empty:McpDraft={name:'',code:'',description:'',enabled:false,category:'gen
 /** 远程服务使用 MCP 协议，独立连接配置保存在数据库，令牌只通过表单提交。 */
 export function McpServers({token}:{token:string}) {
   const api=useMemo(()=>new AgentApi(token),[token]);
-  const actions=useMemo(()=>({list:api.listMcps.bind(api),create:api.createMcp.bind(api),update:api.updateMcp.bind(api),remove:api.deleteMcp.bind(api)}),[api]);
+  const actions=useMemo(()=>({list:api.mcpPage.bind(api),create:api.createMcp.bind(api),update:api.updateMcp.bind(api),remove:api.deleteMcp.bind(api)}),[api]);
   return <DirectoryEditor title="远程服务" label="远程服务" description="通过 MCP 协议登记独立远程服务，获取完整工具列表并管理每个工具的启用状态。搜索类服务也通过关联服务使用其原生工具。" empty={empty} actions={actions} fields={(draft,set,item)=><>
     <label>服务代码<input required pattern="[a-z][a-z0-9_-]{0,63}" value={draft.code} onChange={e=>set({...draft,code:e.target.value})}/></label>
     <label>分类<ChoiceSelect aria-label="分类" value={draft.category} onChange={e=>set({...draft,category:e as McpDraft['category']})}><option value="general">通用工具</option><option value="search">网页搜索</option></ChoiceSelect></label>

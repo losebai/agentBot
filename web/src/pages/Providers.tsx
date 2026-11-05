@@ -6,16 +6,14 @@ import { ApiFailure, errorMessage } from '../api';
 import { CatalogDialog } from '../components/CatalogDialog';
 import { CredentialInput } from '../components/CredentialInput';
 import { Models } from './Models';
-import type { Page, Provider, ProviderDraft, ProviderProtocol } from '../ai-types';
+import type { CatalogPage, Provider, ProviderDraft, ProviderProtocol } from '../ai-types';
 
-const empty: ProviderDraft = { name: '', protocol: 'openai-responses', base_url: '', enabled: false, description: '' };
+const empty: ProviderDraft = { name: '', protocol: 'openai-responses', base_url: '', user_agent: '', enabled: false, description: '' };
 
 /** 左侧选择供应商，右侧管理其模型；供应商密钥仅在弹窗中写入，不从响应回填。 */
 export function Providers({ token }: { token: string }) {
   const api = useMemo(() => new AiApi(token), [token]);
-  const [page, setPage] = useState<Page<Provider>>({ items: [], next_cursor: null });
-  const [cursor, setCursor] = useState<string>();
-  const [previous, setPrevious] = useState<(string | undefined)[]>([]);
+  const [page, setPage] = useState<CatalogPage<Provider>>({ items: [], next_cursor: null, total: 0 });
   const [selectedId, setSelectedId] = useState<number>();
   const [savedSelection, setSavedSelection] = useState<Provider>();
   const [editing, setEditing] = useState<Provider | null>();
@@ -30,19 +28,33 @@ export function Providers({ token }: { token: string }) {
     const current = new AbortController(); controller.current = current;
     return () => current.abort();
   }, [api]);
-  // 新保存的供应商可能不在当前分页；保留该记录，避免新增模型误归属首行。
+  // 完整目录刷新完成前保留新记录，避免新增模型误归属首行。
   const items = savedSelection && !page.items.some(item => item.id === savedSelection.id)
     ? [...page.items, savedSelection] : page.items;
   const selected = items.find(item => item.id === selectedId) || items[0];
 
-  /** 刷新供应商页，已选供应商仍存在时保持选择。 */
+  /** 供应商数量有限，自动读取完整目录并交给固定高度侧栏滚动展示。 */
   async function load() {
+    const signal = controller.current?.signal;
+    if (!signal || signal.aborted) return;
     setBusy(true);
-    try { setPage(await api.providers(cursor)); setError(''); }
-    catch (failure) { setError(errorMessage(failure)); }
-    finally { setBusy(false); }
+    try {
+      const items:Provider[]=[];const ids=new Set<number>(),cursors=new Set<string>();
+      let after:string|undefined;
+      do {
+        const next=await api.providers(after,signal);signal.throwIfAborted();
+        for(const item of next.items)if(!ids.has(item.id)){ids.add(item.id);items.push(item);}
+        const cursor=next.next_cursor??undefined;
+        if(cursor&&cursors.has(cursor))throw new Error('供应商目录返回了重复分页游标');
+        if(cursor)cursors.add(cursor);after=cursor;
+      } while(after);
+      setPage({items,next_cursor:null,total:items.length});
+      setError('');
+    }
+    catch (failure) { if (!signal.aborted) setError(errorMessage(failure)); }
+    finally { if (!signal.aborted) setBusy(false); }
   }
-  useEffect(() => { void load(); }, [api, cursor]);
+  useEffect(() => { void load(); }, [api]);
 
   /** 按身份重读最新供应商，含当前分页外的新记录；只更新快照，不重试原写入。 */
   async function reloadProvider(id: number, signal: AbortSignal) {
@@ -65,7 +77,7 @@ export function Providers({ token }: { token: string }) {
 
   /** 从公开字段生成编辑草稿，保留数据库中的旧密钥。 */
   function fields(item: Provider): ProviderDraft {
-    return { name: item.name, protocol: item.protocol, base_url: item.base_url, enabled: item.enabled, description: item.description };
+    return { name: item.name, protocol: item.protocol, base_url: item.base_url, user_agent: item.user_agent ?? '', enabled: item.enabled, description: item.description };
   }
   /** 新增和编辑都使用弹窗，打开时清空上次输入和提示。 */
   function edit(item: Provider | null) {
@@ -75,7 +87,7 @@ export function Providers({ token }: { token: string }) {
   function cancel() {
     setEditing(undefined); setDraft({ ...empty }); setError('');
   }
-  /** 供应商保存成功就释放密钥草稿，再挂载模型面板自动同步，失败不重复创建供应商。 */
+  /** 供应商保存成功后刷新本地目录；上游模型由管理员在模型面板显式获取。 */
   async function save() {
     const current = controller.current;
     if (busy || !current || current.signal.aborted) return;
@@ -88,14 +100,14 @@ export function Providers({ token }: { token: string }) {
       } else saved = await api.createProvider(draft);
       if (current.signal.aborted) return;
       setDraft({ ...empty }); setEditing(undefined); setNotice('供应商已保存。');
-      // 先替换当前分页的旧版本，确保新模型面板从保存响应取得同步基线。
+      // 先替换当前目录的旧版本，确保新模型面板从保存响应取得同步基线。
       setPage(value => ({ ...value, items: value.items.map(item => item.id === saved.id ? saved : item) }));
       setSavedSelection(saved); setSelectedId(saved.id); setModelRefresh(value => value + 1);
       await load();
     } catch (failure) { if (!current.signal.aborted) setError(errorMessage(failure)); }
     finally { if (!current.signal.aborted) setBusy(false); }
   }
-  /** 删除沿用停用及版本校验，刷新后选择当前页仍存在的供应商。 */
+  /** 删除沿用停用及版本校验，刷新后选择目录中仍存在的供应商。 */
   async function remove(item: Provider) {
     setBusy(true);
     try {
@@ -106,7 +118,7 @@ export function Providers({ token }: { token: string }) {
     catch (failure) { setError(errorMessage(failure)); }
     finally { setBusy(false); }
   }
-  /** 每次选择均重挂载模型面板并自动同步，重复选择同一供应商也能显式重新获取。 */
+  /** 每次选择均重挂载模型面板并读取本地目录，不访问上游模型接口。 */
   function select(item: Provider) {
     setSelectedId(item.id); setModelRefresh(value => value + 1);
   }
@@ -118,7 +130,8 @@ export function Providers({ token }: { token: string }) {
     {error && editing === undefined && <Alert type="error" showIcon className="notice" message={error} />}
     {notice && <Alert type="success" showIcon className="notice" message={notice} />}
     <div className="provider-layout">
-      <aside className="panel provider-list"><h2>供应商</h2>
+      <aside className="panel provider-list"><div className="provider-list-heading"><h2>供应商</h2>
+        <Button size="small" loading={busy} onClick={() => void load()}>刷新</Button></div>
         <div role="tablist" aria-label="供应商列表" aria-orientation="vertical" className="provider-tabs">
           {items.map(item => <div className="provider-item" key={item.id}>
             <button type="button" role="tab" id={'provider-tab-' + item.id} aria-controls="provider-model-panel"
@@ -132,11 +145,6 @@ export function Providers({ token }: { token: string }) {
           </div>)}
         </div>
         {!items.length && <p className="empty-list">{busy ? '正在加载…' : '暂无供应商。请先新增供应商。'}</p>}
-        <div className="catalog-pagination">
-          <Button size="small" disabled={!previous.length || busy} onClick={() => { setSavedSelection(undefined); setCursor(previous.at(-1)); setPrevious(previous.slice(0, -1)); }}>上一页</Button>
-          <Button size="small" disabled={!page.next_cursor || busy} onClick={() => { setSavedSelection(undefined); setPrevious([...previous, cursor]); setCursor(page.next_cursor!); }}>下一页</Button>
-          <Button size="small" loading={busy} onClick={() => void load()}>刷新</Button>
-        </div>
       </aside>
       <section id="provider-model-panel" role="tabpanel" aria-labelledby={selected ? 'provider-tab-' + selected.id : undefined} className="provider-model-panel">
         {selected ? <Models key={selected.id + ':' + modelRefresh} token={token} provider={selected}
@@ -151,10 +159,12 @@ export function Providers({ token }: { token: string }) {
           <option value="openai-responses">OpenAI Responses</option><option value="openai-chat">兼容 Chat Completions</option><option value="ollama">Ollama</option>
         </ChoiceSelect>
         <label htmlFor="provider-url">API 根地址</label><input id="provider-url" required type="url" maxLength={2048} placeholder={draft.protocol === 'ollama' ? 'http://127.0.0.1:11434' : 'https://api.example.com/v1'} value={draft.base_url} onChange={event => setDraft({ ...draft, base_url: event.target.value })} />
-        <CredentialInput label="API 密钥" value={draft.credential} onChange={credential => setDraft({ ...draft, credential })} editing={Boolean(editing)} configured={editing?.credential_set || false} available={editing?.credential_available ?? true} />
+        <label htmlFor="provider-user-agent">User-Agent</label><input id="provider-user-agent" maxLength={512} placeholder="留空则使用客户端默认值" value={draft.user_agent} onChange={event => setDraft({ ...draft, user_agent: event.target.value })} />
+        <CredentialInput label="API 密钥" value={draft.credential} onChange={credential => setDraft({ ...draft, credential })} editing={Boolean(editing)} configured={editing?.credential_set || false} available={editing?.credential_available ?? true} required={draft.protocol !== 'ollama'}
+          onReveal={editing?.credential_set ? async () => (await api.providerCredential(editing.id, editing.revision, controller.current?.signal)).credential : undefined} />
         <label htmlFor="provider-description">描述</label><input id="provider-description" maxLength={1000} value={draft.description} onChange={event => setDraft({ ...draft, description: event.target.value })} />
         <label className="checkbox-label"><input type="checkbox" checked={draft.enabled} onChange={event => setDraft({ ...draft, enabled: event.target.checked })} />启用供应商</label>
-        <p>保存后自动获取并保存全部模型，按需启用即可。API 根地址不包含完整的生成端点。</p>
+        <p>保存后可在模型面板显式获取上游模型列表，再按需启用。API 根地址不包含完整的生成端点。</p>
         <div className="heading-actions"><Button type="primary" htmlType="submit" loading={busy}>保存供应商</Button><Button disabled={busy} onClick={cancel}>取消</Button></div>
       </form>
     </CatalogDialog>}

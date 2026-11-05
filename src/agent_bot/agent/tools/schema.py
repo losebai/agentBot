@@ -42,7 +42,8 @@ _KEYWORDS = {
 }
 
 
-def bounded_json(value, *, maximum=65536, depth=16):
+def bounded_json(value, *, maximum: int | None = 65536, depth=16):
+    """校验 JSON 深度与合法性；统一上下文校验的正文可显式跳过独立字节限制。"""
     def walk(node, remaining):
         if remaining < 0:
             raise AgentError("AGENT_TOOL_SCHEMA_INVALID", status_code=422)
@@ -58,7 +59,7 @@ def bounded_json(value, *, maximum=65536, depth=16):
         result = json.dumps(value, ensure_ascii=False, allow_nan=False)
     except (ValueError, TypeError, RecursionError) as error:
         raise AgentError("AGENT_TOOL_ARGUMENTS_INVALID", status_code=422) from error
-    if len(result.encode()) > maximum:
+    if maximum is not None and len(result.encode()) > maximum:
         raise AgentError("AGENT_TOOL_RESULT_TOO_LARGE", status_code=422)
     return result
 

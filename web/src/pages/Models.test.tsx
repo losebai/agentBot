@@ -6,10 +6,10 @@ import { Models } from './Models';
 import type { AiModel, Provider } from '../ai-types';
 
 const provider: Provider = { id: 1, revision: 1, name: '本机', enabled: true,
-  protocol: 'openai-chat', base_url: 'https://offline.invalid/v1', description: '',
+  protocol: 'openai-chat', base_url: 'https://offline.invalid/v1', user_agent: '', description: '',
   credential_set: false, credential_available: true };
 
-// 媒体开关测试仅验证本地配置；专门的同步测试恢复真实接口调用。
+// 常规模型配置不得访问上游；专门的显式同步测试恢复真实接口调用。
 beforeEach(() => {
   vi.spyOn(AiApi.prototype, 'upstreamModels').mockResolvedValue({ provider_id: 1, revision: 1, models: [] });
 });
@@ -108,6 +108,7 @@ it('切换模型启用状态时提交当前版本且不覆盖媒体能力', asyn
   await waitFor(() => expect(screen.getByRole('switch', { name: '启用 Qwen/Qwen3.5-9B' })).not.toBeChecked());
   expect(patches).toEqual([{ expected_revision: 3, enabled: true }, { expected_revision: 4, enabled: false }]);
   expect(model.media?.vision_enabled).toBe(true);
+  expect(AiApi.prototype.upstreamModels).not.toHaveBeenCalled();
   expect(screen.queryByRole('button', { name: '新增模型' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /编辑|删除|导入/ })).not.toBeInTheDocument();
 });
@@ -133,15 +134,22 @@ it('切换失败保留真实状态，版本冲突可重新读取后再操作', a
   await waitFor(() => expect(screen.getByRole('switch', { name: '启用 model' })).not.toBeChecked());
 });
 
-it('选择供应商自动同步全部模型，失败后保留已保存列表并显示错误', async () => {
+it('打开模型面板只读本地目录，显式获取上游失败后仍保留已保存列表', async () => {
   vi.mocked(AiApi.prototype.upstreamModels).mockRestore();
+  const upstreamReads: string[] = [];
   vi.stubGlobal('fetch', vi.fn(async url => {
-    if (String(url).includes('upstream-models')) return Response.json({ message: '上游服务不可用' }, { status: 502 });
+    if (String(url).includes('upstream-models')) {
+      upstreamReads.push(String(url));
+      return Response.json({ message: '上游服务不可用' }, { status: 502 });
+    }
     return Response.json({ items: [{provider_name: '测试供应商', reference: `model:${1}`,  id: 1, revision: 1, alias: 'existing', upstream_model: 'model', provider_id: 1, enabled: true }], next_cursor: null });
   }));
   render(<Models token="offline" provider={provider} />);
   await screen.findByText('model');
+  expect(upstreamReads).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: '获取上游模型列表' }));
   expect(await screen.findByText(/上游服务不可用/)).toBeVisible();
+  expect(upstreamReads).toHaveLength(1);
   expect(screen.getByRole('switch', { name: '启用 model' })).toBeChecked();
 });
 
@@ -160,9 +168,33 @@ it('同步同名上游模型无需别名，目录只呈现真实身份', async (
     return Response.json({ items: models, next_cursor: null });
   }));
   render(<Models token="offline" provider={provider} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: '获取上游模型列表' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: '获取上游模型列表' }));
   expect(await screen.findByRole('switch', { name: '启用 shared' })).not.toBeChecked();
   expect(screen.getByRole('switch', { name: '启用 other' })).not.toBeChecked();
   expect(screen.queryByText('模型别名')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /别名|导入/ })).not.toBeInTheDocument();
   expect(imports).toEqual([{ expected_revision: 1, models: [{ upstream_model: 'shared' }, { upstream_model: 'other' }] }]);
 });
+
+it('模型目录显示总数和页码，翻页只读取本地目录', async () => {
+  const models = Array.from({ length: 21 }, (_, index): AiModel => ({ id: index + 1,
+    revision: 1, provider_id: 1, provider_name: '本机', reference: `model:${index + 1}`,
+    upstream_model: `model-${index + 1}`, enabled: false }));
+  const pages: number[] = [];
+  vi.stubGlobal('fetch', vi.fn(async url => {
+    const request = new URL(String(url), 'http://offline.test');
+    const page = Number(request.searchParams.get('page')); pages.push(page);
+    const start = (page - 1) * 20;
+    return Response.json({ items: models.slice(start, start + 20),
+      next_cursor: page === 1 ? '20' : null, total: models.length });
+  }));
+  render(<Models token="offline" provider={provider} />);
+  expect(await screen.findByRole('switch', { name: '启用 model-1' })).toBeVisible();
+  const next = document.querySelector('.provider-models .ant-pagination-next button') as HTMLElement;
+  fireEvent.click(next);
+  expect(await screen.findByRole('switch', { name: '启用 model-21' })).toBeVisible();
+  expect(screen.queryByRole('switch', { name: '启用 model-1' })).not.toBeInTheDocument();
+  expect(pages).toEqual([1, 2]);
+  expect(AiApi.prototype.upstreamModels).not.toHaveBeenCalled();
+}, 10000);

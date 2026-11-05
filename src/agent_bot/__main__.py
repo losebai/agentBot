@@ -11,7 +11,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments[:1] in (["--help"], ["-h"]):
         print(
             "usage: agent-bot [database init/upgrade | records migrate | "
-            "settings ... | workflows ... | plugin list/run ... | --help]\n"
+            "settings ... | workflows ... | worker [--memory-only | --autonomy] "
+            "[--once | --inspect JOB_ID] | "
+            "autonomy evaluate/serve | "
+            "plugin list/run ... | --help]\n"
             "Without a subcommand, start the bot and browser management service."
         )
         return 0
@@ -35,8 +38,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         from agent_bot.plugin_cli import run
 
         return run(arguments[1:])
+    if arguments[:1] == ["worker"]:
+        from agent_bot.jobs.worker import run
+
+        return run(arguments[1:])
+    if arguments[:1] == ['autonomy']:
+        from agent_bot.autonomy.cli import run
+
+        return run(arguments[1:])
     if arguments:
-        raise SystemExit("usage: agent-bot [settings ... | workflows ... | plugin ... | --help]")
+        raise SystemExit(
+            "usage: agent-bot [settings ... | workflows ... | worker ... | plugin ... | --help]"
+        )
     return start_service()
 
 

@@ -7,7 +7,8 @@ import binascii
 from mcp import types
 
 from agent_bot.agent.contracts import MAX_MCP_TOOLS, ToolDefinition, ToolResult
-from agent_bot.agent.errors import AgentError
+from agent_bot.agent.errors import AgentError, ToolResultRejectedError
+from agent_bot.agent.mcp.diagnostics import remote_error_content
 from agent_bot.agent.tools.schema import ToolSchema, bounded_json
 from agent_bot.media.config import MAX_IMAGE_BYTES, MAX_IMAGES, MAX_TOTAL_IMAGE_BYTES
 from agent_bot.media.errors import MediaError
@@ -64,44 +65,47 @@ async def discover(session, server, remaining, *, catalog=False):
 
 
 def convert_result(call, result):
-    """图片仅留在当前模型上下文，沿用媒体校验与预算，不写入工具记录正文。"""
+    """远端错误保留有限诊断；成功正文大小交给执行图的可配置上下文预算。"""
     if not isinstance(result, types.CallToolResult):
-        raise AgentError("AGENT_MCP_RESULT_UNSUPPORTED")
+        raise ToolResultRejectedError("AGENT_MCP_RESULT_UNSUPPORTED")
     if result.is_error:
-        # Raw error text may contain server configuration or credentials.
+        # 只保留分类和状态码，防止原始错误中的凭据进入模型与执行记录。
         return ToolResult(
             call_id=call.call_id,
             name=call.name,
-            content='{"code":"AGENT_REMOTE_TOOL_FAILED"}',
+            content=remote_error_content(result),
             is_error=True,
         )
     if any(
         not isinstance(item, (types.TextContent, types.ImageContent)) for item in result.content
     ):
-        raise AgentError("AGENT_MCP_RESULT_UNSUPPORTED")
+        raise ToolResultRejectedError("AGENT_MCP_RESULT_UNSUPPORTED")
     image_blocks = [item for item in result.content if isinstance(item, types.ImageContent)]
     if len(image_blocks) > MAX_IMAGES:
-        raise AgentError("MEDIA_TOO_MANY_IMAGES", status_code=422)
+        raise ToolResultRejectedError("MEDIA_TOO_MANY_IMAGES", status_code=422)
     images, total = [], 0
     for item in image_blocks:
         if len(item.data) > (MAX_IMAGE_BYTES + 2) // 3 * 4:
-            raise AgentError("MEDIA_TOO_LARGE", status_code=413)
+            raise ToolResultRejectedError("MEDIA_TOO_LARGE", status_code=413)
         try:
             data = base64.b64decode(item.data, validate=True)
         except (binascii.Error, ValueError) as error:
-            raise AgentError("MEDIA_INVALID_IMAGE", status_code=422) from error
+            raise ToolResultRejectedError("MEDIA_INVALID_IMAGE", status_code=422) from error
         total += len(data)
         if total > MAX_TOTAL_IMAGE_BYTES:
-            raise AgentError("MEDIA_TOO_LARGE", status_code=413)
+            raise ToolResultRejectedError("MEDIA_TOO_LARGE", status_code=413)
         try:
             images.append(ImagePreparer().prepare(data, item.mime_type).model_image)
         except MediaError as error:
-            raise AgentError(error.code, status_code=error.status_code) from error
-    content = (
-        bounded_json(result.structured_content, maximum=128000)
-        if result.structured_content is not None
-        else "\n".join(item.text for item in result.content if isinstance(item, types.TextContent))
-    )
-    if len(content) > 32000:
-        raise AgentError("AGENT_TOOL_RESULT_TOO_LARGE")
+            raise ToolResultRejectedError(error.code, status_code=error.status_code) from error
+    try:
+        content = (
+            bounded_json(result.structured_content, maximum=None)
+            if result.structured_content is not None
+            else "\n".join(
+                item.text for item in result.content if isinstance(item, types.TextContent)
+            )
+        )
+    except AgentError as error:
+        raise ToolResultRejectedError(error.code, status_code=error.status_code) from error
     return ToolResult(call_id=call.call_id, name=call.name, content=content, images=tuple(images))

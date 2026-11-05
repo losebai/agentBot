@@ -3,7 +3,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from agent_bot.agent.errors import AgentError
-from agent_bot.ai.chat_errors import ChatAiRejectedError, ChatAiUnavailableError
+from agent_bot.ai.chat_errors import (
+    ChatAiProtocolError,
+    ChatAiRejectedError,
+    ChatAiUnavailableError,
+)
 from agent_bot.ai.routing import RoutingAiClient
 from agent_bot.models import LlmRequestOptions
 
@@ -86,6 +90,28 @@ async def test_python_failure_never_falls_back():
     await client.aclose()
     agent.aclose.assert_awaited_once()
     plain.aclose.assert_awaited_once()
+
+
+async def test_agent_model_failure_keeps_completed_tool_count_for_qq():
+    """路由转换错误时保留成功回执数，不重试模型或丢失已执行事实。"""
+    plain, agent = AsyncMock(), AsyncMock()
+    agent.complete.side_effect = AgentError("AI_RESPONSE_INVALID", completed_tool_calls=2)
+    client = RoutingAiClient(
+        plain, agent_service=agent, timeout_seconds=30,
+        default_options=LlmRequestOptions(), mcp_services=(),
+    )
+    try:
+        with pytest.raises(ChatAiProtocolError) as caught:
+            await client.complete(
+                model="local", session_id="s", prompt="查看电脑状态", messages=(), request_id="r",
+                use_agent=True, use_web_search=False,
+            )
+        assert caught.value.completed_tool_calls == 2
+        assert caught.value.error_code == "AI_RESPONSE_INVALID"
+        agent.complete.assert_awaited_once()
+        plain.complete.assert_not_awaited()
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.parametrize("names", [(), ("memory",), ("memory", "local_workflow_generate_image")])

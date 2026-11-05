@@ -11,6 +11,8 @@ async def discover_models(provider, transport) -> UpstreamModels:
     """地址、密钥和结果版本来自同一个供应商快照。"""
     credential = CredentialResolver().resolve(provider)
     headers = {"Accept": "application/json"}
+    if provider.user_agent:
+        headers["User-Agent"] = provider.user_agent
     if credential is not None:
         headers["Authorization"] = f"Bearer {credential.get_secret_value()}"
     ollama = provider.protocol == "ollama"

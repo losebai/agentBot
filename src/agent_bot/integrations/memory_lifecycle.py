@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from agent_bot.ai.contracts import Page
+from agent_bot.ai.contracts import CatalogPage, Page
 from agent_bot.ai.database import page_limit
 from agent_bot.knowledge.contracts import (
     MemoryCreate,
@@ -996,18 +997,32 @@ class MemoryLifecycleMixin:
             self._change(cursor, row, changes, operation="revise", reason=body.reason)
             return self._admin_get(cursor, id)
 
-    def admin_revisions(self, id: int, *, limit: int = 20, cursor: str | None = None) -> Page:
-        """历史审计允许查看遗忘记录，仍保持有界、筛选绑定的分页。"""
+    def admin_revisions(
+        self, id: int, *, limit: int = 10, cursor: str | None = None, page: int | None = None
+    ) -> CatalogPage:
+        """历史审计支持直接页码，兼容游标仍绑定当前记忆。"""
         page_limit(limit)
+        if page is not None and (isinstance(page, bool) or page < 1 or cursor is not None):
+            raise ValueError("invalid page")
         filters = {"memory_id": id}
         before = decode_cursor(cursor, filters)
         with self._transaction() as db:
             self._row(db, id, deleted=True)
             db.execute(
+                "SELECT COUNT(*) AS total FROM chat_memory_revision WHERE memory_id=%s", (id,)
+            )
+            total = db.fetchone()["total"]
+            db.execute(
                 "SELECT * FROM chat_memory_revision WHERE memory_id=%s"
                 + (" AND id<%s" if before is not None else "")
-                + " ORDER BY id DESC LIMIT %s",
-                (id, *((before,) if before else ()), limit + 1),
+                + " ORDER BY id DESC LIMIT %s"
+                + (" OFFSET %s" if page is not None else ""),
+                (
+                    id,
+                    *((before,) if before is not None else ()),
+                    limit + 1,
+                    *(((page - 1) * limit,) if page is not None else ()),
+                ),
             )
             rows = db.fetchall()
             items = tuple(
@@ -1022,16 +1037,18 @@ class MemoryLifecycleMixin:
                 )
                 for row in rows[:limit]
             )
-            return Page(
+            return CatalogPage(
                 items=list(items),
                 next_cursor=encode_cursor(items[-1].id, filters) if len(rows) > limit else None,
+                total=total,
             )
 
     def admin_list(
         self,
         *,
-        limit: int = 20,
+        limit: int = 10,
         cursor: str | None = None,
+        page: int | None = None,
         query: str = "",
         tag: str = "",
         scope: str | None = None,
@@ -1040,9 +1057,11 @@ class MemoryLifecycleMixin:
         status: str | None = None,
         kind: str | None = None,
         subject: str | None = None,
-    ) -> Page:
-        """列表先筛选有效性再分页，过期记录只在明确状态筛选时显示。"""
+    ) -> CatalogPage:
+        """列表先筛选有效性再按页码读取，过期记录只在明确状态筛选时显示。"""
         page_limit(limit)
+        if page is not None and (isinstance(page, bool) or page < 1 or cursor is not None):
+            raise ValueError("invalid page")
         filters = {
             "query": query,
             "tag": tag,
@@ -1068,9 +1087,6 @@ class MemoryLifecycleMixin:
         if query:
             conditions.append("(memory_key LIKE %s ESCAPE '!' OR content LIKE %s ESCAPE '!')")
             args.extend((literal_like(query), literal_like(query)))
-        if before:
-            conditions.append("id<%s")
-            args.append(before)
         now = utc_now()
         if status == "all":
             conditions.append("is_deleted=0")
@@ -1089,29 +1105,48 @@ class MemoryLifecycleMixin:
             conditions.append("status=%s")
             args.append(status)
         with self._transaction() as db:
-            db.execute(
-                "SELECT * FROM chat_tagged_memory"
-                + (" WHERE " + " AND ".join(conditions) if conditions else "")
-                + " ORDER BY id DESC"
-                + (" LIMIT %s" if not tag else ""),
-                (*args, *((limit + 1,) if not tag else ())),
-            )
-            rows = [
-                row
-                for row in db.fetchall()
-                if (
-                    effective_status(row) == status
-                    if status and status != "all"
-                    else not row["is_deleted"]
-                    if status == "all"
-                    else effective_status(row) == "active"
+            where = " WHERE " + " AND ".join(conditions) if conditions else ""
+            if tag:
+                # 标签 JSON 的 SQL 函数在 MySQL 与 SQLite 不一致，先按其余条件收窄再精确筛选。
+                db.execute(
+                    "SELECT * FROM chat_tagged_memory" + where + " ORDER BY id DESC",
+                    tuple(args),
                 )
-                and (not tag or tag in json.loads(row["tags_json"]))
-            ]
+                matching = [row for row in db.fetchall() if tag in json.loads(row["tags_json"])]
+                total = len(matching)
+                if before is not None:
+                    matching = [row for row in matching if row["id"] < before]
+                offset = (page - 1) * limit if page is not None else 0
+                rows = matching[offset:offset + limit + 1]
+            else:
+                db.execute(
+                    "SELECT COUNT(*) AS total FROM chat_tagged_memory" + where, tuple(args)
+                )
+                total = db.fetchone()["total"]
+                page_conditions = [*conditions]
+                page_args = [*args]
+                if before is not None:
+                    page_conditions.append("id<%s")
+                    page_args.append(before)
+                page_where = (
+                    " WHERE " + " AND ".join(page_conditions) if page_conditions else ""
+                )
+                db.execute(
+                    "SELECT * FROM chat_tagged_memory" + page_where
+                    + " ORDER BY id DESC LIMIT %s"
+                    + (" OFFSET %s" if page is not None else ""),
+                    (
+                        *page_args,
+                        limit + 1,
+                        *(((page - 1) * limit,) if page is not None else ()),
+                    ),
+                )
+                rows = db.fetchall()
             items = self._admin_views(db, rows[:limit])
-            return Page(
+            return CatalogPage(
                 items=list(items),
                 next_cursor=encode_cursor(items[-1].id, filters) if len(rows) > limit else None,
+                total=total,
             )
 
     def admin_statistics(self, *, start_time: datetime, end_time: datetime) -> MemoryStatistics:
@@ -1325,6 +1360,169 @@ class MemoryLifecycleMixin:
                 )
                 self._change(db, row, changes, operation=body.action, reason=body.reason)
             return {"affected": len(rows)}
+
+    def expire_due(self, *, limit: int = 100) -> int:
+        """批量把已过期事实写入生命周期状态，并为每次变更保留版本审计。"""
+        if isinstance(limit, bool) or not 1 <= limit <= 500:
+            raise ValueError("memory expiration batch size is invalid")
+        now = utc_now()
+        with self._transaction() as db:
+            db.execute(
+                "SELECT id,scope_id FROM chat_tagged_memory "
+                "WHERE is_deleted=0 AND status IN ('active','pending','disputed') "
+                "AND valid_until IS NOT NULL AND valid_until<=%s "
+                "ORDER BY id LIMIT %s",
+                (now, limit),
+            )
+            candidates = db.fetchall()
+
+        affected = 0
+        for owner in dict.fromkeys(row["scope_id"] for row in candidates):
+            with self._transaction(owner) as db:
+                ids = [row["id"] for row in candidates if row["scope_id"] == owner]
+                if not ids:
+                    continue
+                db.execute(
+                    "SELECT * FROM chat_tagged_memory WHERE scope_id=%s AND id IN ("
+                    + ",".join("%s" for _ in ids)
+                    + ") ORDER BY id",
+                    (owner, *ids),
+                )
+                for row in db.fetchall():
+                    if (
+                        row["is_deleted"]
+                        or row["status"] not in {"active", "pending", "disputed"}
+                        or row["valid_until"] is None
+                        or time_value(row["valid_until"]) > now
+                    ):
+                        continue
+                    self._change(
+                        db,
+                        row,
+                        {"status": "expired"},
+                        operation="expire",
+                        reason="validity interval elapsed",
+                        actor="system",
+                    )
+                    affected += 1
+        return affected
+
+    def review_snapshot(
+        self, *, now: datetime | None = None, stale_days: int = 90, limit: int = 100,
+    ) -> dict[str, Any]:
+        """生成确定性的每日复盘快照，只读统计并返回需人工核对的有限候选。"""
+        if type(stale_days) is not int or not 1 <= stale_days <= 3650:
+            raise ValueError("memory review stale window is invalid")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("memory review batch size is invalid")
+        stamp = time_value(now) if now is not None else utc_now()
+        with self._transaction() as db:
+            return self._review_snapshot(db, stamp, stale_days=stale_days, limit=limit)
+
+    def _review_snapshot(
+        self, db: Any, stamp: datetime, *, stale_days: int = 90, limit: int = 100,
+    ) -> dict[str, Any]:
+        """当前状态与前一北京时间自然日的变更分别计数，候选不等于可删除事实。"""
+        local = stamp.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8)))
+        end = local.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = end.astimezone(timezone.utc).replace(tzinfo=None)
+        start = end - timedelta(days=1)
+        stale_before = stamp - timedelta(days=stale_days)
+        expiring_after = stamp + timedelta(days=7)
+        db.execute(
+            "SELECT CASE WHEN status='active' AND valid_until<=%s THEN 'expired' "
+            "WHEN status='active' AND valid_from>%s THEN 'future' ELSE status END "
+            "AS effective_status,COUNT(*) AS count FROM chat_tagged_memory "
+            "WHERE is_deleted=0 GROUP BY effective_status", (stamp, stamp),
+        )
+        status_counts = {row["effective_status"]: row["count"] for row in db.fetchall()}
+        # pending 与 disputed 统计的是待核对条目数，并非独立冲突集合数量。
+        conflict_count = sum(status_counts.get(status, 0) for status in ("pending", "disputed"))
+        db.execute(
+            "SELECT COUNT(*) AS count FROM chat_tagged_memory WHERE " + _ACTIVE_SQL
+            + " AND valid_until<=%s", (stamp, stamp, expiring_after),
+        )
+        expiring_count = db.fetchone()["count"]
+        stale_where = (
+            _ACTIVE_SQL + " AND updated_time_basis='utc' AND update_time<=%s "
+            "AND (last_used_at IS NULL OR last_used_at<=%s)"
+        )
+        stale_args = (stamp, stamp, stale_before, stale_before)
+        db.execute("SELECT COUNT(*) AS count FROM chat_tagged_memory WHERE " + stale_where,
+                   stale_args)
+        stale_count = db.fetchone()["count"]
+        db.execute(
+            "SELECT id,revision,scope,kind,importance FROM chat_tagged_memory WHERE "
+            + stale_where + " ORDER BY importance ASC,id LIMIT %s", (*stale_args, limit),
+        )
+        stale = list(db.fetchall())
+        db.execute(
+            "SELECT COUNT(*) AS count FROM chat_memory_revision "
+            "WHERE created_at>=%s AND created_at<%s", (start, end),
+        )
+        revision_count = db.fetchone()["count"]
+        return {
+            "date": local.date().isoformat(),
+            "as_of": stamp.replace(tzinfo=timezone.utc).isoformat(),
+            "timezone": "+08:00",
+            "status_counts": status_counts,
+            "conflict_count": conflict_count,
+            "expiring_within_days": 7,
+            "expiring_count": expiring_count,
+            "stale_days": stale_days,
+            "stale_count": stale_count,
+            "stale_candidates": stale,
+            "revision_window_start": start.replace(tzinfo=timezone.utc).isoformat(),
+            "revision_window_end": end.replace(tzinfo=timezone.utc).isoformat(),
+            "revision_count": revision_count,
+        }
+
+    def _review_owner(self) -> str:
+        """维护回执使用独立密钥命名空间，不能成为任一聊天身份的操作回执。"""
+        return hmac.new(self._secret.encode(), b"agent_bot:memory-review:v1", "sha256").hexdigest()
+
+    def record_daily_review(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """同日并发和重启复用已提交快照；计算与回执一起提交，失败不占日期。"""
+        stamp = time_value(now) if now is not None else utc_now()
+        day = (stamp + timedelta(hours=8)).date().isoformat()
+        owner = self._review_owner()
+        with self._transaction(owner) as db:
+            db.execute(
+                "SELECT result_json FROM chat_memory_operation WHERE scope_id=%s "
+                "AND request_id=%s AND operation_id='daily-review-v1'", (owner, day),
+            )
+            existing = db.fetchone()
+            if existing is not None:
+                return json.loads(existing["result_json"])
+            report = self._review_snapshot(db, stamp)
+            db.execute(
+                "INSERT INTO chat_memory_operation (scope_id,request_id,operation_id,"
+                "arguments_digest,operation_kind,result_json,created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (owner, day, "daily-review-v1", fingerprint("daily-review-v1"),
+                 "daily_review", _json(report), stamp),
+            )
+            return report
+
+    def admin_reviews(self, *, limit: int = 30, before: str | None = None) -> dict[str, Any]:
+        """按日期倒序读取当前密钥命名空间的复盘历史，游标不扫描或返回正文。"""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("memory review history limit is invalid")
+        if before is not None and date.fromisoformat(before).isoformat() != before:
+            raise ValueError("memory review date is invalid")
+        with self._transaction() as db:
+            db.execute(
+                "SELECT request_id,result_json FROM chat_memory_operation WHERE scope_id=%s "
+                "AND operation_id='daily-review-v1' AND operation_kind='daily_review' "
+                + ("AND request_id<%s " if before is not None else "")
+                + "ORDER BY request_id DESC LIMIT %s",
+                (self._review_owner(), *((before,) if before is not None else ()), limit + 1),
+            )
+            rows = db.fetchall()
+        return {
+            "items": [json.loads(row["result_json"]) for row in rows[:limit]],
+            "next_before": rows[limit - 1]["request_id"] if len(rows) > limit else None,
+        }
 
     def _conflict_rows(self, cursor: Any, id: int) -> list[dict[str, Any]]:
         """冲突集合包含服务端分支和原事实，不能用相似主题冒充同命题。"""

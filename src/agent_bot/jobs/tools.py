@@ -4,6 +4,7 @@ import json
 
 from agent_bot.agent.contracts import ToolDefinition, ToolResult
 from agent_bot.agent.errors import AgentError
+from agent_bot.agent.persona import compose_system_prompt
 from agent_bot.agent.tools.local_media import project_local_schema, validate_local_call
 from agent_bot.ai.errors import AiError
 from agent_bot.jobs.contracts import JobArguments, JobScope
@@ -17,7 +18,7 @@ class JobTools:
         self.store = store
 
     def bind(self, snapshot, request, context):
-        """验证宿主身份并固定模型ID引用，定时执行不依赖可变展示名称或旧别名。"""
+        """固定模型身份和角色、人格快照，重启后的执行不依赖聊天上下文。"""
         context.ensure_active()
         chat = context.chat_context
         if (
@@ -30,7 +31,7 @@ class JobTools:
         ):
             raise AgentError("AGENT_TOOL_UNAUTHORIZED", status_code=403)
         system_prompt = (
-            snapshot.agent.system_prompt
+            compose_system_prompt(snapshot.agent.system_prompt, snapshot.agent.personality_prompt)
             if snapshot.agent
             else "\n\n".join(
                 message.content for message in request.messages if message.role == "system"

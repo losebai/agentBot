@@ -7,17 +7,22 @@ from agent_bot.agent.contracts import AgentRequest, ExecutionAuthority
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.records import AgentRunStore
 from agent_bot.agent.service import AgentService
+from agent_bot.ai.context import DEFAULT_CONTEXT_MAX_CHARS
 from agent_bot.ai.credentials import CredentialResolver
+from agent_bot.models import ChatMessage
 
 from .test_engine import Provider, Tools
 
 
 @pytest.mark.parametrize("code", ["AGENT_TIMEOUT", "AI_TIMEOUT", "AGENT_TOOL_SESSION_EXPIRED"])
 @pytest.mark.parametrize("entry", ["qq", "admin"])
+@pytest.mark.parametrize("text", [
+    "已经生成的正文", "继续下载<\uff5c\uff5cDSML\uff5c\uff5c calls>未执行的工具",
+])
 async def test_interrupted_output_is_available_only_to_qq(
-    agent_database, agent_params, seeded_model, code, entry,
+    agent_database, agent_params, seeded_model, code, entry, text,
 ):
-    """超时正文交给 QQ 投递边界，执行归档仍失败，管理调用不能视为成功。"""
+    """超时只允许 QQ 使用正常正文；伪调用草稿留在失败归档，不作为回复投递。"""
     from agent_bot.agent.contracts import ModelEvent
 
     class InterruptedProvider(Provider):
@@ -25,7 +30,7 @@ async def test_interrupted_output_is_available_only_to_qq(
 
         async def stream_turn(self, call):
             """保留已输出内容，并在下一次读取时终止执行。"""
-            yield ModelEvent(kind="text_delta", delta="已经生成的正文")
+            yield ModelEvent(kind="text_delta", delta=text)
             raise AgentError(code, status_code=504)
 
     service = service_for(agent_database, agent_params)
@@ -33,11 +38,11 @@ async def test_interrupted_output_is_available_only_to_qq(
     with pytest.raises(AgentError) as error:
         await service.complete(request(), ExecutionAuthority(entry=entry))
     assert getattr(error.value, "partial_content", None) == (
-        "已经生成的正文" if entry == "qq" else ""
+        text if entry == "qq" and "DSML" not in text else ""
     )
     run = (await service.records.list_runs()).items[0]
     assert run.status == "failed" and run.error_code == code
-    assert (await service.records.get_run(run.execution_id)).content == "已经生成的正文"
+    assert (await service.records.get_run(run.execution_id)).content == text
     assert service.active == service.tool_runtime.active == 0
 
 
@@ -68,8 +73,48 @@ async def test_expired_deadline_still_archives_partial_output(
     assert (await service.records.get_run(run.execution_id)).content == "未完成正文"
 
 
-def service_for(db, params, *, tools=None, records=None, maximum_tool_calls=1):
-    """替身模型依赖有限工具预算收尾，明确注入全局额度而非请求覆盖。"""
+@pytest.mark.parametrize("tool_failed", [False, True])
+async def test_model_failure_preserves_only_successful_tool_receipt_count(
+    agent_database, agent_params, seeded_model, tool_failed,
+):
+    """模型收尾失败仍携带真实成功回执数量，错误工具不能计入成功，也不会重放。"""
+    from agent_bot.agent.contracts import ToolResult
+
+    class FailingFinalProvider(Provider):
+        """模拟工具完成后模型协议故障。"""
+
+        async def stream_turn(self, call):
+            """工具轮正常执行，收尾轮直接失败。"""
+            if call.final_only:
+                raise AgentError("AI_RESPONSE_INVALID")
+            async for event in super().stream_turn(call):
+                yield event
+
+    class ControlledTools(Tools):
+        """为成功与失败回执提供独立替身。"""
+
+        async def call(self, call):
+            """记录执行次数，成功信息只用于计数，不带入异常文本。"""
+            self.invoked.append(call.call_id)
+            return ToolResult(call_id=call.call_id, name=call.name,
+                              content="private output", is_error=tool_failed)
+
+    tools = ControlledTools()
+    service = service_for(agent_database, agent_params, tools=tools)
+    service.providers["openai-chat"] = FailingFinalProvider()
+    with pytest.raises(AgentError) as caught:
+        await service.complete(request(), ExecutionAuthority(entry="qq"))
+    assert caught.value.completed_tool_calls == (0 if tool_failed else 1)
+    assert caught.value.code == "AI_RESPONSE_INVALID"
+    assert len(tools.invoked) == 1 and "private" not in str(caught.value)
+    assert service.active == tools.active == 0
+
+
+def service_for(
+    db, params, *, tools=None, records=None, maximum_tool_calls=1,
+    maximum_context_chars=DEFAULT_CONTEXT_MAX_CHARS,
+):
+    """替身模型依赖有限工具预算收尾，从服务端注入工具额度与上下文预算。"""
     return AgentService(
         AgentCatalog(params, connect=db.connect),
         records or AgentRunStore(params, connect=db.connect),
@@ -77,6 +122,7 @@ def service_for(db, params, *, tools=None, records=None, maximum_tool_calls=1):
         {"openai-chat": Provider()},
         tools or Tools(),
         maximum_tool_calls=maximum_tool_calls,
+        maximum_context_chars=maximum_context_chars,
     )
 
 
@@ -84,6 +130,31 @@ def request():
     return AgentRequest(
         model="local-model", prompt="hello", session_id="s", request_id="r", max_steps=1
     )
+
+
+@pytest.mark.parametrize("maximum", [120_000, 300_000])
+async def test_context_budget_comes_from_service_configuration(
+    agent_database, agent_params, seeded_model, maximum,
+):
+    """超过旧上限的对话由服务配置决定，拒绝发生在模型和副作用工具执行之前。"""
+    service = service_for(agent_database, agent_params)
+    service.maximum_context_chars = maximum
+    incoming = request().model_copy(update={"messages": tuple(
+        ChatMessage(role="user", content="资料" * 15_000) for _ in range(5)
+    )})
+    try:
+        if maximum == 120_000:
+            with pytest.raises(AgentError, match="AGENT_CONTEXT_TOO_LARGE"):
+                await service.complete(incoming, ExecutionAuthority(entry="qq"))
+            assert not service.providers["openai-chat"].calls
+            assert not service.tool_runtime.invoked
+        else:
+            result = await service.complete(incoming, ExecutionAuthority(entry="qq"))
+            assert result.content == "最终回答" and result.record_saved
+            assert len(service.tool_runtime.invoked) == 1
+        assert service.active == service.tool_runtime.active == 0
+    finally:
+        await service.aclose()
 
 
 async def test_failed_save_does_not_replay_work(agent_database, agent_params, seeded_model):

@@ -20,29 +20,16 @@ CallCategory = Literal["conversation", "system"]
 SystemKind = Literal["auto_speak", "command"]
 _TABLE = "agent_bot_call_record"
 _RECORD_TIMEZONE = timezone(timedelta(hours=8))
-# 查询兼容已入库但类型未重新归类的决策，不要求重写历史数据。
-_DECISION_CONDITION = """(
-    type = 'auto_speak'
-    OR source = 'python:agent_bot_auto_speak_decision'
-    OR SUBSTR(request_id, 1, 14) = 'auto-decision-'
-    OR JSON_EXTRACT(data, '$.type') IN ('auto_speak_decision', '"auto_speak_decision"')
-    OR JSON_EXTRACT(data, '$.system_kind') IN ('auto_speak', '"auto_speak"')
-    OR (JSON_EXTRACT(request_context, '$.state') IS NOT NULL
-        AND JSON_EXTRACT(data, '$.shouldSpeak') IS NOT NULL)
-)"""
-# 新指令使用任务标记；历史记录依据已有请求前缀、指令输入及超长归档的原数据识别。
-_COMMAND_CONDITION = """(
-    COALESCE(JSON_EXTRACT(data, '$.system_kind') IN ('command', '"command"'), 0)
-    OR JSON_EXTRACT(data, '$.original_data.system_kind') IN ('command', '"command"')
-    OR SUBSTR(request_id, 1, 11) = 'qq-summary-'
-    OR SUBSTR(request_id, 1, 8) = 'qq-draw-'
-    OR SUBSTR(session_Id, -15) = ':quoted-summary'
-    OR (SUBSTR(request_id, 1, 9) = 'qq-reply-' AND SUBSTR(content, 1, 1) = '/')
-)"""
-_SYSTEM_KIND = (
-    f"CASE WHEN {_DECISION_CONDITION} THEN 'auto_speak' "
-    f"WHEN {_COMMAND_CONDITION} THEN 'command' ELSE NULL END"
-)
+_MODEL_METADATA = """
+JSON_OBJECT(
+ 'configured_model',COALESCE(JSON_EXTRACT(data,'$.configured_model'),
+                            JSON_EXTRACT(data,'$.original_data.configured_model')),
+ 'primary_model',JSON_EXTRACT(request_context,'$.model_routes.primary'),
+ 'fallback_model',JSON_EXTRACT(request_context,'$.model_routes.fallback')
+) AS model_metadata
+"""
+# 分类规则由数据库生成列维护，索引保存分类值，计数不再扫描历史大 JSON。
+_SYSTEM_KIND = "system_kind"
 _SECRET = re.compile(
     r"^(?:authorization|proxyauthorization|cookie|setcookie|password|passwd|secret|"
     r"apikey|accesskey|accesskeyid|accesskeysecret|credential|credentials|"
@@ -243,6 +230,7 @@ class CallSummary(AiModel):
     create_time: datetime | None
     duration: int | None
     model: str | None
+    provider_name: str | None = None
     request_id: str | None
     type: CallType
     system_kind: SystemKind | None = None
@@ -303,8 +291,11 @@ def _call_conditions(
             conditions.append(f"`{field}`=%s")
             args.append(value)
     if category is not None:
-        null_check = "NOT NULL" if category == "system" else "NULL"
-        conditions.append(f"({_SYSTEM_KIND}) IS {null_check}")
+        # SQLite 对虚拟列的 IS NOT NULL 可能全表扫描，列举两个确定分类以使用索引。
+        conditions.append(
+            f"{_SYSTEM_KIND} IN ('auto_speak','command')" if category == "system"
+            else f"{_SYSTEM_KIND} IS NULL"
+        )
     if system_kind is not None:
         conditions.append(f"({_SYSTEM_KIND})=%s")
         args.append(system_kind)
@@ -353,6 +344,62 @@ def _usage_from_row(row: dict[str, Any]) -> TokenUsage:
     if values["cached_tokens"] is None:
         values["cache_prompt_tokens"] = None
     return TokenUsage.model_validate(values)
+
+
+def _add_provider_names(connection, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按记录中的稳定模型路由补齐供应商，同名上游模型不做猜测。"""
+    identities: list[tuple[dict[str, Any], list[str]]] = []
+    references: set[str] = set()
+    ids: set[int] = set()
+    names: set[str] = set()
+    for row in rows:
+        metadata = json_value(row.pop("model_metadata")) or {}
+        routes = [
+            value for value in (
+                metadata.get("configured_model"), metadata.get("primary_model"),
+                metadata.get("fallback_model"),
+            )
+            if isinstance(value, str) and value
+        ]
+        identities.append((row, routes))
+        references.update(routes)
+        if isinstance(row.get("model"), str):
+            names.add(row["model"])
+    for reference in references:
+        match = re.fullmatch(r"model:([1-9][0-9]*)", reference)
+        if match:
+            ids.add(int(match.group(1)))
+        else:
+            names.add(reference)
+    conditions, args = [], []
+    if ids:
+        conditions.append("m.id IN (" + ",".join("%s" for _ in ids) + ")")
+        args.extend(ids)
+    if names:
+        placeholders = ",".join("%s" for _ in names)
+        conditions.append(f"(m.alias IN ({placeholders}) OR m.upstream_model IN ({placeholders}))")
+        args.extend(names)
+        args.extend(names)
+    models = query(
+        connection,
+        "SELECT m.id,m.alias,m.upstream_model,p.name AS provider_name "
+        "FROM agent_bot_ai_model m JOIN agent_bot_ai_provider p ON p.id=m.provider_id WHERE "
+        + " OR ".join(conditions),
+        tuple(args),
+    ) if conditions else []
+    for row, routes in identities:
+        routed = []
+        for reference in routes:
+            routed.extend(model for model in models if reference in {
+                f'model:{model["id"]}', model["alias"], model["upstream_model"],
+            })
+        matching = [model for model in routed if model["upstream_model"] == row.get("model")]
+        candidates = matching or routed
+        if not candidates and row.get("model"):
+            candidates = [model for model in models if model["upstream_model"] == row["model"]]
+        providers = {model["provider_name"] for model in candidates}
+        row["provider_name"] = next(iter(providers)) if len(providers) == 1 else None
+    return rows
 
 
 class CallRecordStore(AiDatabase):
@@ -454,14 +501,21 @@ class CallRecordStore(AiDatabase):
 
     async def get_call(self, id: int):
         """详情提供用量及脱敏工具负载，内部 UTC 字段不改变已有接口契约。"""
-        columns = sql_columns(set(CallDetail.model_fields) - {"tool_steps", "system_kind", "usage"})
-        row = await self.run(
-            lambda c: query(
-                c, f"SELECT {columns}, {_SYSTEM_KIND} AS system_kind, {_usage_columns()} "
-                f"FROM {_TABLE} WHERE id=%s",
+        columns = sql_columns(set(CallDetail.model_fields) - {
+            "tool_steps", "system_kind", "usage", "provider_name",
+        })
+
+        def read(connection):
+            """同一数据库快照读取详情及当前模型目录，避免跨刷新混合身份。"""
+            row = query(
+                connection,
+                f"SELECT {columns}, {_SYSTEM_KIND} AS system_kind, {_usage_columns()}, "
+                f"{_MODEL_METADATA} FROM {_TABLE} WHERE id=%s",
                 (id,), one=True,
             )
-        )
+            return _add_provider_names(connection, [row])[0] if row else None
+
+        row = await self.run(read)
         if row is None:
             raise AiError("AI_RECORD_NOT_FOUND", status_code=404)
         row["usage"] = _usage_from_row(row)
@@ -486,7 +540,7 @@ class CallRecordStore(AiDatabase):
         status: str | None = None, category: CallCategory | None = None,
         system_kind: SystemKind | None = None,
     ) -> CallCount:
-        """只统计筛选结果，不读取用量或正文；前端可与首屏并发请求并复用总数。"""
+        """按可索引分类精确计数，不为历史兼容解析正文或 JSON，也不缓存陈旧总数。"""
         _, conditions, args = _call_conditions(type, session_id, status, category, system_kind)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         row = await self.run(lambda c: query(
@@ -496,7 +550,7 @@ class CallRecordStore(AiDatabase):
 
     async def list_calls(
         self, *, type: CallType | None = None, session_id: str | None = None,
-        status: str | None = None, limit: int = 50, cursor: str | None = None,
+        status: str | None = None, limit: int = 10, cursor: str | None = None,
         category: CallCategory | None = None, system_kind: SystemKind | None = None,
         page: int | None = None,
     ) -> Page[CallSummary]:
@@ -537,15 +591,21 @@ class CallRecordStore(AiDatabase):
             if page is not None else f"{_TABLE}{where}"
         )
         paging = (limit + 1, (page - 1) * limit) if page is not None else (limit + 1,)
-        rows = await self.run(
-            lambda c: query(
-                c,
-                f"SELECT {sql_columns(set(CallSummary.model_fields) - {'system_kind', 'usage'})}, "
-                f"{_SYSTEM_KIND} AS system_kind, {_usage_columns()} FROM {source} "
+        def read(connection):
+            """当前页记录与模型目录在同一快照解析，列表不加载完整 JSON。"""
+            columns = sql_columns(
+                set(CallSummary.model_fields) - {"system_kind", "usage", "provider_name"}
+            )
+            rows = query(
+                connection,
+                f"SELECT {columns}, {_SYSTEM_KIND} AS system_kind, {_usage_columns()}, "
+                f"{_MODEL_METADATA} FROM {source} "
                 "ORDER BY create_time DESC,id DESC" + ("" if page is not None else " LIMIT %s"),
                 (*args, *paging),
             )
-        )
+            return _add_provider_names(connection, rows)
+
+        rows = await self.run(read)
         items = []
         for row in rows[:limit]:
             row["usage"] = _usage_from_row(row)

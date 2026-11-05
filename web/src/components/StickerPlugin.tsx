@@ -4,6 +4,7 @@ import { errorMessage } from '../api';
 import { StickerApi } from '../sticker-api';
 import { StickerUploadDialog } from './StickerUploadDialog';
 import type { StickerMatch, StickerPage, StickerPatch, StickerView } from '../sticker-types';
+import { RecordPagination } from './RecordPagination';
 
 /** 标签由管理员维护，中文逗号、英文逗号和换行都作为分隔；首次出现顺序保留。 */
 function parseTags(value: string): string[] {
@@ -100,7 +101,7 @@ export function StickerPlugin({ token }: { token: string }) {
   const api = useMemo(() => new StickerApi(token), [token]);
   const [page, setPage] = useState<StickerPage>({ items: [], total: 0, next_offset: null });
   const [filters, setFilters] = useState({ query: '', tag: '' }), [filterDraft, setFilterDraft] = useState(filters);
-  const [offset, setOffset] = useState(0), [refresh, setRefresh] = useState(0);
+  const [pageNumber,setPageNumber]=useState(1),[pageSize,setPageSize]=useState(10),[refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -114,12 +115,12 @@ export function StickerPlugin({ token }: { token: string }) {
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError(''); setPage({ items: [], total: 0, next_offset: null });
-    api.list(filters.query, filters.tag, offset, controller.signal).then(value => {
-      if (!controller.signal.aborted) setPage(value);
+    api.list(filters.query, filters.tag, pageNumber, pageSize, controller.signal).then(value => {
+      if (!controller.signal.aborted) {setPage(value);const last=Math.max(1,Math.ceil(value.total/pageSize));if(pageNumber>last)setPageNumber(last);}
     }).catch(failure => { if (!controller.signal.aborted) setError(errorMessage(failure)); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [api, filters, offset, refresh]);
+  }, [api, filters, pageNumber, pageSize, refresh]);
 
   /** 所有写操作单次执行；离开插件页取消等待，不自动重复上传或识图。 */
   async function mutate(action: (signal: AbortSignal) => Promise<void>) {
@@ -161,7 +162,7 @@ export function StickerPlugin({ token }: { token: string }) {
         <strong>{match.sticker.name}</strong><span>匹配分数 {match.score}</span><p>{match.reason}</p>
         <Button onClick={() => setEditing(match.sticker)}>查看匹配表情包</Button></div>)}</div>}
     </form>
-    <form className="record-filter" onSubmit={event => { event.preventDefault(); setOffset(0); setFilters({ query: filterDraft.query.trim(), tag: filterDraft.tag.trim() }); }}>
+    <form className="record-filter" onSubmit={event => { event.preventDefault(); setPageNumber(1); setFilters({ query: filterDraft.query.trim(), tag: filterDraft.tag.trim() }); }}>
       <label>名称或说明<input value={filterDraft.query} onChange={event => setFilterDraft({ ...filterDraft, query: event.target.value })} /></label>
       <label>标签筛选<input value={filterDraft.tag} onChange={event => setFilterDraft({ ...filterDraft, tag: event.target.value })} /></label>
       <Button htmlType="submit" disabled={busy || loading}>筛选表情包</Button>
@@ -185,15 +186,14 @@ export function StickerPlugin({ token }: { token: string }) {
           <Button danger disabled={busy} aria-label={`删除${item.name}`} onClick={() => setDeleting(item)}>删除</Button>
         </div>
       </article>)}</div>}
-    <div className="heading-actions sticker-pagination"><span>共 {page.total} 张 · 第 {Math.floor(offset / 20) + 1} 页</span>
-      <Button disabled={!offset || loading || busy} onClick={() => setOffset(Math.max(0, offset - 20))}>上一页</Button>
-      <Button disabled={page.next_offset === null || loading || busy} onClick={() => setOffset(page.next_offset!)}>下一页</Button></div>
+    <RecordPagination current={pageNumber} pageSize={pageSize} total={page.total} loading={loading||busy}
+      hasNext={page.next_offset!==null} onChange={(number,size)=>{setPageNumber(number);setPageSize(size);}}/>
     {uploadOpen && <StickerUploadDialog api={api}
       onClose={() => {
         // 已完成的上传不会因取消而回滚；关闭后刷新，展示已保存部分。
-        setUploadOpen(false); setMatches(undefined); setOffset(0); setRefresh(value => value + 1);
+        setUploadOpen(false); setMatches(undefined); setPageNumber(1); setRefresh(value => value + 1);
       }} onUploaded={() => {
-        setMatches(undefined); setOffset(0); setRefresh(value => value + 1);
+        setMatches(undefined); setPageNumber(1); setRefresh(value => value + 1);
       }} />}
     {editing && <StickerEditor key={editing.id} api={api} sticker={editing} onClose={() => setEditing(undefined)}
       onSaved={value => { setEditing(undefined); savedNotice(value); }} />}
@@ -202,7 +202,7 @@ export function StickerPlugin({ token }: { token: string }) {
       onOk={() => void mutate(async signal => {
         await api.remove(deleting.id, deleting.revision, signal);
         if (!signal.aborted) {
-          setDeleting(undefined); setMatches(undefined); setOffset(0);
+          setDeleting(undefined); setMatches(undefined); setPageNumber(1);
           setNotice('表情包已删除。'); setRefresh(value => value + 1);
         }
       })}><p>删除后机器人将无法再检索和发送此图片。确认删除？</p>

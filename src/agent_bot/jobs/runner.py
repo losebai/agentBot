@@ -27,5 +27,6 @@ class AiJobRunner:
     async def run_once(self) -> None:
         """只在当前快照已启用 Job 时领取，防止旧配置越过热更新边界。"""
         async with self._lease():
-            if self._config().chat_job_enabled:
+            config = self._config()
+            if config.chat_job_enabled and not config.chat_active_actions_paused:
                 await self._client().run_due_jobs()

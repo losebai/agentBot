@@ -290,12 +290,13 @@ def test_effective_runtime_config_hot_reloads_chat_but_keeps_startup_fields(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("max_steps", "enable_thinking"), [(1, False), (5, True), (None, None)],
+    ("max_steps", "enable_thinking", "context_max_chars"),
+    [(1, False, 65_536), (5, True, 500_000), (None, None, 120_000)],
 )
 async def test_chat_reasoning_settings_hot_reload_into_outgoing_request(
-    chat_plugin, max_steps: int | None, enable_thinking: bool | None,
+    chat_plugin, max_steps: int | None, enable_thinking: bool | None, context_max_chars: int,
 ) -> None:
-    """热更新或清空轮次和思考开关后，下一次普通聊天使用新配置。"""
+    """热更新后聊天裁剪、Agent 与普通模型共用新上下文预算及推理配置。"""
     current = chat_plugin._runtime_state
     values = runtime_config_to_plain_values(current.config)
     values.update({
@@ -306,12 +307,16 @@ async def test_chat_reasoning_settings_hot_reload_into_outgoing_request(
     before = RuntimeConfig.model_validate(values)
     values.update({
         "chat_agent_max_steps": max_steps,
+        "chat_llm_context_max_chars": context_max_chars,
         "chat_llm_enable_thinking": enable_thinking,
     })
     candidate = RuntimeConfig.model_validate(values)
     effective, restart_fields = chat_plugin._effective_runtime_config(candidate, before)
     assert restart_fields == set()
     replacement = chat_plugin._build_runtime_state(effective, current)
+    assert replacement.ai_client.agent_service.maximum_context_chars == context_max_chars
+    assert replacement.ai_client.python_service.maximum_context_chars == context_max_chars
+    assert replacement.chat_service._prompt_builder._max_context_chars == context_max_chars
 
     # 配置传播验证只替换模型调用，实际 Agent 请求仍由本地客户端构造。
     complete = AsyncMock(return_value=SimpleNamespace(content="你好"))
@@ -415,13 +420,16 @@ async def test_runtime_state_routes_each_content_category_to_hot_reloaded_model(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("system_prompt", ["数据库中的唯一提示词", ""])
 async def test_runtime_state_uses_only_database_configured_system_prompt(
     chat_plugin,
     monkeypatch: pytest.MonkeyPatch,
+    system_prompt: str,
 ) -> None:
+    """重建时聊天与两类 Responses 客户端使用同一数据库提示词，允许明确清空。"""
     current = chat_plugin._runtime_state
     values = runtime_config_to_plain_values(current.config)
-    values["chat_system_prompt"] = "数据库中的唯一提示词"
+    values["chat_system_prompt"] = system_prompt
     values["chat_agent_enabled"] = False
     candidate = RuntimeConfig.model_validate(values)
     service_factory = Mock(wraps=chat_plugin.ChatService)
@@ -430,7 +438,10 @@ async def test_runtime_state_uses_only_database_configured_system_prompt(
     replacement = chat_plugin._build_runtime_state(candidate, current)
     try:
         service_options = service_factory.call_args.kwargs
-        assert service_options["system_prompt"] == "数据库中的唯一提示词"
+        assert service_options["system_prompt"] == system_prompt
+        client = replacement.ai_client
+        assert client.python_service.providers["openai-responses"].system_prompt == system_prompt
+        assert client.agent_service.providers["openai-responses"].system_prompt == system_prompt
         # 数据库中的旧开关不再进入运行装配，不能把自然聊天切回普通模型。
         assert "agent_enabled" not in service_options
     finally:

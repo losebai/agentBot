@@ -1,5 +1,9 @@
 """记忆管理生命周期接口使用隔离 SQLite 验证认证、版本和预览批次。"""
 
+import asyncio
+from contextlib import contextmanager
+from datetime import datetime, timedelta
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -57,6 +61,59 @@ async def test_lifecycle_routes_require_admin_and_keep_knowledge_read_only(lifec
         assert response.status_code == 401
     assert (await api.patch("/api/v1/knowledge/1", headers=HEADERS, json={})).status_code == 405
     assert (await api.put("/api/v1/memories/1", headers=HEADERS, json={})).status_code == 405
+
+
+async def test_daily_review_survives_concurrent_instances_and_supports_admin_history(
+    lifecycle_api, admin_runtime,
+):
+    """真实 SQLite 并发只提交一份报告，重建存储后可按日期分页且需管理员身份。"""
+    api = lifecycle_api
+    store = admin_runtime.tagged_memory_store
+    restored = TaggedMemoryStore(store._params, secret=store._secret)
+    stamp = datetime(2026, 11, 3, 16)
+    reports = await asyncio.gather(
+        asyncio.to_thread(store.record_daily_review, now=stamp),
+        asyncio.to_thread(restored.record_daily_review, now=stamp),
+    )
+    assert reports[0] == reports[1]
+    await create_memory(api)
+    # 同日新数据不能覆写已提交的复盘；翌日才建立新快照。
+    assert restored.record_daily_review(now=stamp + timedelta(hours=1)) == reports[0]
+    next_report = restored.record_daily_review(now=stamp + timedelta(days=1))
+    assert next_report["status_counts"] == {"active": 1}
+    assert (await api.get("/api/v1/memory-reviews")).status_code == 401
+    first = await api.get("/api/v1/memory-reviews?limit=1", headers=HEADERS)
+    assert first.status_code == 200
+    assert first.json() == {"items": [next_report], "next_before": "2026-11-05"}
+    second = await api.get("/api/v1/memory-reviews?before=2026-11-05", headers=HEADERS)
+    assert second.json() == {"items": [reports[0]], "next_before": None}
+    for query in ("before=2026-02-30", "before=invalid", "limit=101"):
+        assert (await api.get("/api/v1/memory-reviews?" + query,
+                              headers=HEADERS)).status_code == 422
+    foreign = TaggedMemoryStore(store._params, secret="different-offline-namespace")
+    assert foreign.admin_reviews()["items"] == []
+
+
+async def test_failed_review_commit_leaves_day_retryable(lifecycle_api, admin_runtime, monkeypatch):
+    """插入完成但提交失败必须回滚，下一次调用仍能生成该日报告。"""
+    store = admin_runtime.tagged_memory_store
+    original = store._transaction
+
+    @contextmanager
+    def failing_transaction(owner=None):
+        """在生产事务提交前模拟故障，实际回滚仍由数据库上下文负责。"""
+        with original(owner) as db:
+            yield db
+            raise RuntimeError("offline commit interruption")
+
+    stamp = datetime(2026, 11, 3, 16)
+    monkeypatch.setattr(store, "_transaction", failing_transaction)
+    with pytest.raises(RuntimeError, match="offline commit interruption"):
+        store.record_daily_review(now=stamp)
+    monkeypatch.setattr(store, "_transaction", original)
+    assert store.admin_reviews()["items"] == []
+    report = store.record_daily_review(now=stamp)
+    assert store.admin_reviews()["items"] == [report]
 
 
 async def test_patch_is_sparse_and_rejects_stale_revision(lifecycle_api):

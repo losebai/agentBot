@@ -10,7 +10,63 @@ import httpx
 import pytest
 
 from agent_bot.ai.errors import AiError
+from agent_bot.models import ChatMessage
 from ai.test_providers import ByteStream, call, response, stream_body
+
+
+@pytest.mark.parametrize("protocol", ["openai-chat", "openai-responses", "ollama"])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("agent", [False, True])
+@pytest.mark.parametrize("system_prompt", ["全局提示词\n保持原值", ""])
+async def test_global_prompt_is_only_responses_instructions(
+    protocol: str, streaming: bool, agent: bool, system_prompt: str,
+) -> None:
+    """普通与 Agent 请求只把全局配置放入 instructions，消息与其他协议保持原样。"""
+    from agent_bot.ai.providers.langchain import LangChainProvider
+
+    payloads = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        """截获真实 SDK 序列化正文，不连接供应商。"""
+        payloads.append(json.loads(request.content))
+        if streaming:
+            return httpx.Response(200, stream=ByteStream(stream_body(protocol)))
+        return httpx.Response(200, json=response(protocol))
+
+    configured = call(protocol)
+    messages = (
+        ChatMessage(role="system", content="独立 Agent 角色与工具规则"),
+        ChatMessage(role="user", content="hi"),
+    )
+    configured = configured.model_copy(update={
+        "request": configured.request.model_copy(update={"messages": messages}),
+    })
+    provider = LangChainProvider(
+        protocol, transport=httpx.MockTransport(handle), system_prompt=system_prompt,
+    )
+    try:
+        if agent:
+            model_call = provider.agent_call(configured)
+            if streaming:
+                _ = [event async for event in provider.stream_turn(model_call)]
+            else:
+                await provider.complete_turn(model_call)
+        elif streaming:
+            _ = [event async for event in provider.stream(configured)]
+        else:
+            await provider.complete(configured)
+        assert len(payloads) == 1
+        payload = payloads[0]
+        if protocol == "openai-responses":
+            assert payload["instructions"] == system_prompt
+        else:
+            assert "instructions" not in payload
+        sent = payload["input" if protocol == "openai-responses" else "messages"]
+        assert [(item["role"], item["content"]) for item in sent] == [
+            (message.role, message.content) for message in messages
+        ]
+    finally:
+        await provider.aclose()
 
 
 @pytest.mark.parametrize("protocol", ["openai-chat", "openai-responses", "ollama"])
@@ -44,6 +100,34 @@ async def test_protocol_and_empty_credentials_are_explicit(protocol, monkeypatch
             "ollama": "/v1/api/chat",
         }
         assert requests[0].url.path == expected[protocol]
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.parametrize("protocol", ["openai-chat", "openai-responses", "ollama"])
+async def test_custom_user_agent_overrides_sdk_header(protocol):
+    """供应商快照的 User-Agent 必须覆盖各 SDK 自带值。"""
+    from agent_bot.ai.providers.langchain import LangChainProvider
+
+    seen = []
+
+    def handle(request):
+        """记录最终越过受控传输边界的请求头。"""
+        seen.append(request.headers["user-agent"])
+        return httpx.Response(200, json=response(protocol))
+
+    configured = call(protocol)
+    configured = configured.model_copy(update={
+        "resolved": configured.resolved.model_copy(update={
+            "provider": configured.resolved.provider.model_copy(
+                update={"user_agent": "AgentBot-Custom/1.0"}
+            )
+        })
+    })
+    provider = LangChainProvider(protocol, transport=httpx.MockTransport(handle))
+    try:
+        await provider.complete(configured)
+        assert seen == ["AgentBot-Custom/1.0"]
     finally:
         await provider.aclose()
 

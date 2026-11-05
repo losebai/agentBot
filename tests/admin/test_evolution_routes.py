@@ -76,3 +76,33 @@ async def test_independent_routes_allow_unbound_state_and_record_listing(
     config = {'expected_revision': 0, 'enabled': False}
     assert (await api.patch(path, headers=HEADERS, json=config)).status_code == 200
     assert (await api.patch(path, headers=HEADERS, json=config)).status_code == 409
+
+
+async def test_manual_research_is_read_only_and_requires_matching_preview(
+    agent_api, agent_database, agent_params, monkeypatch,  # noqa: F811
+):
+    """预览不消费证据，执行仍要求真实阈值和当前摘要，不能覆盖新来的反向反馈。"""
+    from datetime import timedelta
+
+    api, _, runtime = agent_api
+    agent_database.connection.executescript(EVOLUTION_SQL)
+    now = datetime.now(timezone.utc)
+    store = EvolutionStore(agent_params, connect=agent_database.connect, clock=lambda: now)
+    runtime.agent_service.evolution = EvolutionService(store, secret='offline')
+    advance = store._advance
+    monkeypatch.setattr(store, '_advance', lambda *args: None)
+    for index, days in enumerate((8, 4, 0)):
+        profile = await store.observe(None, subject_key='a' * 64, source_key=str(index),
+                                      text='以后请简洁一点', observed_at=now-timedelta(days=days))
+    monkeypatch.setattr(store, '_advance', advance)
+    path = f'/api/v1/evolution/profiles/{profile["id"]}'
+    assert (await api.get(path + '/preview')).status_code == 401
+    preview = (await api.get(path + '/preview', headers=HEADERS)).json()
+    assert preview['after']['verbosity'] == -1
+    assert (await store.record_history(profile['id']))['profile']['traits']['verbosity'] == 0
+    body = {'expected_revision': preview['revision'], 'preview_key': preview['preview_key']}
+    applied = await api.post(path + '/advance', headers=HEADERS, json=body)
+    assert applied.status_code == 200 and applied.json()['traits']['verbosity'] == -1
+    assert (await api.post(path + '/advance', headers=HEADERS, json=body)).status_code == 409
+    assert (await api.post(path + '/advance', headers=HEADERS,
+                           json={**body, 'traits': {'verbosity': -3}})).status_code == 422

@@ -18,10 +18,11 @@ from agent_bot.agent.contracts import (
     TurnMessage,
 )
 from agent_bot.agent.engine import AgentEngine, PreparedRun
-from agent_bot.agent.errors import PARTIAL_REPLY_ERRORS, AgentError
+from agent_bot.agent.errors import PARTIAL_REPLY_ERRORS, AgentError, ToolResultRejectedError
 from agent_bot.agent.model_routing import AgentModelRouter
 from agent_bot.agent.persona import compose_system_prompt
 from agent_bot.agent.tools.policy import LEGACY_TOOLS
+from agent_bot.ai.context import DEFAULT_CONTEXT_MAX_CHARS
 from agent_bot.ai.contracts import TokenUsage
 from agent_bot.ai.errors import AiError
 from agent_bot.database_pool import finish_database_write
@@ -30,6 +31,7 @@ from agent_bot.media.inputs import ImagePreparer
 from agent_bot.media.store import finish_cleanup
 from agent_bot.models import LlmRequestOptions
 from agent_bot.services.llm_timing import record_timing
+from agent_bot.services.reply_text import contains_tool_call_markup
 from agent_bot.services.request_deadline import (
     clear_request_deadline,
     remaining_timeout,
@@ -53,6 +55,7 @@ class AgentService:
         image_downloader=None,
         maximum_images=4,
         maximum_tool_calls: int | None = None,
+        maximum_context_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
         evolution=None,
     ):
         """注入运行配置调用预算和媒体边界，不在构造时下载或读文件。"""
@@ -63,6 +66,9 @@ class AgentService:
         self.material_store = material_store
         self.maximum_images = min(maximum_images, 8)
         self.maximum_tool_calls = maximum_tool_calls
+        if maximum_context_chars <= 0:
+            raise ValueError("context character limit must be positive")
+        self.maximum_context_chars = maximum_context_chars
         self.evolution = evolution
 
     @property
@@ -174,23 +180,29 @@ class AgentService:
         return PreparedRun(
             execution_id, request, snapshot, authority, call, maximum, scope, images, router,
             evolution_prompt=habits,
+            maximum_context_chars=self.maximum_context_chars,
         ), provider
 
     async def complete(self, request, authority):
-        """QQ 超时可携带当前轮正文，调用仍抛错并保存失败终态。"""
+        """QQ 中断携带正常草稿与成功工具回执数，失败说明不能否认已执行的工具。"""
         text, result = "", None
+        completed_tool_calls = 0
         async with aclosing(self.stream(request, authority)) as events:
             async for event in events:
                 if event.kind == "model_start":
                     text = ""
                 elif event.kind == "text_delta":
                     text += event.delta or ""
+                elif event.kind == "tool_result" and not event.code:
+                    completed_tool_calls += 1
                 elif event.kind == "error":
                     raise AgentError(
                         event.code or "AGENT_FAILED", status_code=event.status_code or 502,
                         partial_content=text if (
                             authority.entry == "qq" and event.code in PARTIAL_REPLY_ERRORS
+                            and not contains_tool_call_markup(text)
                         ) else "",
+                        completed_tool_calls=completed_tool_calls,
                     )
                 elif event.kind == "done":
                     result = AgentCompletion(content=text, **event.metadata.model_dump())
@@ -206,6 +218,7 @@ class AgentService:
         execution_id, started = uuid.uuid4().hex, time.monotonic()
         sequence, text, saved, prepared, pending_tool = 0, "", True, None, None
         pending_started = None
+        result_rejected = False
         begun, final, error_code, status = False, None, None, "failed"
         inputs = AsyncExitStack()
         artifacts = []
@@ -375,6 +388,7 @@ class AgentService:
                     yield event("error", code=error_code, message="Agent 执行超时", status_code=504)
                 except AiError as error:
                     error_code = error.code
+                    result_rejected = isinstance(error, ToolResultRejectedError)
                     yield event(
                         "error",
                         code=error.code,
@@ -392,6 +406,7 @@ class AgentService:
                         if begun:
                             if pending_tool is not None:
                                 sequence += 1
+                                # 收到响应后的校验失败已知，取消或连接中断仍不能断言远端结果。
                                 await save(
                                     self.records.append_step,
                                     StepWrite(
@@ -401,14 +416,16 @@ class AgentService:
                                         kind="tool_result",
                                         tool=pending_tool.tool,
                                         call_id=pending_tool.call_id,
-                                        status="unknown",
-                                        summary="AGENT_TOOL_OUTCOME_UNKNOWN",
+                                        status="failed" if result_rejected else "unknown",
+                                        summary=error_code if result_rejected
+                                        else "AGENT_TOOL_OUTCOME_UNKNOWN",
                                         arguments=pending_tool.arguments,
                                         result={
                                             "error_code": (
                                                 error_code or "AGENT_TOOL_OUTCOME_UNKNOWN"
                                             ),
-                                            "outcome": "unknown",
+                                            "outcome": "result_rejected" if result_rejected
+                                            else "unknown",
                                         },
                                         duration_ms=int(
                                             (time.monotonic() - pending_started) * 1000

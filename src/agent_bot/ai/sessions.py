@@ -59,7 +59,7 @@ class AiSessionStore(AiDatabase):
 
     async def list_records(
         self, *, session_id: str | None = None, status: str | None = None,
-        limit: int = 50, cursor: str | None = None,
+        limit: int = 10, cursor: str | None = None,
     ) -> Page[SessionSummary]:
         """按原始 UTC 微秒和执行 ID 翻页，只查询本地普通调用来源。"""
         page_limit(limit)

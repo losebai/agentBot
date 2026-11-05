@@ -35,8 +35,13 @@ def install_sticker_routes(router: APIRouter, runtime) -> None:
     @router.get("/stickers")
     async def listing(query: str = Query("", max_length=200),
                       tag: str = Query("", max_length=32),
-                      offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
-        """管理员可分页筛选停用条目，QQ工具仅使用已启用候选。"""
+                      offset: int = Query(0, ge=0), page: int | None = Query(None, ge=1),
+                      limit: int = Query(10, ge=1, le=100)):
+        """管理员使用页码筛选停用条目，旧偏移参数仅保留接口兼容。"""
+        if page is not None:
+            if offset:
+                raise AgentError("STICKER_INVALID_PAGE", status_code=422)
+            offset = (page - 1) * limit
         async with runtime.lease():
             return await service().store.list(query=query, tag=tag, offset=offset, limit=limit)
 

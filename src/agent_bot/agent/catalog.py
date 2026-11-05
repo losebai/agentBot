@@ -13,7 +13,7 @@ from agent_bot.agent.contracts import (
 from agent_bot.agent.errors import AgentError
 from agent_bot.agent.persona import compose_system_prompt
 from agent_bot.ai.catalog import AiCatalog
-from agent_bot.ai.contracts import Page, ResolvedModel
+from agent_bot.ai.contracts import CatalogPage, ResolvedModel
 from agent_bot.ai.database import AiDatabase, page_limit, query, sql_columns
 from agent_bot.ai.errors import AiError
 from agent_bot.credential_values import row_values, write_credential
@@ -145,8 +145,11 @@ class AgentCatalog(AiDatabase):
 
         await self.run(write, write=True)
 
-    async def _list(self, kind, limit, cursor):
+    async def _list(self, kind, limit, cursor, page=None):
+        """管理页使用页码，选择器保留稳定游标；两种参数不能混用。"""
         page_limit(limit)
+        if page is not None and (isinstance(page, bool) or page < 1 or cursor is not None):
+            raise AgentError("AGENT_INVALID_PAGE", status_code=422)
         if cursor is not None and (
             not cursor.isascii() or not cursor.isdecimal() or len(cursor) > 20
         ):
@@ -154,14 +157,19 @@ class AgentCatalog(AiDatabase):
         after = int(cursor or 0)
 
         def read(connection):
-            rows = query(
-                connection,
-                f"SELECT id FROM agent_bot_{kind} WHERE id>%s ORDER BY id LIMIT %s",
-                (after, limit + 1),
+            total = query(
+                connection, f"SELECT COUNT(*) AS total FROM agent_bot_{kind}", one=True
+            )["total"]
+            rows = query(connection,
+                f"SELECT id FROM agent_bot_{kind} "
+                + ("ORDER BY id LIMIT %s OFFSET %s" if page is not None
+                   else "WHERE id>%s ORDER BY id LIMIT %s"),
+                (limit + 1, (page - 1) * limit) if page is not None else (after, limit + 1),
             )
-            return Page[VIEW[kind]](
+            return CatalogPage[VIEW[kind]](
                 items=[self._get(connection, kind, r["id"]) for r in rows[:limit]],
                 next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
+                total=total,
             )
 
         return await self.run(read)
@@ -178,8 +186,10 @@ class AgentCatalog(AiDatabase):
     async def get_agent(self, id):
         return await self.run(lambda c: self._get(c, "agent", id))
 
-    async def list_agents(self, *, limit=50, cursor=None, preferred_code=None):
+    async def list_agents(self, *, limit=10, cursor=None, preferred_code=None, page=None):
         """实际启用预设置顶，游标固定已显示的置顶身份，保持其他角色分页完整且顺序稳定。"""
+        if page is not None:
+            return await self._agent_page(limit, cursor, page, preferred_code)
         if cursor is not None and not cursor.startswith("p:"):
             # 已开始的旧数字游标继续原顺序，不能在中途切换排序而遗漏角色。
             return await self._list("agent", limit, cursor)
@@ -197,6 +207,9 @@ class AgentCatalog(AiDatabase):
 
         def read(connection):
             """置顶与其余角色同事务读取；后续页排除已显示的置顶项，不改变单页条数。"""
+            total = query(
+                connection, "SELECT COUNT(*) AS total FROM agent_bot_agent", one=True
+            )["total"]
             pinned = pinned_id
             if cursor is None:
                 row = query(connection, "SELECT id FROM agent_bot_agent "
@@ -213,7 +226,36 @@ class AgentCatalog(AiDatabase):
             if len(rows) > remaining:
                 last = rows[remaining - 1]["id"] if remaining else after
                 next_cursor = f"p:{pinned}:{last}" if pinned else str(last)
-            return Page[VIEW["agent"]](items=items, next_cursor=next_cursor)
+            return CatalogPage[VIEW["agent"]](
+                items=items, next_cursor=next_cursor, total=total
+            )
+
+        return await self.run(read)
+
+    async def _agent_page(self, limit, cursor, page, preferred_code):
+        """先按实际运行身份排序，再按创建时间与身份分页，避免仅在当前页置顶。"""
+        page_limit(limit)
+        if isinstance(page, bool) or page < 1 or cursor is not None:
+            raise AgentError("AGENT_INVALID_PAGE", status_code=422)
+
+        def read(connection):
+            """同事务确定运行身份、排序和使用标记；启用其他角色不表示切换运行配置。"""
+            total = query(
+                connection, "SELECT COUNT(*) AS total FROM agent_bot_agent", one=True
+            )["total"]
+            row = query(connection, "SELECT id FROM agent_bot_agent "
+                        "WHERE code=%s AND enabled=1", (preferred_code,), one=True)
+            current_id = row["id"] if row else 0
+            rows = query(connection, "SELECT id FROM agent_bot_agent "
+                         "ORDER BY CASE WHEN id=%s THEN 0 ELSE 1 END, created_at, id "
+                         "LIMIT %s OFFSET %s", (current_id, limit + 1, (page - 1) * limit))
+            items = [self._get(connection, "agent", row["id"]).model_copy(
+                update={"is_current": row["id"] == current_id}
+            ) for row in rows[:limit]]
+            return CatalogPage[VIEW["agent"]](
+                items=items, total=total,
+                next_cursor=str(rows[limit - 1]["id"]) if len(rows) > limit else None,
+            )
 
         return await self.run(read)
 
@@ -229,8 +271,8 @@ class AgentCatalog(AiDatabase):
     async def get_skill(self, id):
         return await self.run(lambda c: self._get(c, "skill", id))
 
-    async def list_skills(self, *, limit=50, cursor=None):
-        return await self._list("skill", limit, cursor)
+    async def list_skills(self, *, limit=10, cursor=None, page=None):
+        return await self._list("skill", limit, cursor, page)
 
     async def create_mcp(self, data):
         return await self._create("mcp", data)
@@ -244,8 +286,8 @@ class AgentCatalog(AiDatabase):
     async def get_mcp(self, id):
         return await self.run(lambda c: self._get(c, "mcp", id))
 
-    async def list_mcps(self, *, limit=50, cursor=None):
-        return await self._list("mcp", limit, cursor)
+    async def list_mcps(self, *, limit=10, cursor=None, page=None):
+        return await self._list("mcp", limit, cursor, page)
 
     async def get_system_prompt(self, code: str) -> str:
         """系统调用组合当前启用 Agent 的角色与人格，不加载模型、技能或工具。"""
@@ -374,7 +416,7 @@ class AgentCatalog(AiDatabase):
             def check(connection):
                 """检查必需结构；附件和统一记录请求快照不要求新增历史表列。"""
                 for kind, view in VIEW.items():
-                    fields = set(view.model_fields) - {*RELATIONS}
+                    fields = set(view.model_fields) - {*RELATIONS} - {"is_current"}
                     query(
                         connection,
                         f"SELECT {sql_columns(sorted(fields))} FROM agent_bot_{kind} LIMIT 0",

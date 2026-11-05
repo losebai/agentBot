@@ -47,12 +47,26 @@ class WireState:
     timeout: float
     credential: str | None
     base_url: str
+    user_agent: str = ""
     terminal: bool = False
     finish_reason: str | None = None
     last: dict | None = None
     response: httpx.Response | None = None
     tool_arguments: dict[int, str] = field(default_factory=dict)
     thinking: str = field(default="", repr=False)
+    rejection_reason: str = "unknown"
+
+    def reject(self, reason: str) -> NoReturn:
+        """保存代码指定的诊断类别，公开错误码保持稳定，禁止传入上游正文。"""
+        self.rejection_reason = reason
+        raise AiError("AI_RESPONSE_INVALID")
+
+    def validate_arguments(self, arguments: str) -> None:
+        """记录工具参数 JSON 拒绝原因，不记录参数或改变其语义。"""
+        try:
+            strict_object(arguments)
+        except AiError:
+            self.reject("invalid_tool_arguments")
 
     def inspect(self, value: dict, *, streaming: bool) -> None:
         """仅校验协议终态，消息和工具内容解析仍由 LangChain 完成。"""
@@ -69,21 +83,23 @@ class WireState:
         elif self.protocol == "openai-responses":
             kind = value.get("type")
             if kind in {"response.failed", "response.incomplete", "error"}:
-                raise AiError("AI_RESPONSE_INVALID")
+                self.reject("upstream_failure_event")
             result = value.get("response", {}) if streaming else value
             if not streaming or kind == "response.completed":
                 if result.get("status") != "completed":
-                    raise AiError("AI_RESPONSE_INVALID")
+                    self.reject("response_not_completed")
                 self.terminal = True
                 self.finish_reason = "stop"
                 self.last = result
         else:
             choices = value.get("choices", [])
             if len(choices) > 1:
-                raise AiError("AI_RESPONSE_INVALID")
+                self.reject("multiple_choices")
             if choices:
-                if choices[0].get("index", 0) != 0 or (streaming and self.finish_reason):
-                    raise AiError("AI_RESPONSE_INVALID")
+                if choices[0].get("index", 0) != 0:
+                    self.reject("invalid_choice_index")
+                if streaming and self.finish_reason:
+                    self.reject("choice_after_finish")
                 reason = choices[0].get("finish_reason")
                 if reason:
                     self.finish_reason = reason
@@ -92,17 +108,18 @@ class WireState:
                     arguments = item.get("function", {}).get("arguments", "")
                     if streaming:
                         index = item["index"]
-                        if type(index) is not int or not 0 <= index < 8:
-                            raise AiError("AI_RESPONSE_INVALID")
+                        # 索引只负责关联分片；工具调用额度由执行图的运行配置统一检查。
+                        if type(index) is not int or index < 0:
+                            self.reject("invalid_tool_index")
                         self.tool_arguments[index] = self.tool_arguments.get(index, "") + arguments
                         if len(self.tool_arguments[index].encode()) > 65536:
                             raise AiError("AI_RESPONSE_TOO_LARGE")
                     else:
-                        strict_object(arguments)
+                        self.validate_arguments(arguments)
             if not streaming:
                 self.terminal = bool(choices and self.finish_reason)
         if not streaming and not self.terminal:
-            raise AiError("AI_RESPONSE_INVALID")
+            self.reject("missing_terminal")
 
 
 class GuardedStream(httpx.AsyncByteStream):
@@ -130,17 +147,21 @@ class GuardedStream(httpx.AsyncByteStream):
         async for data in parser(chunks()):
             if data == "[DONE]" and self.state.protocol == "openai-chat":
                 if self.state.finish_reason not in {"stop", "tool_calls"}:
-                    raise AiError("AI_RESPONSE_INVALID")
+                    self.state.reject("invalid_finish_reason")
                 self.state.terminal = True
                 for arguments in self.state.tool_arguments.values():
-                    strict_object(arguments)
+                    self.state.validate_arguments(arguments)
             else:
-                self.state.inspect(strict_object(data), streaming=True)
+                try:
+                    value = strict_object(data)
+                except AiError:
+                    self.state.reject("invalid_event_json")
+                self.state.inspect(value, streaming=True)
             yield (
                 data + "\n" if self.state.protocol == "ollama" else "data: " + data + "\n\n"
             ).encode()
         if not self.state.terminal:
-            raise AiError("AI_RESPONSE_INVALID")
+            self.state.reject("missing_terminal")
 
     async def aclose(self) -> None:
         """消费者取消后也必须释放原始连接。"""
@@ -188,6 +209,8 @@ class ModelTransport(httpx.AsyncBaseTransport):
             request.headers.pop("authorization", None)
         else:
             request.headers["authorization"] = "Bearer " + self.state.credential
+        if self.state.user_agent:
+            request.headers["user-agent"] = self.state.user_agent
         payload = strict_object(request.content)
         response = await self._send(request)
         self.state.response = response

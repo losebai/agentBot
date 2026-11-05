@@ -34,7 +34,7 @@ it.each([{ name: '聊天与图片理解', selectedFields: modelFields.slice(0, 2
     if (String(url).includes('/ai/models?')) {
       modelReads.push(String(url));
       return Response.json(String(url).includes('cursor=second-page')
-        ? { items: [{provider_name: '测试供应商', reference: `model:${8}`, provider_id: 1, upstream_model: 'later-model', revision: 1,  id: 8, alias: 'later-model', enabled: true }], next_cursor: null }
+        ? { items: [{provider_name: '测试供应商', reference: `model:${8}`, provider_id: 1, upstream_model: 'later-model', revision: 1,  id: 8, alias: 'later-model', enabled: true, media: { vision_enabled: true } }], next_cursor: null }
         : firstPage);
     }
     if (init?.method === 'PATCH') submitted = JSON.parse(String(init.body));
@@ -48,14 +48,14 @@ it.each([{ name: '聊天与图片理解', selectedFields: modelFields.slice(0, 2
   expect(screen.queryByText('chat_python_search_mcp_code')).not.toBeInTheDocument();
   for (const [, label, value] of selectedFields) {
     const select = screen.getByLabelText(label);
-    expect(selectDisplay(select)).toHaveTextContent(value === 'retired-private' ? '测试供应商 / retired-private（已停用）' : value);
+    expect(selectDisplay(select)).toHaveTextContent(value === 'retired-private' ? 'retired-private（已停用）' : value);
   }
-  expect(modelReads).toHaveLength(1);
-  fireEvent.click(screen.getByText('加载更多模型'));
+  // 目录现在自动遍历游标，不再依赖已经移除的“加载更多”按钮。
   await waitFor(() => expect(modelReads).toHaveLength(2));
+  expect(screen.queryByText('加载更多模型')).not.toBeInTheDocument();
   await waitFor(() => expect(screen.getByLabelText(selectedFields[0][1])).toBeEnabled());
   for (const [, label] of selectedFields) {
-    await chooseSelect(screen.getByLabelText(label), '测试供应商 / later-model');
+    await chooseSelect(screen.getByLabelText(label), 'later-model');
   }
   fireEvent.click(screen.getByText('保存修改'));
   await waitFor(() => expect(submitted).toEqual({ expected_revision: 4, values: Object.fromEntries(selectedFields.map(([name]) => [name, 'model:8'])) }));
@@ -77,14 +77,14 @@ it('目录读取失败明确报错，保留原别名和草稿，刷新恢复后�
   fireEvent.click(screen.getByRole('button', { name: 'LLM设置' }));
   fireEvent.change(await screen.findByLabelText('系统提示词'), { target: { value: '未保存提示词' } });
   expect(await screen.findByText('模型列表读取失败：模型目录暂不可用')).toBeVisible();
-  for (const [, label, value] of modelFields) expect(selectDisplay(screen.getByLabelText(label))).toHaveTextContent(value === 'retired-private' && reads > 1 ? '测试供应商 / retired-private（已停用）' : value);
+  for (const [, label, value] of modelFields) expect(selectDisplay(screen.getByLabelText(label))).toHaveTextContent(value === 'retired-private' && reads > 1 ? 'retired-private（已停用）' : value);
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '聊天模型' }));
   await waitFor(() => expect(screen.queryByText('模型列表读取失败：模型目录暂不可用')).not.toBeInTheDocument());
   expect(screen.queryByText('模型列表读取失败：模型目录暂不可用')).not.toBeInTheDocument();
-  for (const [, label, value] of modelFields) expect(selectDisplay(screen.getByLabelText(label))).toHaveTextContent(value === 'retired-private' && reads > 1 ? '测试供应商 / retired-private（已停用）' : value);
+  for (const [, label, value] of modelFields) expect(selectDisplay(screen.getByLabelText(label))).toHaveTextContent(value === 'retired-private' && reads > 1 ? 'retired-private（已停用）' : value);
   expect(screen.getByLabelText('系统提示词')).toHaveValue('未保存提示词');
   expect(screen.getAllByText(/当前配置的模型未启用或不存在，请重新选择/)).toHaveLength(4);
-  expect(screen.getByText('测试供应商 / retired-private（已停用）')).toBeVisible();
+  expect(screen.getByText('retired-private（已停用）')).toBeVisible();
 });
 
 it('切换凭据取消旧目录读取，迟到结果不覆盖新凭据目录', async () => {
@@ -106,9 +106,9 @@ it('切换凭据取消旧目录读取，迟到结果不覆盖新凭据目录', a
   await waitFor(() => expect(oldSignal).toBeDefined());
   rerender(<Settings token="new-token" />);
   await waitFor(() => expect(screen.getByLabelText('聊天模型')).toBeEnabled());
-  await chooseSelect(screen.getByLabelText('聊天模型'), '测试供应商 / new-token-model');
+  await chooseSelect(screen.getByLabelText('聊天模型'), 'new-token-model');
   expect(oldSignal?.aborted).toBe(true);
   await act(async () => { finishOld(Response.json(firstPage)); });
-  expect(selectDisplay(screen.getByLabelText('聊天模型'))).toHaveTextContent('测试供应商 / new-token-model');
+  expect(selectDisplay(screen.getByLabelText('聊天模型'))).toHaveTextContent('new-token-model');
   expect(screen.queryByRole('option', { name: 'universal' })).not.toBeInTheDocument();
 });

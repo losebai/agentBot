@@ -7,7 +7,7 @@ import { McpServers } from '../pages/McpServers';
 import type { AiModel, Provider } from '../ai-types';
 
 const providers: Provider[] = [1, 2].map(id => ({ id, revision: 1, name: `供应商${id}`,
-  protocol: 'openai-chat', base_url: `https://provider${id}.invalid/v1`, enabled: true,
+  protocol: 'openai-chat', base_url: `https://provider${id}.invalid/v1`, user_agent: '', enabled: true,
   description: '', credential_set: false, credential_available: true }));
 
 /** 离线目录按供应商过滤，捕获写入归属错误而不连接真实模型服务。 */
@@ -94,6 +94,7 @@ it('新增供应商不在当前分页时仍选中它，避免把模型登记到�
   const dialog = await screen.findByRole('dialog', { name: '新增供应商' });
   fireEvent.change(within(dialog).getByLabelText('供应商名称'), { target: { value: '刚新增' } });
   fireEvent.change(within(dialog).getByLabelText('API 根地址'), { target: { value: 'https://new.invalid/v1' } });
+  fireEvent.change(within(dialog).getByLabelText('API 密钥'), { target: { value: 'new-key' } });
   fireEvent.click(within(dialog).getByRole('button', { name: '保存供应商' }));
   expect(await screen.findByRole('heading', { name: '刚新增 的模型' })).toBeVisible();
   expect(screen.getByRole('tab', { name: /刚新增/ })).toHaveAttribute('aria-selected', 'true');

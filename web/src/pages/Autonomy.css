@@ -1,0 +1,55 @@
+.autonomy-page { min-width: 0; }
+.autonomy-page h1 { font-size: 24px; }
+.autonomy-host, .autonomy-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 20px 0; }
+.autonomy-host { padding: 12px 0; border-bottom: 1px solid #d8e1ed; }
+.autonomy-host label { display: flex; align-items: center; gap: 10px; }
+.autonomy-toolbar > .ant-select { width: 300px; max-width: 100%; }
+.autonomy-actions { margin-top: 16px; }
+.autonomy-page .ant-table-wrapper { margin-top: 16px; }
+.autonomy-page .ant-table-cell { overflow-wrap: anywhere; }
+.autonomy-page .ant-btn-link { white-space: normal; text-align: left; height: auto; padding: 2px 0; }
+.autonomy-page .ant-descriptions-item-content { overflow-wrap: anywhere; }
+.autonomy-search { width: 460px; max-width: 100%; }
+.autonomy-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.autonomy-detail { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 65vh; overflow: auto; font-size: 13px; }
+.autonomy-conversations { min-width: 0; }
+.autonomy-conversation-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.autonomy-conversation-toolbar h2 { margin: 0; font-size: 18px; }
+.autonomy-conversation-toolbar label { display: flex; align-items: center; gap: 8px; }
+.autonomy-conversation-layout { display: grid; grid-template-columns: minmax(200px, 280px) minmax(0, 1fr); min-height: 440px; border-top: 1px solid #d8e1ed; }
+.autonomy-conversation-list { border-right: 1px solid #d8e1ed; max-height: 640px; overflow-y: auto; padding: 8px 12px 8px 0; }
+.autonomy-conversation-list > button:not(.ant-btn) { display: block; width: 100%; padding: 12px; border: 0; border-bottom: 1px solid #e5e7eb; border-radius: 4px; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.autonomy-conversation-list > button:hover { background: #f3f4f6; }
+.autonomy-conversation-list > button.selected { background: #e9f5ed; box-shadow: inset 3px 0 #27824e; }
+.autonomy-conversation-list > button:focus-visible { outline: 2px solid #27824e; outline-offset: -2px; }
+.autonomy-conversation-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.6; }
+.autonomy-conversation-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px; color: #667085; font-size: 12px; margin-top: 8px; }
+.autonomy-conversation-thread { min-width: 0; padding: 16px 20px; max-height: 640px; overflow-y: auto; }
+.autonomy-conversation-thread > header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border-bottom: 1px solid #e5e7eb; padding-bottom: 16px; }
+.autonomy-conversation-thread time { color: #667085; font-size: 12px; }
+.autonomy-message { padding: 16px 0; border-bottom: 1px solid #e5e7eb; overflow-wrap: anywhere; }
+.autonomy-message.source, .autonomy-message.goal { border-left: 3px solid #b9c4cf; padding-left: 12px; }
+.autonomy-message.assistant { border-left: 3px solid #8ac09b; padding-left: 12px; }
+.autonomy-message-author { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #475467; font-size: 13px; margin-bottom: 8px; }
+.autonomy-message p { white-space: pre-wrap; margin: 8px 0 0; }
+.autonomy-result { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; margin: 8px 0 0; }
+.autonomy-message .markdown-body { min-width: 0; }
+.autonomy-message pre { max-width: 100%; overflow-x: auto; }
+.autonomy-recalled { padding-left: 20px; }
+@media (max-width: 600px) {
+  .autonomy-page .page-heading { align-items: flex-start; gap: 12px; }
+  .autonomy-toolbar > .ant-select { width: 100%; }
+  .autonomy-host { align-items: flex-start; flex-direction: column; }
+  .autonomy-conversation-layout { grid-template-columns: minmax(0, 1fr); }
+  .autonomy-conversation-list { max-height: 190px; border-right: 0; border-bottom: 1px solid #d8e1ed; padding-right: 0; }
+  .autonomy-conversation-thread { max-height: none; padding: 16px 0; }
+}
+
+.autonomy-composer { margin-top: 20px; display: grid; gap: 10px; }
+.autonomy-composer > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.autonomy-composer span { color: #667085; font-size: 12px; }
+
+.independent-agent { max-width: 1320px; margin: 0 auto; padding: 24px; }
+.independent-heading { display: flex; flex-wrap: wrap; gap: 16px; padding: 0 0 16px; border-bottom: 1px solid #d8e1ed; }
+.independent-heading span { color: #667085; }
+@media (max-width: 600px) { .independent-agent { padding: 12px; } }

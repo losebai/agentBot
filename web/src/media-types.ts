@@ -10,5 +10,5 @@ export interface MediaGenerationRequest {
   messages?:{role:'user'|'assistant';content:string}[];image_format?:string;audio_format?:string;voice?:string;
 }
 export interface MediaGenerationResult {execution_id:string;request_id:string;backend:'python-media';model:string;text:string|null;attachments:MediaAsset[];duration_ms:number;record_saved:boolean}
-export interface MediaRun {execution_id:string;entry:'admin'|'qq';session_id:string;request_id:string;model:string;backend:'python-media';output_type:'IMAGE'|'AUDIO';status:'running'|'completed'|'failed'|'cancelled';duration_ms:number;error_code:string|null;created_at:string}
+export interface MediaRun {execution_id:string;entry:'admin'|'qq';session_id:string;request_id:string;model:string;model_display_name:string;backend:'python-media';output_type:'IMAGE'|'AUDIO';status:'running'|'completed'|'failed'|'cancelled';duration_ms:number;error_code:string|null;created_at:string}
 export interface MediaRunDetail extends MediaRun {prompt:string;content:string;attachments:MediaAsset[]}

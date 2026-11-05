@@ -54,7 +54,7 @@ class AiJobPoller:
         """只将当前允许目标的正文持久入队，由投递完成流程确认消费。"""
         async with self._lease():
             config = self._config()
-            if not config.chat_job_enabled:
+            if not config.chat_job_enabled or config.chat_active_actions_paused:
                 return
             policy = AccessPolicy(
                 allowed_users=config.chat_allowed_users,
@@ -81,6 +81,7 @@ class AiJobPoller:
                             userId=result.sender_id,
                             prompt=result.prompt,
                             aiJobId=result.id,
+                            autonomyProfileId=result.autonomy_profile_id,
                             aiJobReply=PersistedGeneratedReply(
                                 text=result.result, requestId=request_id
                             ),

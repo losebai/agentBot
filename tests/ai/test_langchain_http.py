@@ -15,13 +15,13 @@ from agent_bot.ai.providers.langchain import LangChainProvider
 from ai.test_providers import ByteStream
 
 
-@pytest.mark.parametrize("failure,event", [
-    ("missing_terminal", "other"),
-    ("upstream_failed", "response.failed"),
-    ("invalid_json", "none"),
+@pytest.mark.parametrize("failure,event,reason", [
+    ("missing_terminal", "other", "missing_terminal"),
+    ("upstream_failed", "response.failed", "upstream_failure_event"),
+    ("invalid_json", "none", "invalid_event_json"),
 ])
 async def test_invalid_response_logs_location_without_upstream_content(
-    caplog: pytest.LogCaptureFixture, failure: str, event: str,
+    caplog: pytest.LogCaptureFixture, failure: str, event: str, reason: str,
 ) -> None:
     """不同协议失败应能定位校验位置，诊断不得记录响应正文、请求内容或凭据。"""
     protocol = "openai-responses"
@@ -56,6 +56,7 @@ async def test_invalid_response_logs_location_without_upstream_content(
         assert "upstream_status=200" in diagnostic
         assert "terminal=False" in diagnostic
         assert f"last_event={event}" in diagnostic
+        assert f"reason={reason}" in diagnostic
         assert "source=" in diagnostic and "source=none" not in diagnostic
         assert secret not in caplog.text
     finally:
@@ -187,5 +188,72 @@ async def test_duplicate_json_tool_keys_rejected():
     try:
         with pytest.raises(AiError):
             await provider.complete_turn(model_call("openai-chat"))
+    finally:
+        await provider.aclose()
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("mutation,reason", [
+    ("length", "invalid_finish_reason"),
+    ("private-finish-reason", "invalid_finish_reason"),
+    ("tool_mismatch", "tool_finish_mismatch"),
+    ("empty", "invalid_model_message"),
+])
+async def test_chat_rejection_diagnostic_explains_failure_without_leaking_payload(
+    caplog, streaming, mutation, reason,
+):
+    """协议失败细分截断、工具终态不符与空正文，原始结束原因和私有文本不能进日志。"""
+    value = body("openai-chat", tool=mutation == "tool_mismatch")
+    choice = value["choices"][0]
+    choice["message"]["content"] = "" if mutation == "empty" else "private-response-body"
+    choice["finish_reason"] = (
+        mutation if mutation in {"length", "private-finish-reason"} else "stop"
+    )
+    requests = []
+
+    def handle(request):
+        """离线返回损坏响应，并记录是否出现额外重放。"""
+        requests.append(request)
+        return (httpx.Response(200, stream=ByteStream(streamed("openai-chat", value)))
+                if streaming else httpx.Response(200, json=value))
+
+    provider = LangChainProvider("openai-chat", transport=httpx.MockTransport(handle))
+    try:
+        with pytest.raises(AiError):
+            if streaming:
+                _ = [event async for event in provider.stream_turn(model_call("openai-chat"))]
+            else:
+                await provider.complete_turn(model_call("openai-chat"))
+        assert f"reason={reason}" in caplog.text
+        assert "private-response-body" not in caplog.text
+        assert "private-finish-reason" not in caplog.text
+        if mutation == "length":
+            assert "finish_reason=length" in caplog.text
+        assert len(requests) == 1
+    finally:
+        await provider.aclose()
+
+
+async def test_stream_accepts_more_than_eight_tool_calls_without_executing_them():
+    """传输层完整解析九个工具请求，是否执行留给执行图的配置预算。"""
+    calls = [{"index": index, "id": f"call-{index}", "type": "function", "function": {
+        "name": "web_search", "arguments": json.dumps({"query": str(index)}),
+    }} for index in range(9)]
+    events = [
+        {"model": "Qwen/X", "choices": [{"index": 0, "delta": {
+            "role": "assistant", "tool_calls": calls,
+        }, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+    raw = ("".join("data: " + json.dumps(event) + "\n\n" for event in events)
+           + "data: [DONE]\n\n").encode()
+    provider = LangChainProvider("openai-chat", transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, stream=ByteStream(raw)),
+    ))
+    try:
+        output = [event async for event in provider.stream_turn(model_call("openai-chat"))]
+        assert [call.arguments for call in output[-1].turn.calls] == [
+            {"query": str(index)} for index in range(9)
+        ]
     finally:
         await provider.aclose()

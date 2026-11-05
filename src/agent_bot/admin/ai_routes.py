@@ -12,6 +12,7 @@ from agent_bot.ai.call_records import (
     SystemKind,
 )
 from agent_bot.ai.contracts import (
+    CatalogPage,
     ModelCreate,
     ModelImportRequest,
     ModelImportResult,
@@ -19,6 +20,7 @@ from agent_bot.ai.contracts import (
     ModelView,
     Page,
     ProviderCreate,
+    ProviderCredential,
     ProviderUpdate,
     ProviderView,
     SessionDetail,
@@ -63,7 +65,7 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
         system_kind: SystemKind | None = None,
         session_id: str | None = Query(None, max_length=255),
         status: str | None = Query(None, max_length=16),
-        limit: int = Query(50, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = Query(None, max_length=2048),
         page: int | None = Query(None, ge=1),
     ):
@@ -97,10 +99,13 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
 
             return result
 
-    @router.get("/ai/providers", response_model=Page[ProviderView])
-    async def providers(limit: int = Query(50, ge=1, le=100), cursor: str | None = None):
+    @router.get("/ai/providers", response_model=CatalogPage[ProviderView])
+    async def providers(
+        limit: int = Query(10, ge=1, le=100), cursor: str | None = None,
+        page: int | None = Query(None, ge=1),
+    ):
         """读取数据库目录，不借用供应商 HTTP 客户端。"""
-        return await operate("list_providers", limit, cursor, read_only=True)
+        return await operate("list_providers", limit, cursor, page, read_only=True)
 
     @router.post("/ai/providers", response_model=ProviderView, status_code=201)
     async def create_provider(body: ProviderCreate):
@@ -110,18 +115,27 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
     async def update_provider(id: int, body: ProviderUpdate):
         return await operate("update_provider", id, body)
 
+    @router.get("/ai/providers/{id}/credential", response_model=ProviderCredential)
+    async def provider_credential(id: int, expected_revision: int = Query(..., ge=1)):
+        """仅在管理员显式查看时读取当前版本密钥，列表及普通详情继续脱敏。"""
+        provider = await operate("get_provider", id, expected_revision, read_only=True)
+        if provider.credential is None:
+            raise AiError("AI_CREDENTIAL_MISSING", status_code=409)
+        return ProviderCredential(credential=provider.credential.get_secret_value())
+
     @router.delete("/ai/providers/{id}", status_code=204)
     async def delete_provider(id: int, body: VersionDelete):
         await operate("delete_provider", id, body.expected_revision)
 
-    @router.get("/ai/models", response_model=Page[ModelView])
+    @router.get("/ai/models", response_model=CatalogPage[ModelView])
     async def models(
-        limit: int = Query(50, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = None,
         provider_id: int | None = Query(None, ge=1),
+        page: int | None = Query(None, ge=1),
     ):
         """按供应商显示本地登记状态，同名上游模型分别处理。"""
-        return await operate("list_models", limit, cursor, provider_id, read_only=True)
+        return await operate("list_models", limit, cursor, provider_id, page, read_only=True)
 
     @router.get("/ai/providers/{id}/upstream-models", response_model=UpstreamModels)
     async def upstream_models(id: int, expected_revision: int = Query(..., ge=1)):
@@ -153,7 +167,7 @@ def install_ai_routes(router: APIRouter, runtime) -> None:
     async def sessions(
         session_id: str | None = Query(None, max_length=256),
         status: str | None = None,
-        limit: int = Query(50, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = Query(None, max_length=512),
     ):
         return await operate(

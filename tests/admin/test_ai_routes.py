@@ -19,8 +19,8 @@ TOKEN = "offline-admin-token-longer-than-thirty-two-characters"
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 
-async def test_provider_database_secret_is_write_only(python_api):
-    """创建、编辑及列表响应不能回显供应商密钥。"""
+async def test_provider_database_secret_is_redacted_until_explicit_admin_reveal(python_api):
+    """目录继续脱敏，管理员只能按当前供应商版本显式读取单条密钥。"""
     api, _, _ = python_api
     created = await api.post(
         "/api/v1/ai/providers",
@@ -39,6 +39,13 @@ async def test_provider_database_secret_is_write_only(python_api):
     assert "independent-database-key" not in created.text
     listed = await api.get("/api/v1/ai/providers", headers=HEADERS)
     assert "independent-database-key" not in listed.text
+    assert listed.json()["total"] == 2
+    path = f"/api/v1/ai/providers/{created.json()['id']}/credential?expected_revision=1"
+    assert (await api.get(path)).status_code == 401
+    revealed = await api.get(path, headers=HEADERS)
+    assert revealed.status_code == 200
+    assert revealed.json() == {"credential": "independent-database-key"}
+    assert (await api.get(path.replace("=1", "=2"), headers=HEADERS)).status_code == 409
 
 
 async def test_upstream_models_use_provider_url_key_and_auth(python_api):
@@ -50,7 +57,11 @@ async def test_upstream_models_use_provider_url_key_and_auth(python_api):
 
     def handle(request):
         """只模拟列表 GET，不产生模型调用。"""
-        seen.append((str(request.url), request.headers.get("Authorization")))
+        seen.append((
+            str(request.url),
+            request.headers.get("Authorization"),
+            request.headers.get("User-Agent"),
+        ))
         return httpx.Response(
             200, json={"models": [{"name": "exact/model"}, {"name": "exact/model"}]}
         )
@@ -62,6 +73,7 @@ async def test_upstream_models_use_provider_url_key_and_auth(python_api):
         json={
             "expected_revision": 1,
             "credential": "provider-one-key",
+            "user_agent": "AgentBot-Admin-Test/1.0",
         },
     )
     assert saved.status_code == 200
@@ -70,7 +82,11 @@ async def test_upstream_models_use_provider_url_key_and_auth(python_api):
     response = await api.get(path, headers=HEADERS)
     assert response.status_code == 200
     assert response.json()["models"] == ["exact/model"]
-    assert seen == [("https://offline.invalid/api/tags", "Bearer provider-one-key")]
+    assert seen == [(
+        "https://offline.invalid/api/tags",
+        "Bearer provider-one-key",
+        "AgentBot-Admin-Test/1.0",
+    )]
     assert (await api.get(path.replace("=2", "=1"), headers=HEADERS)).status_code == 409
 
 

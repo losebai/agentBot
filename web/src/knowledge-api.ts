@@ -1,10 +1,10 @@
 import { ApiClient } from './api';
-import type { Page } from './ai-types';
+import type { CatalogPage, Page } from './ai-types';
 import type { KnowledgeDraft, KnowledgeEntry, KnowledgeFilters, MemoryDraft, MemoryEntry, MemoryFilters, MemoryMerge, MemoryPreview, MemoryResolve, MemoryRevision, MemoryScopeInfo, MemoryUpdate, MemoryVersion, TagCount } from './knowledge-types';
 
 /** 省略空筛选，分页游标始终携带当前提交的条件。 */
 function queryString(filters: MemoryFilters = {}, cursor?: string) {
-  const params = new URLSearchParams({limit: '20'});
+  const params = new URLSearchParams({limit: '10'});
   for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
   if (cursor) params.set('cursor', cursor);
   return params.toString();
@@ -33,8 +33,11 @@ export class KnowledgeApi extends ApiClient {
   /** 标签计数仅包含未删除的知识。 */
   knowledgeTags(signal?: AbortSignal) { return this.request<TagCount[]>('knowledge-tags', 'GET', undefined, signal); }
   /** 管理员查询匿名作用域，不改变 QQ 工具授权。 */
-  listMemories(filters: MemoryFilters = {}, cursor?: string, signal?: AbortSignal) {
-    return this.request<Page<MemoryEntry>>(`memories?${queryString(filters, cursor)}`, 'GET', undefined, signal);
+  listMemories(filters: MemoryFilters = {}, cursor?: string, signal?: AbortSignal,
+    pagination?: {page: number; limit: number}) {
+    const params = new URLSearchParams(queryString(filters, cursor));
+    if (pagination) { params.set('page', String(pagination.page)); params.set('limit', String(pagination.limit)); }
+    return this.request<CatalogPage<MemoryEntry>>(`memories?${params}`, 'GET', undefined, signal);
   }
   /** 读取完整事实供详情或编辑使用，不从列表摘要建立草稿。 */
   getMemory(id: number, signal?: AbortSignal) { return this.request<MemoryEntry>(`memories/${id}`, 'GET', undefined, signal); }
@@ -43,8 +46,9 @@ export class KnowledgeApi extends ApiClient {
   /** 仅提交编辑过的字段，避免旧表单覆盖新的无关修改。 */
   updateMemory(id: number, body: MemoryUpdate) { return this.request<MemoryEntry>(`memories/${id}`, 'PATCH', body); }
   /** 历史读取可取消，版本正文只用于追溯，不提供恢复遗忘入口。 */
-  memoryRevisions(id: number, cursor?: string, signal?: AbortSignal) {
-    return this.request<Page<MemoryRevision>>(`memories/${id}/revisions?${queryString({}, cursor)}`, 'GET', undefined, signal);
+  memoryRevisions(id: number, page = 1, limit = 10, signal?: AbortSignal) {
+    const params = new URLSearchParams({page: String(page), limit: String(limit)});
+    return this.request<CatalogPage<MemoryRevision>>(`memories/${id}/revisions?${params}`, 'GET', undefined, signal);
   }
   /** 冲突必须读取整组候选，不能只修订其中一条而遗漏其他有效结论。 */
   memoryConflicts(id: number, signal?: AbortSignal) {

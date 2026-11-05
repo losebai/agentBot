@@ -4,8 +4,8 @@ import type { StickerMatch, StickerPage, StickerPatch, StickerView } from './sti
 /** 表情包管理仅复用同源管理员认证，URL 不携带令牌和本地文件路径。 */
 export class StickerApi extends ApiClient {
   /** 名称及标签筛选使用偏移分页，切换筛选时由页面归零。 */
-  list(query: string, tag: string, offset: number, signal: AbortSignal) {
-    const params = new URLSearchParams({ query, tag, offset: String(offset), limit: '20' });
+  list(query: string, tag: string, page: number, limit: number, signal: AbortSignal) {
+    const params = new URLSearchParams({ query, tag, page: String(page), limit: String(limit) });
     return this.request<StickerPage>(`stickers?${params}`, 'GET', undefined, signal);
   }
 

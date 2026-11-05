@@ -18,7 +18,7 @@ it('启用当前配置角色后立即置顶，并保留正在编辑的角色选�
       return Response.json(current);
     }
     if (String(url).includes('/agents?')) return Response.json({
-      items: current.enabled ? [current, first] : [first, current], next_cursor: null,
+      items: current.enabled ? [{ ...current, is_current: true }, first] : [first, current], next_cursor: null,
     });
     return Response.json({ items: [], next_cursor: null });
   }));
@@ -53,7 +53,7 @@ it('三种角色允许复用同一模型并说明图片模型留空的影响', a
   expect(selectDisplay(screen.getByRole('combobox', { name: '图片理解模型' }))).toHaveTextContent('未配置：带图请求将报错');
   expect(screen.getByText(/带图请求必须配置图片理解模型/)).toBeVisible();
   for (const label of ['聊天模型', '图片理解模型', '错误转发模型']) {
-    await chooseSelect(screen.getByRole('combobox', { name: label }), '测试供应商 / shared');
+    await chooseSelect(screen.getByRole('combobox', { name: label }), 'shared');
   }
   fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
   await waitFor(() => expect(patch).toEqual({ expected_revision: 1,
@@ -83,7 +83,7 @@ it('422 中文保存错误移入视口并保留模型与提示词草稿供重试
   await screen.findByLabelText('角色');
   await waitFor(() => expect(screen.getByRole('combobox', { name: '聊天模型' })).toBeEnabled());
   for (const label of ['聊天模型', '图片理解模型', '错误转发模型']) {
-    await chooseSelect(screen.getByRole('combobox', { name: label }), '测试供应商 / shared');
+    await chooseSelect(screen.getByRole('combobox', { name: label }), 'shared');
   }
   fireEvent.change(screen.getByLabelText('角色'), { target: { value: '保留用户编写的提示词' } });
   const save = screen.getByRole('button', { name: '保存 Agent' });
@@ -93,7 +93,7 @@ it('422 中文保存错误移入视口并保留模型与提示词草稿供重试
   // 保存错误获得焦点，浏览器会把长表单上方的错误滚入视口。
   expect(screen.getByRole('group', { name: '操作错误' })).toHaveFocus();
   for (const label of ['聊天模型', '图片理解模型', '错误转发模型']) {
-    expect(selectDisplay(screen.getByRole('combobox', { name: label }))).toHaveTextContent('测试供应商 / shared');
+    expect(selectDisplay(screen.getByRole('combobox', { name: label }))).toHaveTextContent('shared');
   }
   expect(screen.getByLabelText('角色')).toHaveValue('保留用户编写的提示词');
   fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
@@ -127,8 +127,8 @@ it('聊天、图片理解与错误转发独立保存，清空路由提交 null',
   render(<Agents token="offline" />);
   await screen.findByLabelText('角色');
   await waitFor(() => expect(screen.getByRole('combobox', { name: '聊天模型' })).toBeEnabled());
-  await chooseSelect(screen.getByRole('combobox', { name: '图片理解模型' }), '测试供应商 / vision');
-  await chooseSelect(screen.getByRole('combobox', { name: '错误转发模型' }), '测试供应商 / backup');
+  await chooseSelect(screen.getByRole('combobox', { name: '图片理解模型' }), 'vision');
+  await chooseSelect(screen.getByRole('combobox', { name: '错误转发模型' }), 'backup');
   fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
   await waitFor(() => expect(patches).toEqual([
     { expected_revision: 1, vision_model_id: 2, fallback_model_id: 3 },
@@ -172,7 +172,7 @@ it('关联未加载时保留 ID，冲突保留草稿，只提交修改字段', a
   vi.stubGlobal('fetch',fetcher);
   render(<Agents token="offline"/>);
   await screen.findByLabelText('角色');
-  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent(/90|测试供应商 \/ qwen/);
+  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent(/90|qwen/);
   fireEvent.change(screen.getByLabelText('角色'),{target:{value:'尚未保存的修改'}});
   fireEvent.click(screen.getByRole('button',{name:'保存 Agent'}));
   expect(await screen.findByText('配置版本冲突')).toBeInTheDocument();
@@ -196,17 +196,17 @@ it('刷新时读取最新模型状态，不沿用页面首次访问的停用快�
   expect(within(screen.getByRole('combobox', { name: '聊天模型' })).queryByRole('option', { name: /local-model/ })).not.toBeInTheDocument();
   await waitFor(() => expect(screen.getByText('聊天模型已停用，请重新选择已启用的模型。')).toBeVisible());
   // 保留已有绑定，不因隐藏停用项而自动换成其他模型。
-  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent('测试供应商 / qwen');
+  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent('qwen');
   // 对应切换至供应商页面启用模型，再回到仍挂载着的 Agent 页面。
   enabled = true;
   fireEvent.click(screen.getByRole('button', { name: /^刷\s*新$/ }));
-  await waitFor(() => expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent('测试供应商 / qwen'));
+  await waitFor(() => expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent('qwen'));
   await waitFor(() => expect(screen.queryByText('聊天模型已停用，请重新选择已启用的模型。')).not.toBeInTheDocument());
-  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent('测试供应商 / qwen');
+  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent('qwen');
   expect(within(screen.getByRole('combobox', { name: '聊天模型' })).queryByRole('option', { name: /local-model（停用）/ })).not.toBeInTheDocument();
 });
 
-it('模型翻页保留已选 ID，刷新失败明确报错而不把未知状态显示为停用', async () => {
+it('模型选择器自动读完整目录，刷新失败明确报错而不把未知状态显示为停用', async () => {
   let failed = false;
   const item = { id: 1, revision: 1, code: 'helper', name: '助手', description: '', enabled: true,
     model_id: 90, vision_model_id: null, fallback_model_id: null, skill_ids: [], mcp_ids: [], tools: [], system_prompt: '', max_steps: 3, options: {} };
@@ -224,17 +224,17 @@ it('模型翻页保留已选 ID，刷新失败明确报错而不把未知状态�
   render(<Agents token="offline" />);
   await screen.findByLabelText('角色');
   fireEvent.change(screen.getByLabelText('角色'), { target: { value: '保留草稿' } });
-  fireEvent.click(await screen.findByRole('button', { name: '加载更多模型' }));
-  await waitFor(() => expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent('测试供应商 / qwen'));
+  await waitFor(() => expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent('qwen'));
+  expect(screen.queryByRole('button', { name: '加载更多模型' })).not.toBeInTheDocument();
   for (const label of ['聊天模型', '图片理解模型', '错误转发模型']) {
     expect(within(screen.getByRole('combobox', { name: label })).queryByRole('option', { name: /disabled-model/ })).not.toBeInTheDocument();
   }
-  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent(/90|测试供应商 \/ qwen/);
+  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent(/90|qwen/);
   failed = true;
   fireEvent.mouseDown(screen.getByRole('combobox', { name: '聊天模型' }));
   expect(await screen.findByText(/模型列表读取失败：目录暂时不可用/)).toBeVisible();
   expect(screen.queryByRole('option', { name: /停用/ })).not.toBeInTheDocument();
-  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent(/90|测试供应商 \/ qwen/);
+  expect(selectDisplay(screen.getByRole('combobox', { name: '聊天模型' }))).toHaveTextContent(/90|qwen/);
   expect(screen.getByLabelText('角色')).toHaveValue('保留草稿');
 });
 
@@ -302,7 +302,7 @@ it('启用 Agent 禁止删除，停用 Agent 在页内确认后才删除', async
   expect(screen.getByLabelText('名称')).toHaveValue('运行助手');
 });
 
-it('分页后刷新仍显示当前 Agent，单独读取最新数据且保留已编辑草稿版本', async () => {
+it('页码切换后刷新仍显示当前 Agent，并保留已编辑草稿版本', async () => {
   const first = { id: 1, revision: 1, name: '首屏助手', code: 'first', description: '',
     enabled: false, model_id: 1, vision_model_id: null, fallback_model_id: null,
     system_prompt: '首屏角色', personality_prompt: '', tools: [], skill_ids: [], mcp_ids: [], options: {} };
@@ -314,15 +314,15 @@ it('分页后刷新仍显示当前 Agent，单独读取最新数据且保留已�
       patches.push(body);
       return Response.json({ ...second, ...body, revision: 9 });
     }
-    if (String(url).endsWith('/agents/2')) return Response.json(second);
-    if (String(url).includes('/agents?')) return Response.json(String(url).includes('cursor=next')
-      ? { items: [second], next_cursor: null } : { items: [first], next_cursor: 'next' });
+    if (String(url).includes('/agents?')) return Response.json(String(url).includes('page=2')
+      ? { items: [second], next_cursor: null, total: 11 }
+      : { items: [first, ...Array.from({length: 9}, (_, index) => ({...first, id: index + 3, name: `助手${index + 3}`, code: `agent_${index + 3}`}))], next_cursor: '10', total: 11 });
     return Response.json({ items: [], next_cursor: null });
   });
   vi.stubGlobal('fetch', fetcher);
   render(<Agents token="offline" />);
   await screen.findByLabelText('角色');
-  fireEvent.click(screen.getByRole('button', { name: '加载更多 Agent' }));
+  fireEvent.click(screen.getByTitle('2'));
   fireEvent.click(await screen.findByRole('button', { name: '次页助手' }));
   expect(screen.getByLabelText('角色')).toHaveValue('次页角色');
   second = { ...second, revision: 7, name: '次页已刷新', system_prompt: '次页服务端更新' };
@@ -339,6 +339,5 @@ it('分页后刷新仍显示当前 Agent，单独读取最新数据且保留已�
   await waitFor(() => expect(patches).toEqual([
     { expected_revision: 7, system_prompt: '分页 Agent 草稿' },
   ]));
-  expect(fetcher.mock.calls.filter(([url, init]) => String(url).endsWith('/agents/2')
-    && init?.method === 'GET')).toHaveLength(2);
+  expect(fetcher.mock.calls.filter(([url]) => String(url).includes('/agents?page=2&limit=10'))).toHaveLength(3);
 });

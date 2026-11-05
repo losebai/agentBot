@@ -161,7 +161,7 @@ class StickerStore(AiDatabase):
         async with self._lock:
             return _view(await self._row(id))
 
-    async def list(self, query: str = '', tag: str = '', offset: int = 0, limit: int = 20,
+    async def list(self, query: str = '', tag: str = '', offset: int = 0, limit: int = 10,
                    enabled: bool | None = None) -> dict[str, Any]:
         """完整元数据筛选后分页，Unicode 标签精确匹配且不静默截断候选。"""
         if (isinstance(offset, bool) or not isinstance(offset, int) or offset < 0

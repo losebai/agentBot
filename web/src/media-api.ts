@@ -1,5 +1,5 @@
 import { ApiClient, ApiFailure } from './api';
-import type { Page } from './ai-types';
+import type { CatalogPage } from './ai-types';
 import type { MediaAsset, MediaGenerationRequest, MediaGenerationResult, MediaRun, MediaRunDetail } from './media-types';
 
 /** 文件使用原始请求体和认证头，不生成包含凭据的下载 URL。 */
@@ -26,7 +26,9 @@ export class MediaApi extends ApiClient {
     const response=await fetch(`/api/v1/media/${encodeURIComponent(id)}/content`,{headers:{Authorization:`Bearer ${this.token}`},signal});await check(response);return response.blob();
   }
   /** 游标随会话、状态筛选一起传递。 */
-  runs(session:string,status:string,cursor?:string,signal?:AbortSignal){const query=new URLSearchParams({limit:'50'});if(session)query.set('session_id',session);if(status)query.set('status',status);if(cursor)query.set('cursor',cursor);return this.request<Page<MediaRun>>(`media/runs?${query}`,'GET',undefined,signal);}
+  runs(session:string,status:string,cursor?:string,signal?:AbortSignal){const query=new URLSearchParams({limit:'10'});if(session)query.set('session_id',session);if(status)query.set('status',status);if(cursor)query.set('cursor',cursor);return this.request<CatalogPage<MediaRun>>(`media/runs?${query}`,'GET',undefined,signal);}
+  /** 媒体运行记录按页码读取，避免长历史依赖顺序点击游标。 */
+  runPage(session:string,status:string,page:number,limit:number,signal?:AbortSignal){const query=new URLSearchParams({page:String(page),limit:String(limit)});if(session)query.set('session_id',session);if(status)query.set('status',status);return this.request<CatalogPage<MediaRun>>(`media/runs?${query}`,'GET',undefined,signal);}
   /** 读取运行详情，附件内容仍需单独授权读取。 */
   getRun(id:string,signal?:AbortSignal){return this.request<MediaRunDetail>(`media/runs/${encodeURIComponent(id)}`,'GET',undefined,signal);}
 }

@@ -59,6 +59,29 @@ async def test_case_sensitive_alias_and_snapshot(catalog):
     assert [first.items[0].alias, second.items[0].alias] == ["Qwen/X", "qwen/x"]
 
 
+async def test_catalog_numbered_pages_include_filtered_totals(catalog):
+    """模型管理页可直接跳页，供应商滚动目录仍返回完整总数。"""
+    providers = []
+    for index in range(3):
+        providers.append(await catalog.create_provider(ProviderCreate(
+            name=f"provider-{index}", protocol="ollama", base_url=f"http://host-{index}",
+        )))
+    for index in range(3):
+        await catalog.create_model(ModelCreate(
+            upstream_model=f"model-{index}", provider_id=providers[0].id,
+        ))
+
+    first = await catalog.list_providers(limit=2)
+    assert first.total == 3
+    assert [item.name for item in first.items] == ["provider-0", "provider-1"]
+    assert first.next_cursor is not None
+    models = await catalog.list_models(limit=2, provider_id=providers[0].id, page=2)
+    assert models.total == 3
+    assert [item.upstream_model for item in models.items] == ["model-2"]
+    with pytest.raises(AiError, match="AI_INVALID_PAGE"):
+        await catalog.list_models(limit=2, cursor="1", page=2)
+
+
 async def test_invalid_patch_and_uninitialized(catalog, ai_database):
     provider = await seed(catalog)
     with pytest.raises(ValueError):

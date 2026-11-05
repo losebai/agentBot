@@ -18,7 +18,6 @@ from websockets.exceptions import ConnectionClosedError
 from agent_bot.ai.chat_errors import (
     ChatAiError,
     ChatAiProtocolError,
-    ChatAiRejectedError,
     ChatAiUnavailableError,
 )
 from agent_bot.config import RuntimeConfig
@@ -40,6 +39,7 @@ from agent_bot.models import ChatMediaItem, ChatMediaResponse, ChatToolName
 from agent_bot.services.chat import ChatService
 from agent_bot.services.chat.errors import ChatRateLimitedError, is_chat_busy_error
 from agent_bot.services.conversation_queue import (
+    ConversationDeliveryPausedError,
     ConversationJob,
     ConversationJobExpiredError,
     ConversationQueueFullError,
@@ -49,6 +49,7 @@ from agent_bot.services.conversation_queue import (
 )
 from agent_bot.services.image_task_context import active_image_task
 from agent_bot.services.multi_reply import (
+    PLAIN_REPLY_PROMPT,
     build_multi_reply_prompt,
     join_reply_array,
     parse_multi_reply,
@@ -192,18 +193,27 @@ class ConversationQueueProcessor:
         return result
 
     async def _generate(self, job: ConversationJob) -> ConversationResult:
-        """绑定直接生图和工作流提交器，生成结果与投递检查点共用原队列。"""
+        """固化本轮 QQ 正文协议并绑定媒体提交器，生成和投递共用原队列。"""
 
         async with self._runtime_lease():
             # 模型提示和最终解析必须来自同一快照，热更新不能在生成中途切换协议。
             reply_config = self._config_provider().model_copy()
+            if (job.auto_speak_max_reply_chars is not None
+                    and reply_config.chat_active_actions_paused):
+                raise ConversationDeliveryPausedError('host proactive actions are paused')
             multi_reply = reply_config.chat_multi_reply_enabled and not job.laya_decision
             prompt_append = job.system_prompt_append
-            if multi_reply:
+            if not job.laya_decision:
                 prompt_append = "\n\n".join(filter(None, (
-                    prompt_append, build_multi_reply_prompt(reply_config),
+                    prompt_append,
+                    build_multi_reply_prompt(reply_config) if multi_reply else PLAIN_REPLY_PROMPT,
                 )))
             await self._receive_original(job)
+            if reply_config.chat_autonomy_capture_enabled and has_user_memory_source(job):
+                identity_context = await self._chat_service_provider().client.autonomy_context(
+                    job, reply_config.chat_session_secret.get_secret_value(),
+                )
+                prompt_append = '\n\n'.join(filter(None, (prompt_append, identity_context)))
             if (execution := active_image_task.get()) is not None:
                 await execution.check_cancelled()
             if job.ai_job_reply is not None:
@@ -841,7 +851,11 @@ class ConversationQueueProcessor:
     async def _deliver_part(
         self, job: ConversationJob, result: ConversationResult, index: int,
     ) -> None:
-        """按持久化索引投递附件或正文，消息边界与提醒目标来自已校验结果。"""
+        """按持久索引投递；定时结果暂停或机器人离线时保留进度等待恢复。"""
+        if (job.ai_job_id is not None or job.auto_speak_max_reply_chars is not None) and (
+            self._config_provider().chat_active_actions_paused
+        ):
+            raise ConversationDeliveryPausedError('host proactive actions are paused')
         if job.ai_job_id is not None:
             config = self._config_provider()
             policy = AccessPolicy(
@@ -854,7 +868,19 @@ class ConversationQueueProcessor:
             if not config.chat_job_enabled or not policy.allows(
                 user_id=job.user_id, group_id=job.group_id,
             ):
-                raise ChatAiRejectedError("AI job delivery is disabled for this target")
+                raise ConversationDeliveryPausedError("AI job delivery is paused for this target")
+            if job.autonomy_profile_id is not None and not await (
+                self._chat_service_provider().client.autonomy_delivery_allowed(
+                    job.ai_job_id, config.chat_session_secret.get_secret_value(),
+                )
+            ):
+                raise ConversationDeliveryPausedError(
+                    'autonomy report is paused or outside its policy')
+            try:
+                self._bot_provider(job.bot_id)
+            except ConnectionError as error:
+                # 重启时队列可能早于 OneBot 连接；等待重连不应消耗发送重试次数。
+                raise ConversationDeliveryPausedError("AI job bot is not connected") from error
         if (execution := active_image_task.get()) is not None:
             await execution.check_cancelled()
         if index < 0:
@@ -1046,7 +1072,7 @@ class ConversationQueueProcessor:
             await self._finish_received_callback(job.session_id, job.request_id)
 
     async def _deliver_failure(self, job: ConversationJob, error: Exception) -> None:
-        """繁忙拒绝保持静默；其他工具及执行失败由无工具 LLM 说明。"""
+        """将成功工具回执数与错误码传给独立说明，禁用工具不能被误解成原任务无权限。"""
 
         if (
             job.ai_job_id is not None
@@ -1073,6 +1099,9 @@ class ConversationQueueProcessor:
             if unavailable_workflow else TaskFailedFacts(
                 operation=self._operation_name(job), error_type=type(error).__name__,
                 error_code=error.error_code if isinstance(error, ChatAiError) else None,
+                completed_tool_calls=(
+                    error.completed_tool_calls if isinstance(error, ChatAiError) else 0
+                ),
             ),
             originalPrompt=job.prompt, user=job.user, userName=job.user_name,
             chatContext=job.chat_context,

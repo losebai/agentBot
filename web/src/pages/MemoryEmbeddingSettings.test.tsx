@@ -32,7 +32,7 @@ it('记忆向量模型从启用目录选择，可清空为未配置字符串', a
   fireEvent.mouseDown(select);
   expect(screen.queryByRole('option', {name: /embedding-three/})).not.toBeInTheDocument();
   fireEvent.keyDown(select, { key: 'Escape', code: 'Escape' });
-  await chooseSelect(select, '测试供应商 / embedding-two');
+  await chooseSelect(select, 'embedding-two');
   fireEvent.click(save);
   await waitFor(() => expect(value).toBe('model:2'));
   await waitFor(() => expect(save).toBeDisabled());

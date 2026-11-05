@@ -5,7 +5,7 @@ import { DirectoryEditor, ToolNamesInput } from '../components/DirectoryEditor';
 
 const empty:SkillDraft={name:'',description:'',enabled:false,category:'text',system_prompt:'',sample_prompt:'',tools:[]};
 export function Skills({token}:{token:string}) {
-  const actions=useMemo(()=>{const api=new AgentApi(token);return {list:api.listSkills.bind(api),create:api.createSkill.bind(api),update:api.updateSkill.bind(api),remove:api.deleteSkill.bind(api)};},[token]);
+  const actions=useMemo(()=>{const api=new AgentApi(token);return {list:api.skillPage.bind(api),create:api.createSkill.bind(api),update:api.updateSkill.bind(api),remove:api.deleteSkill.bind(api)};},[token]);
   return <DirectoryEditor title="Skill 管理" label="Skill" description="组织提示词与示例，工具依赖需由 Agent 授权。" empty={empty} actions={actions} fields={(draft,set)=><>
     <label>分类<input required maxLength={64} value={draft.category} onChange={e=>set({...draft,category:e.target.value})}/></label>
     <label>系统提示词<textarea rows={6} maxLength={16000} value={draft.system_prompt} onChange={e=>set({...draft,system_prompt:e.target.value})}/></label>

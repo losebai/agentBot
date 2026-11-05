@@ -124,6 +124,7 @@ class MediaRunSummary(AiModel):
     session_id: str = Field(min_length=1, max_length=256)
     request_id: str = Field(min_length=1, max_length=256)
     model: str = Field(min_length=1, max_length=255)
+    model_display_name: str = Field(default="", max_length=303)
     backend: Literal["python-media"] = "python-media"
     output_type: Literal["IMAGE", "AUDIO"]
     status: RunStatus = "running"

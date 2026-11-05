@@ -122,7 +122,7 @@ it('自动发言二选一，LLM 独立模型和提示词保存且切换保留草
   await waitFor(() => expect(screen.getByLabelText('自动发言决策模型')).toBeEnabled());
   expect(screen.queryByLabelText('自动发言 MCP')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('自动发言决策指令')).not.toBeInTheDocument();
-  await chooseSelect(screen.getByLabelText('自动发言决策模型'), '测试供应商 / decision-model');
+  await chooseSelect(screen.getByLabelText('自动发言决策模型'), 'decision-model');
   fireEvent.change(screen.getByLabelText('自动发言 LLM 决策提示词'), {
     target: { value: '只判断当次资料，不接入会话历史' },
   });

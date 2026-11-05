@@ -29,8 +29,7 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
   const [filterDraft, setFilterDraft] = useState<MemoryFilters>(emptyFilters);
   const [page, setPage] = useState<TaggedPage>({items: [], next_cursor: null});
   const [tags, setTags] = useState<TagCount[]>([]), [scopes, setScopes] = useState<MemoryScopeInfo[]>([]);
-  const [cursor, setCursor] = useState<string>(), [history, setHistory] = useState<(string | undefined)[]>([]);
-  const [pageNumber, setPageNumber] = useState(1), [pageSize, setPageSize] = useState(20);
+  const [pageNumber, setPageNumber] = useState(1), [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState<number | null>(null), [countError, setCountError] = useState('');
   const [catalogError, setCatalogError] = useState('');
   const [loading, setLoading] = useState(true), [error, setError] = useState(''), [refresh, setRefresh] = useState(0);
@@ -51,15 +50,15 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError(''); detailRequest.current?.abort(); setSelected(undefined); setDetail(undefined);
-    /** 知识列表不等待目录；记忆仍沿用已有游标与作用域目录的加载语义。 */
+    /** 两类记录都按页码读取；记忆的标签和作用域目录与当前页并行加载。 */
     async function load() {
       try {
         if (memory) {
           const [records, catalog, owners] = await Promise.all([
-            api.listMemories(filters, cursor, controller.signal), api.memoryTags(filters, controller.signal),
+            api.listMemories(filters, undefined, controller.signal, {page: pageNumber, limit: pageSize}), api.memoryTags(filters, controller.signal),
             api.memoryScopes(controller.signal),
           ]);
-          if (!controller.signal.aborted) { setPage(records); setTags(catalog); setScopes(owners); }
+          if (!controller.signal.aborted) { setPage(records); setTotal(records.total); setTags(catalog); setScopes(owners); }
         } else {
           setPage({items: [], next_cursor: null});
           const records = await api.listKnowledge(filters, undefined, controller.signal, {page: pageNumber, limit: pageSize});
@@ -70,7 +69,7 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
     }
     void load();
     return () => { controller.abort(); detailRequest.current?.abort(); };
-  }, [api, memory, filters, cursor, pageNumber, pageSize, refresh]);
+  }, [api, memory, filters, pageNumber, pageSize, refresh]);
 
   useEffect(() => {
     if (memory) return;
@@ -95,7 +94,7 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
   }, [api, memory, filters, refresh]);
 
   useEffect(() => {
-    if (!memory && total !== null) setPageNumber(current => Math.min(current, Math.max(1, Math.ceil(total / pageSize))));
+    if (total !== null) setPageNumber(current => Math.min(current, Math.max(1, Math.ceil(total / pageSize))));
   }, [memory, total, pageSize]);
 
   /** 新增重新建立草稿，不从已有记录填入可编辑数据。 */
@@ -116,7 +115,7 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
           ...(draft.source === 'existing' ? {scope_id: draft.scope_id} : {bot_id: draft.bot_id,
             ...(draft.scope === 'global' ? {} : {target: draft.target})})});
       } else await api.createKnowledge({title: draft.title, content: draft.content, tags: draft.tags});
-      if (mounted.current) { setAdding(false); setCursor(undefined); setHistory([]); setPageNumber(1); setRefresh(value => value + 1); }
+      if (mounted.current) { setAdding(false); setPageNumber(1); setRefresh(value => value + 1); }
     } catch (failure) { if (mounted.current) setSaveError(errorMessage(failure)); }
     finally { if (mounted.current) setSaving(false); }
   }
@@ -144,7 +143,7 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
       if (memory) await api.deleteMemory(deleting.id, (deleting as MemoryEntry).revision);
       else await api.deleteKnowledge(deleting.id);
       if (mounted.current) {
-        setDeleting(undefined); closeDetail(); setCursor(undefined); setHistory([]); setPageNumber(1); setRefresh(value => value + 1);
+        setDeleting(undefined); closeDetail(); setPageNumber(1); setRefresh(value => value + 1);
       }
     } catch (failure) { if (mounted.current) setDeleteError(errorMessage(failure)); }
     finally { if (mounted.current) setDeleteBusy(false); }
@@ -161,7 +160,7 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
     {error && <Alert type="error" showIcon message={error} className="notice" />}
     {!memory && countError && <Alert type="warning" showIcon message={`总条数统计失败：${countError}`} className="notice" />}
     {!memory && catalogError && <Alert type="warning" showIcon message={`标签目录加载失败：${catalogError}`} className="notice" />}
-    <form className="record-filter" onSubmit={event => { event.preventDefault(); setCursor(undefined); setHistory([]); setPageNumber(1); setFilters({...filterDraft}); }}>
+    <form className="record-filter" onSubmit={event => { event.preventDefault(); setPageNumber(1); setFilters({...filterDraft}); }}>
       <label>关键词<input maxLength={200} value={filterDraft.query} onChange={event => setFilterDraft({...filterDraft, query: event.target.value})} /></label>
       <label>标签<ChoiceSelect aria-label="标签" value={filterDraft.tag} onChange={event => setFilterDraft({...filterDraft, tag: event})}>
         <option value="">全部标签</option>{tags.map(tag => <option key={tag.tag} value={tag.tag}>{tag.tag}（{tag.count}）</option>)}</ChoiceSelect></label>
@@ -179,11 +178,9 @@ export function KnowledgeRecords({token, kind}: {token: string; kind: 'knowledge
         <td><div className="heading-actions"><Button aria-label={'查看' + recordName(item)} disabled={loading} onClick={() => void openDetail(item.id)}>查看</Button>
           <Button danger aria-label={'删除' + recordName(item)} disabled={loading} onClick={() => { setDeleteError(''); setDeleting(item); }}>删除</Button></div></td></tr>)}
     </tbody></table>{!page.items.length && <p className="empty-list">{loading ? '正在加载…' : `暂无符合条件的${label}。`}</p>}</div>
-    {memory ? <div className="catalog-pagination"><Button disabled={loading || !history.length} onClick={() => { setCursor(history.at(-1)); setHistory(history.slice(0, -1)); }}>上一页</Button>
-      <Button disabled={loading || !page.next_cursor} onClick={() => { setHistory([...history, cursor]); setCursor(page.next_cursor!); }}>下一页</Button></div>
-      : <RecordPagination current={pageNumber} pageSize={pageSize} total={total} loading={loading}
-        countFailed={Boolean(countError)}
-        hasNext={!!page.next_cursor} onChange={(number, size) => { setPageNumber(number); setPageSize(size); }} />}
+    <RecordPagination current={pageNumber} pageSize={pageSize} total={total} loading={loading}
+      countFailed={!memory && Boolean(countError)}
+      hasNext={!!page.next_cursor} onChange={(number, size) => { setPageNumber(number); setPageSize(size); }} />
     {adding && <CatalogDialog title={'新增' + label} busy={saving} error={saveError} onCancel={() => setAdding(false)}>
       <form className="catalog-form knowledge-form" onSubmit={event => { event.preventDefault(); void save(); }}>
         {memory ? <>

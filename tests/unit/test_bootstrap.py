@@ -382,7 +382,10 @@ def test_runtime_config_storage_contract_covers_all_plugin_and_nonebot_fields() 
         "onebot_v11_api_roots",
     }
     plugin_fields = set(RuntimeConfig.__mro__[1].model_fields)
-    host_fields = {"app_enabled_plugins", "agent_bot_napcat_mode", "agent_bot_napcat_webui_port"}
+    host_fields = {
+        "app_enabled_plugins", "agent_bot_napcat_mode", "agent_bot_napcat_webui_port",
+        "agent_bot_comfy_python", "agent_bot_comfy_directory", "agent_bot_comfy_args",
+    }
 
     assert set(RuntimeConfig.model_fields) == (
         plugin_fields | expected_nonebot_fields | expected_onebot_fields | host_fields

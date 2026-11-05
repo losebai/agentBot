@@ -1,6 +1,7 @@
 """以真实 SQLite 事务隔离 MySQL 连接，时间由测试推进。"""
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from tests.ai.fake_database import Connection, Cursor, FakeDatabase
@@ -65,6 +66,9 @@ def job_database():
             mcp_revision INTEGER, status TEXT, should_speak INTEGER,
             confidence REAL, duration_ms INTEGER, error_code TEXT, created_at TEXT);
     """)
+    database.connection.executescript(
+        (Path(__file__).resolve().parents[2] / "sql/job-recovery.sqlite.sql").read_text("utf-8")
+    )
     yield database
     database.close()
 

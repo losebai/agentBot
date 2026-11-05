@@ -76,7 +76,7 @@ def build_core_state(
     comfy_resources: ComfyResources | None = None,
     comfy_owner: ComfyPlugin | None = None,
 ) -> CoreRuntimeState:
-    """QQ 与管理工具共用公共生图服务，消息队列仍由 QQ 宿主独立装配。"""
+    """装配公共服务；Responses 全局指令随本代配置固定，热更新重建后生效。"""
     chat_tool_bridge = chat_bridge
     catalog = AiCatalog(database, connect=database_pool.connect)
     agent_catalog = AgentCatalog(database, connect=database_pool.connect)
@@ -87,10 +87,13 @@ def build_core_state(
         AiSessionStore(database, connect=database_pool.connect),
         CredentialResolver(),
         {
-            "openai-responses": LangChainProvider("openai-responses"),
+            "openai-responses": LangChainProvider(
+                "openai-responses", system_prompt=config.chat_system_prompt,
+            ),
             "openai-chat": LangChainProvider("openai-chat"),
             "ollama": LangChainProvider("ollama"),
         },
+        maximum_context_chars=config.chat_llm_context_max_chars,
     )
     comfy_client = comfy_resources.client if comfy_resources is not None else None
     workflow_service = comfy_resources.workflow_service if comfy_resources is not None else None
@@ -140,7 +143,9 @@ def build_core_state(
             CredentialResolver(),
             {
                 "openai-chat": LangChainProvider("openai-chat"),
-                "openai-responses": LangChainProvider("openai-responses"),
+                "openai-responses": LangChainProvider(
+                    "openai-responses", system_prompt=config.chat_system_prompt,
+                ),
                 "ollama": LangChainProvider("ollama"),
             },
             ToolRuntime(
@@ -172,6 +177,7 @@ def build_core_state(
             image_downloader=QQImageDownloader(remaining=lambda: remaining_timeout(15)),
             maximum_images=config.chat_max_images_per_message,
             maximum_tool_calls=config.chat_agent_max_steps,
+            maximum_context_chars=config.chat_llm_context_max_chars,
             evolution=EvolutionService(
                 EvolutionStore(database, connect=database_pool.connect),
                 secret=config.chat_session_secret.get_secret_value(),

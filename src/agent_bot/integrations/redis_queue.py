@@ -311,8 +311,10 @@ class RedisConversationQueueStore:
             ),
         )
 
-    async def save_result(self, stream_id: str, result: ConversationResult) -> None:
-        """持久化有界结果和开画进度，标记生成完成以避免投递重试重新生成。"""
+    async def save_result(
+        self, stream_id: str, result: ConversationResult, *, persistent: bool = False,
+    ) -> None:
+        """保存有界结果；定时投递保留到确认，其余结果使用原保留期。"""
 
         payload = result.model_dump_json(by_alias=True)
         # 原媒体与工具图片各自最多 10 MiB，Base64 组合仍受固定总上限约束。
@@ -334,7 +336,7 @@ class RedisConversationQueueStore:
             pipeline.set(
                 self._result_key(stream_id),
                 payload,
-                ex=self._result_ttl_seconds,
+                ex=None if persistent else self._result_ttl_seconds,
             )
             pipeline.hset(self._state_key, stream_id, state.model_dump_json())
             await pipeline.execute()

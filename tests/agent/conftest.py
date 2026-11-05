@@ -57,6 +57,7 @@ async def seeded_model(agent_database, agent_params):
             name="local",
             protocol="openai-chat",
             base_url="https://original.invalid/v1",
+            credential="offline-key",
             enabled=True,
         )
     )

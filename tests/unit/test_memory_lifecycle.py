@@ -1,10 +1,12 @@
 """使用隔离 SQLite 核验事实修订、去重、时效和版本竞争。"""
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from test_tagged_memory import memory_store as _memory_store
 
+from agent_bot.memory.contracts import MemoryUpdate
 from agent_bot.services.tagged_memory import MemoryArguments, MemoryIdentity
 
 memory_store = _memory_store
@@ -632,3 +634,146 @@ def test_expiring_future_fact_keeps_a_valid_time_interval(memory_store):
     expired = memory_store.admin_get(saved.id)
     assert expired.effective_status == "expired"
     assert expired.valid_until > expired.valid_from
+
+
+def test_background_expiration_is_bounded_audited_and_idempotent(memory_store):
+    """后台整理只处理已到期事实，写版本审计，重复运行不重复推进。"""
+    identity = MemoryIdentity(bot_id="1", user_id="2", session_id="s")
+    expired = memory_store.execute(
+        identity,
+        MemoryArguments(
+            action="save", key="old", content="已过期约定", tags=["约定"],
+            valid_until=datetime.now(timezone.utc) - timedelta(seconds=1),
+        ),
+    ).records[0]
+    active = memory_store.execute(
+        identity,
+        MemoryArguments(
+            action="save", key="new", content="仍有效约定", tags=["约定"],
+            valid_until=datetime.now(timezone.utc) + timedelta(days=1),
+        ),
+    ).records[0]
+    assert memory_store.expire_due(limit=1) == 1
+    assert memory_store.admin_get(expired.id).status == "expired"
+    assert memory_store.admin_get(expired.id).valid_until == expired.valid_until
+    assert memory_store.admin_get(active.id).status == "active"
+    assert memory_store.expire_due(limit=100) == 0
+    revisions = memory_store.admin_revisions(expired.id)
+    latest = max(revisions.items, key=lambda item: item.revision)
+    assert latest.operation == "expire"
+    assert latest.reason == "validity interval elapsed"
+
+
+def test_background_expiration_rechecks_rows_after_candidate_snapshot(memory_store):
+    """候选读取后事实被人工更新时，整理跳过新状态而不覆盖人工结论。"""
+    identity = MemoryIdentity(bot_id="1", user_id="2", session_id="s")
+    saved = memory_store.execute(
+        identity,
+        MemoryArguments(
+            action="save", key="race", content="待处理", tags=["竞态"],
+            valid_until=datetime.now(timezone.utc) - timedelta(seconds=1),
+        ),
+    ).records[0]
+    original = memory_store._transaction
+    observed = {"done": False}
+
+    @contextmanager
+    def transaction(current_owner=None):
+        """在候选事务结束后模拟管理员先完成修订。"""
+        with original(current_owner) as db:
+            yield db
+        if current_owner is None and not observed["done"]:
+            observed["done"] = True
+            memory_store.admin_update(
+                saved.id,
+                MemoryUpdate(
+                    expected_revision=1,
+                    content="人工确认的新结论",
+                    valid_until=datetime.now(timezone.utc) + timedelta(days=1),
+                    reason="竞态测试",
+                ),
+            )
+
+    memory_store._transaction = transaction
+    try:
+        assert memory_store.expire_due() == 0
+    finally:
+        memory_store._transaction = original
+    assert memory_store.admin_get(saved.id).status == "active"
+    assert memory_store.admin_get(saved.id).content == "人工确认的新结论"
+
+
+def test_daily_review_snapshot_reports_expiry_stale_items_and_day_boundaries(
+    memory_store, monkeypatch,
+):
+    """北京时间切日、半开版本窗口、候选上限和快照隐私均由隔离数据核验。"""
+    stamp = datetime(2026, 11, 3, 16)
+    monkeypatch.setattr("agent_bot.integrations.memory_lifecycle.utc_now",
+                        lambda: stamp - timedelta(hours=1))
+    identity = MemoryIdentity(bot_id="1", user_id="2", session_id="s")
+    records = [memory_store.execute(
+        identity, MemoryArguments(action="save", key=f"secret-{i}",
+                                  content=f"私密事实{i}", tags=["复盘"]),
+    ).records[0] for i in range(5)]
+    with memory_store._transaction() as db:
+        db.execute(
+            "UPDATE chat_tagged_memory SET update_time=%s WHERE id IN (%s,%s)",
+            (datetime(2026, 1, 1), records[0].id, records[1].id),
+        )
+        db.execute(
+            "UPDATE chat_tagged_memory SET valid_until=%s WHERE id=%s",
+            (stamp + timedelta(days=2), records[2].id),
+        )
+        db.execute("UPDATE chat_tagged_memory SET status='disputed' WHERE id=%s",
+                   (records[3].id,))
+        db.execute("UPDATE chat_tagged_memory SET status='pending' WHERE id=%s",
+                   (records[4].id,))
+        db.execute(
+            "UPDATE chat_memory_revision SET created_at=%s WHERE memory_id=%s",
+            (stamp - timedelta(days=1), records[0].id),
+        )
+        db.execute(
+            "UPDATE chat_memory_revision SET created_at=%s WHERE memory_id=%s",
+            (stamp, records[1].id),
+        )
+    snapshot = memory_store.review_snapshot(
+        now=stamp.replace(tzinfo=timezone.utc), stale_days=90, limit=1,
+    )
+    assert snapshot["date"] == "2026-11-04"
+    assert snapshot["revision_window_start"] == "2026-11-02T16:00:00+00:00"
+    assert snapshot["revision_window_end"] == "2026-11-03T16:00:00+00:00"
+    assert snapshot["status_counts"] == {"active": 3, "disputed": 1, "pending": 1}
+    assert snapshot["conflict_count"] == 2
+    assert snapshot["expiring_count"] == 1
+    assert snapshot["revision_count"] == 4
+    assert snapshot["stale_count"] == 2
+    assert len(snapshot["stale_candidates"]) == 1
+    assert snapshot["stale_candidates"][0] == {
+        "id": records[0].id, "revision": 1, "scope": "session", "kind": "fact", "importance": 0.5,
+    }
+    assert memory_store.admin_get(records[0].id).revision == 1
+
+
+@pytest.mark.parametrize("changes,expected_status", [
+    ({"valid_until": datetime(2026, 11, 1)}, "expired"),
+    ({"valid_from": datetime(2026, 12, 1), "valid_until": datetime(2026, 12, 2)}, "future"),
+    ({"last_used_at": datetime(2026, 11, 3)}, "active"),
+    ({"update_time": datetime(2026, 11, 3), "last_used_at": datetime(2026, 1, 1)}, "active"),
+    ({"updated_time_basis": "legacy_unknown"}, "active"),
+])
+def test_review_excludes_invalid_or_recent_candidates(memory_store, changes, expected_status):
+    """未生效、过期、近期使用或修订和未知旧时间都不能被当成长期未用候选。"""
+    saved = memory_store.execute(
+        MemoryIdentity(bot_id="1", user_id="2", session_id="s"),
+        MemoryArguments(action="save", key="candidate", content="待核对事实", tags=["复盘"]),
+    ).records[0]
+    fields = {"update_time": datetime(2026, 1, 1), **changes}
+    with memory_store._transaction() as db:
+        db.execute(
+            "UPDATE chat_tagged_memory SET " + ",".join(f"{key}=%s" for key in fields)
+            + " WHERE id=%s", (*fields.values(), saved.id),
+        )
+    report = memory_store.review_snapshot(now=datetime(2026, 11, 3, 16))
+    assert report["stale_count"] == 0 and report["stale_candidates"] == []
+    assert report["expiring_count"] == 0
+    assert report["status_counts"] == {expected_status: 1}

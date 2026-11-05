@@ -7,6 +7,10 @@ export class WorkflowApi extends ApiClient {
   list(after?: string, signal?: AbortSignal) {
     return this.request<WorkflowCatalog>(`workflows${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal);
   }
+  /** 管理目录使用可跳转页码，默认每页十条。 */
+  page(page: number, limit: number, signal?: AbortSignal) {
+    return this.request<WorkflowCatalog>(`workflows?page=${page}&limit=${limit}`, 'GET', undefined, signal);
+  }
   /** 只在打开 JSON 预览时请求完整工作流内容。 */
   detail(key: string, signal?: AbortSignal) {
     return this.request<WorkflowDetail>(`workflows/${encodeURIComponent(key)}`, 'GET', undefined, signal);

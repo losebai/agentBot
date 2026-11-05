@@ -145,7 +145,9 @@ class VersionedItem(AiModel):
 
 
 class AgentView(AgentCreate, VersionedItem):
-    pass
+    """角色目录携带只读使用状态，不混入创建字段或数据库列。"""
+
+    is_current: bool = False
 
 
 class SkillView(SkillCreate, VersionedItem):
@@ -211,7 +213,8 @@ class AgentRequest(AiModel):
             self.image_urls or self.attachment_ids or self.image_material_ids
         ):
             object.__setattr__(self, "prompt", DEFAULT_IMAGE_PROMPT)
-        if not self.prompt.strip() or sum(len(m.content) for m in self.messages) > 120000:
+        # 总上下文预算来自运行配置，在服务执行层统一校验，客户端不能覆盖。
+        if not self.prompt.strip():
             raise ValueError("invalid conversation")
         if any(len(m.content) > 32000 for m in self.messages):
             raise ValueError("message too long")
@@ -266,11 +269,11 @@ class ToolCall(AiModel):
 
 
 class ToolResult(AiModel):
-    """模型接收有界正文和私有图片，界面附件独立交付，图片字节不参与序列化。"""
+    """正文由执行图的上下文预算限制，界面附件独立交付，图片字节不参与序列化。"""
 
     call_id: str
     name: str
-    content: str = Field(max_length=32000)
+    content: str
     is_error: bool = False
     attachments: tuple[MediaAssetView, ...] = Field(default=(), exclude=True)
     images: tuple[ModelImage, ...] = Field(default=(), max_length=8, exclude=True, repr=False)

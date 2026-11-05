@@ -1,0 +1,97 @@
+/* 角色卡片承担身份切换，选中状态同时使用边框与勾选，键盘操作沿用原生按钮。 */
+.agent-page { max-width: 1440px; }
+.agent-gallery-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0 16px; }
+.agent-gallery-heading h2 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 16px; }
+.agent-gallery-heading h2 span { font-size: 12px; font-weight: 500; padding: 3px 8px; color: #767091; background: #eeebf5; border-radius: 6px; }
+.agent-gallery-heading > span { font-size: 12px; color: var(--text-secondary); }
+.agent-switcher.agent-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px; margin-bottom: 12px; }
+.agent-character-card { min-width: 0; padding: 0; overflow: hidden; border: 1px solid #e5e4ee; border-radius: 16px; background: white; color: var(--text); text-align: left; cursor: pointer; transition: border-color .18s, box-shadow .18s, transform .18s; }
+.agent-character-card:hover:not(:disabled) { transform: translateY(-3px); box-shadow: 0 8px 22px #3930540c; border-color: #b5a6d6; }
+.agent-character-card[aria-pressed=true] { border-color: #9984c9; box-shadow: 0 0 0 2px #b6a2d82a; }
+.agent-character-card:focus-visible, .character-image-picker:focus-visible { outline: 3px solid #947dc7; outline-offset: 3px; }
+.agent-character-card:disabled { cursor: default; opacity: .6; }
+.agent-card-cover { height: 120px; position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; background: radial-gradient(ellipse at 50% 90%, #c1b4db70, transparent 65%), #efebf6; }
+.agent-card-cover > .anticon { font-size: 54px; color: #b5a2ce; }
+.agent-tone-1 .agent-card-cover { background: radial-gradient(ellipse at 50% 90%, #b5d1e170, transparent 65%), #eaf1f8; }
+.agent-tone-1 .agent-card-cover > .anticon { color: #9db8cf; }
+.agent-tone-2 .agent-card-cover { background: radial-gradient(ellipse at 50% 90%, #e1c1c770, transparent 65%), #f8eff1; }
+.agent-tone-2 .agent-card-cover > .anticon { color: #d0a8b4; }
+.agent-tone-3 .agent-card-cover { background: radial-gradient(ellipse at 50% 90%, #b6d6c770, transparent 65%), #edf5f0; }
+.agent-tone-3 .agent-card-cover > .anticon { color: #9abca9; }
+.agent-card-cover img { width: 100%; height: 100%; object-fit: cover; object-position: center 25%; }
+.agent-card-status { position: absolute; top: 10px; left: 10px; border-radius: 5px; background: #ffffffda; padding: 4px 7px; font-size: 10px; color: #797389; }
+.agent-card-status.is-enabled { color: #4c8066; }
+.agent-card-check { position: absolute; bottom: 9px; right: 9px; display: grid; place-items: center; border-radius: 50%; width: 22px; height: 22px; font-size: 12px; background: #8e78bb; color: white; }
+.agent-card-body { display: flex; flex-direction: column; gap: 7px; padding: 15px; }
+.agent-card-body strong { font-size: 14px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.agent-card-body > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-secondary); font-size: 12px; }
+.agent-card-body small { font-size: 11px; color: #9993a9; overflow-wrap: anywhere; }
+.agent-new-card { border-style: dashed; }
+/* 形象与当前草稿联动；窄屏改为纵排，避免长代码或说明撑破容器。 */
+.agent-character-overview { display: grid; grid-template-columns: minmax(230px, 300px) minmax(0, 1fr); gap: 32px; align-items: center; padding: 24px; margin: 24px 0; border: 1px solid #e6e3ee; border-radius: 20px; background: linear-gradient(115deg, #fff, #fcfaff); }
+.character-portrait-panel { min-width: 0; }
+.character-portrait { position: relative; height: 300px; border: 1px solid #e8e1f1; border-radius: 14px; overflow: hidden; background: radial-gradient(ellipse at 50% 50%, #ffffffd9, transparent 65%), #eee8f5; }
+.character-portrait > img { width: 100%; height: 100%; object-fit: cover; object-position: center 25%; }
+.character-portrait-label { position: absolute; z-index: 1; display: flex; align-items: center; gap: 6px; top: 12px; left: 12px; padding: 5px 8px; font-size: 11px; color: #78698c; background: #ffffffd9; border-radius: 6px; }
+.character-portrait-empty { height: 100%; display: flex; flex-direction: column; gap: 9px; align-items: center; justify-content: center; padding: 28px 12px 52px; }
+.character-avatar { display: grid; place-items: center; width: 84px; height: 84px; margin-bottom: 6px; background: #ffffffb3; border: 1px solid white; border-radius: 26px; box-shadow: 0 10px 24px #a68cbb1a; color: #b7a1ce; font-size: 44px; }
+.character-portrait-empty strong { font-size: 14px; color: #79668f; font-weight: 500; }
+.character-portrait-empty > span { font-size: 11px; color: #9b8baa; text-align: center; }
+.character-image-picker { position: absolute; display: flex; align-items: center; justify-content: center; gap: 7px; bottom: 14px; left: 14px; width: calc(100% - 28px); padding: 10px 12px; background: #fffffff0; border: 1px solid #e3daef; border-radius: 8px; font-size: 12px; color: #7a638f; cursor: pointer; }
+.character-image-picker:disabled { opacity: .6; cursor: default; }
+.character-image-note { margin: 8px 0 0; color: #a19aa9; text-align: center; font-size: 10px; }
+.character-image-error { color: #b42318; font-size: 12px; }
+.agent-section-kicker { color: #a08cb8; font-size: 11px; letter-spacing: 1px; }
+.agent-intro-title { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.agent-intro-title h2 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -.5px; overflow-wrap: anywhere; }
+.agent-identity-status { padding: 4px 8px; border-radius: 5px; font-size: 11px; background: #f0eef4; color: #928999; }
+.agent-identity-status.is-enabled { color: #537e68; background: #eaf4ed; }
+.agent-character-intro > p { color: var(--text-secondary); font-size: 13px; line-height: 1.9; overflow-wrap: anywhere; }
+.agent-identity-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+.agent-identity-chips span { padding: 5px 9px; color: #8c809b; font-size: 11px; background: #f4f0f8; border-radius: 5px; overflow-wrap: anywhere; }
+.agent-character-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-width: 440px; margin: 28px 0 18px; }
+.agent-character-facts dt { font-size: 11px; color: #9a92a5; }
+.agent-character-facts dd { margin: 8px 0 0; font-size: 22px; font-weight: 500; color: #625370; }
+.agent-character-facts small { font-size: 11px; font-weight: 400; color: #a49aac; }
+.agent-character-intro > .agent-preview-note { font-size: 11px; color: #a099ab; }
+/* 编辑仍使用同一表单，保留原生校验、保存行为和各角色独立草稿。 */
+.agent-page .agent-editor { border-radius: 18px; }
+.agent-editor-section-title { display: flex; gap: 12px; align-items: center; padding-top: 12px; }
+.agent-editor-section-title > span { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid #e9e1f0; border-radius: 9px; background: #faf7fd; color: #a18ab8; font-size: 11px; flex-shrink: 0; }
+.agent-editor-section-title h2 { font-size: 15px; font-weight: 600; margin: 0 0 5px; }
+.agent-editor-section-title p { font-size: 11px; margin: 0; }
+.agent-page .agent-prompt-card { min-width: 0; padding: 18px; border: 1px solid #e9e4ef; border-radius: 12px; background: #fdfbff; }
+.agent-prompt-card:nth-child(2) { background: #fbfcff; border-color: #e3e8f0; }
+.agent-field-caption { display: block; margin-bottom: 14px; font-size: 11px; color: #9d89b2; }
+.agent-page .agent-editor .agent-prompt-columns textarea { min-height: 220px; font-size: 13px; line-height: 1.9; border-radius: 8px; background: #fff; }
+.agent-page .agent-prompt-columns .field-help { margin: 9px 0 0; font-size: 11px; }
+.agent-page .agent-save-actions { padding: 14px; border: 1px solid #ede7f3; border-radius: 10px; background: #faf8fd; }
+@media (max-width: 900px) { .agent-character-overview { gap: 22px; grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); } }
+@media (max-width: 600px) {
+  .agent-gallery-heading > span { display: none; }
+  .agent-switcher.agent-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .agent-card-cover { height: 100px; }
+  .agent-card-body { padding: 12px; }
+  .agent-character-overview { grid-template-columns: minmax(0, 1fr); padding: 16px; gap: 20px; }
+  .character-portrait { height: 300px; }
+  .agent-intro-title h2 { font-size: 24px; }
+  .agent-character-facts { gap: 10px; }
+  .agent-page .agent-prompt-card { padding: 12px; }
+  .agent-page .page-heading { flex-wrap: wrap; }
+  .agent-page .page-heading .heading-actions { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { .agent-character-card { transition: none; } }
+
+/* 分区标题整行可点击；隐藏容器仍保持挂载，避免收起时丢失选项状态。 */
+.agent-collapsible-title > div { flex: 1; min-width: 0; }
+.agent-collapsible-title h2 button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; border: 0; padding: 4px 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.agent-collapsible-title h2 button:focus-visible { outline: 2px solid #947dc7; outline-offset: 4px; border-radius: 4px; }
+.agent-collapsible-title h2 button:disabled { cursor: default; opacity: .6; }
+.agent-collapsible-title button .anticon { font-size: 12px; color: #9d89b2; }
+.agent-collapsible-title button[aria-expanded=false] .anticon { transform: rotate(-90deg); }
+.agent-collapsible-body:not([hidden]) { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+
+/* 使用状态与启用状态分开；实心点和文字共同指示运行配置实际选中的角色。 */
+.agent-card-status.is-current { display: inline-flex; align-items: center; gap: 5px; color: #246b4d; background: #effbf4; border: 1px solid #c5e6d3; }
+.agent-card-status.is-current::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #348960; }
+.agent-default-card { border-style: dashed; }

@@ -67,9 +67,11 @@ class LangChainProvider:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         provider_transport: ProviderTransport | None = None,
+        system_prompt: str = "",
     ):
-        """已有 ProviderTransport 注入只用于兼容现有调用边界。"""
+        """注入受控传输和全局提示词；后者仅用于 Responses 的独立指令字段。"""
         self.protocol = protocol
+        self.system_prompt = system_prompt
         self.transport = provider_transport or ProviderTransport(transport)
         self.options = OPTIONS[protocol]
 
@@ -84,7 +86,13 @@ class LangChainProvider:
         self.validate_options(call.options)
         timeout = remaining_timeout(call.timeout_seconds)
         credential = call.credential.get_secret_value() if call.credential is not None else None
-        state = WireState(self.protocol, timeout, credential, call.resolved.provider.base_url)
+        state = WireState(
+            self.protocol,
+            timeout,
+            credential,
+            call.resolved.provider.base_url,
+            call.resolved.provider.user_agent,
+        )
         wire = ModelTransport(self.transport.http, state)
         sync = httpx.Client(transport=httpx.MockTransport(reject_sync), trust_env=False)
         http = httpx.AsyncClient(
@@ -129,7 +137,11 @@ class LangChainProvider:
                 )
                 invoke_options = values
                 if self.protocol == "openai-responses":
-                    invoke_options.update(store=False, include=["reasoning.encrypted_content"])
+                    # 全局配置独立传递，不从已组合的角色、技能或工具消息反推。
+                    invoke_options.update(
+                        store=False, include=["reasoning.encrypted_content"],
+                        instructions=self.system_prompt,
+                    )
                 if call.final_only:
                     invoke_options["tool_choice"] = "none"
             if call.tools and not call.final_only:
@@ -151,7 +163,7 @@ class LangChainProvider:
                 yield model, invoke_options, state
         except Exception as error:
             mapped = map_model_error(error)
-            if mapped.code == "AI_RESPONSE_INVALID":
+            if mapped.code in {"AI_RESPONSE_INVALID", "AGENT_MODEL_RESPONSE_INVALID"}:
                 trace = error.__traceback__
                 while trace is not None and trace.tb_next is not None:
                     trace = trace.tb_next
@@ -166,14 +178,21 @@ class LangChainProvider:
                     "response.failed", "response.incomplete", "error", "response.completed", None,
                 ):
                     last_event = "other"
+                finish_reason = state.finish_reason
+                if finish_reason is not None and finish_reason not in (
+                    "stop", "tool_calls", "length", "content_filter", "function_call",
+                ):
+                    finish_reason = "other"
                 logger.warning(
                     "模型响应处理失败：protocol=%s model_id=%s stage=%s code=%s "
-                    "error=%s cause=%s source=%s upstream_status=%s terminal=%s last_event=%s",
+                    "error=%s cause=%s source=%s upstream_status=%s terminal=%s last_event=%s "
+                    "reason=%s finish_reason=%s tool_argument_count=%s",
                     self.protocol, call.resolved.model.id, stage, mapped.code,
                     type(error).__name__,
                     type(error.__cause__).__name__ if error.__cause__ else "none",
                     source, state.response.status_code if state.response is not None else None,
                     state.terminal, last_event or "none",
+                    state.rejection_reason, finish_reason or "none", len(state.tool_arguments),
                 )
             raise mapped from error
         finally:
@@ -192,37 +211,45 @@ class LangChainProvider:
     def checked_message(
         self, message: AIMessage, call: AgentModelCall, state: WireState
     ) -> ModelTurn:
-        """SDK 完成不代表上游协议完整，终止状态必须独立通过校验。"""
-        if not state.terminal or state.finish_reason not in {"stop", "tool_calls"}:
-            raise AiError("AI_RESPONSE_INVALID")
+        """独立验证 SDK 消息及协议终态，诊断只保留本地定义的拒绝类别。"""
+        if not state.terminal:
+            state.reject("missing_terminal")
+        if state.finish_reason not in {"stop", "tool_calls"}:
+            state.reject("invalid_finish_reason")
         if self.protocol == "ollama" and state.thinking:
             # SDK 在未显式启用 reasoning 时丢弃 thinking；沿用上游原行为并私有回填。
             message = message.model_copy(update={"additional_kwargs": {
                 **message.additional_kwargs, "reasoning_content": state.thinking,
             }})
-        turn = to_model_turn(message, call)
+        try:
+            turn = to_model_turn(message, call)
+        except AiError:
+            state.rejection_reason = (
+                "invalid_tool_arguments" if message.invalid_tool_calls else "invalid_model_message"
+            )
+            raise
         if self.protocol == "openai-chat":
             if bool(turn.calls) != (state.finish_reason == "tool_calls"):
-                raise AiError("AI_RESPONSE_INVALID")
+                state.reject("tool_finish_mismatch")
         if self.protocol == "openai-responses":
             output = (state.last or {}).get("output")
             if not isinstance(output, list):
-                raise AiError("AI_RESPONSE_INVALID")
+                state.reject("invalid_response_output")
             texts, calls = [], []
             for item in output:
                 if item.get("type") == "message" and item.get("role") == "assistant":
                     for part in item.get("content", []):
                         if part.get("type") != "output_text":
-                            raise AiError("AI_RESPONSE_INVALID")
+                            state.reject("unsupported_output_content")
                         texts.append(part["text"])
                 elif item.get("type") == "function_call":
                     calls.append((item["call_id"], item["name"], strict_object(item["arguments"])))
                 elif item.get("type") != "reasoning":
-                    raise AiError("AI_RESPONSE_INVALID")
+                    state.reject("unsupported_output_item")
             if "".join(texts) != turn.content or calls != [
                 (item.call_id, item.name, item.arguments) for item in turn.calls
             ]:
-                raise AiError("AI_RESPONSE_INVALID")
+                state.reject("final_output_mismatch")
         return turn
 
     async def stream_turn(self, call: AgentModelCall) -> AsyncIterator[ModelEvent]:
@@ -238,7 +265,7 @@ class LangChainProvider:
                     if text:
                         yield ModelEvent(kind="text_delta", delta=text)
             if aggregate is None:
-                raise AiError("AI_RESPONSE_INVALID")
+                state.reject("empty_stream")
             message = message_chunk_to_message(aggregate)
             turn = self.checked_message(message, call, state)
             yield ModelEvent(kind="turn_end", turn=turn)

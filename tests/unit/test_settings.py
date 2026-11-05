@@ -27,12 +27,19 @@ EXPECTED_RUNTIME_FIELDS = {
     "app_enabled_plugins",
     "agent_bot_napcat_mode",
     "agent_bot_napcat_webui_port",
+    "agent_bot_comfy_python",
+    "agent_bot_comfy_directory",
+    "agent_bot_comfy_args",
+    "chat_sticker_model",
+    "chat_sticker_vision_prompt",
+    "chat_sticker_timeout_seconds",
     "chat_python_agent_code",
     "chat_model",
     "chat_vision_model",
     "chat_image_model",
     "chat_system_prompt",
     "chat_llm_max_tokens",
+    "chat_llm_context_max_chars",
     "chat_llm_temperature",
     "chat_llm_top_p",
     "chat_llm_top_k",
@@ -79,6 +86,8 @@ EXPECTED_RUNTIME_FIELDS = {
     "chat_mcp_enabled",
     "chat_job_enabled",
     "chat_job_poll_seconds",
+    "chat_active_actions_paused",
+    "chat_autonomy_capture_enabled",
     "chat_mcp_mount_path",
     "chat_mcp_allowed_hosts",
     "chat_mcp_session_ttl_seconds",
@@ -186,12 +195,19 @@ def runtime_config() -> RuntimeConfig:
         "app_enabled_plugins": ["qqbot"],
         "agent_bot_napcat_mode": "external",
         "agent_bot_napcat_webui_port": 6099,
+        "agent_bot_comfy_python": None,
+        "agent_bot_comfy_directory": None,
+        "agent_bot_comfy_args": [],
+        "chat_sticker_model": "",
+        "chat_sticker_vision_prompt": "",
+        "chat_sticker_timeout_seconds": 60,
         "chat_python_agent_code": "helper",
         "chat_model": "private-model-db-snapshot-test",
         "chat_vision_model": "private-vision-model-db-snapshot-test",
         "chat_image_model": "private-image-model-db-snapshot-test",
         "chat_system_prompt": "ordinary-setting-plaintext-must-not-appear",
         "chat_llm_max_tokens": 4096,
+        "chat_llm_context_max_chars": 240_000,
         "chat_llm_temperature": 0.6,
         "chat_llm_top_p": 0.8,
         "chat_llm_top_k": 40,
@@ -240,6 +256,8 @@ def runtime_config() -> RuntimeConfig:
         "chat_mcp_enabled": True,
         "chat_job_enabled": False,
         "chat_job_poll_seconds": 7.5,
+        "chat_active_actions_paused": True,
+        "chat_autonomy_capture_enabled": True,
         "chat_mcp_mount_path": "/private-mcp",
         "chat_mcp_allowed_hosts": ["chat.internal.example.invalid:*"],
         "chat_mcp_session_ttl_seconds": 87.5,
@@ -406,6 +424,21 @@ def test_existing_snapshot_without_multi_reply_settings_keeps_feature_disabled(
     assert loaded.config.chat_multi_reply_interval_seconds == 1
     assert loaded.revision == 1
     assert len(fake_mysql.table) == before
+
+
+def test_existing_snapshot_without_context_budget_uses_default_without_writes(
+    database_params: DatabaseParams, fake_mysql: FakeMySQL, runtime_config: RuntimeConfig,
+) -> None:
+    """既有库没有新配置键时沿用原预算，读取不改数据库版本或初始化配置。"""
+    store = _make_store(database_params)
+    store.initialize(runtime_config)
+    fake_mysql.table[:] = [
+        row for row in fake_mysql.table if row["config_key"] != "chat_llm_context_max_chars"
+    ]
+    before = list(fake_mysql.table)
+    loaded = store.load()
+    assert loaded.config.chat_llm_context_max_chars == 120_000 and loaded.revision == 1
+    assert fake_mysql.table == before
 
 
 def test_message_trigger_snapshot_accepts_unused_sub_minute_interval(
@@ -701,7 +734,8 @@ def test_runtime_config_storage_contract_covers_all_plugin_and_nonebot_fields() 
 
     assert set(RuntimeConfig.model_fields) == (
         plugin_fields | expected_nonebot_fields | expected_onebot_fields
-        | {"app_enabled_plugins", "agent_bot_napcat_mode", "agent_bot_napcat_webui_port"}
+        | {"app_enabled_plugins", "agent_bot_napcat_mode", "agent_bot_napcat_webui_port",
+           "agent_bot_comfy_python", "agent_bot_comfy_directory", "agent_bot_comfy_args"}
     )
 
 

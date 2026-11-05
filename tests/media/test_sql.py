@@ -86,6 +86,13 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
                     "credential_ref VARCHAR(128)NULL",
                     "credential TEXT NULL,credential_required TINYINT NOT NULL DEFAULT 0",
                 )
+                if name == "agent_bot_ai_provider":
+                    # 自定义请求标识位于连接地址后，旧基线由供应商增量补齐。
+                    expected = expected.replace(
+                        "base_url VARCHAR(2048)NOT NULL,",
+                        "base_url VARCHAR(2048)NOT NULL,"
+                        "user_agent VARCHAR(512)NOT NULL DEFAULT '',",
+                    )
             if name == "agent_bot_ai_model":
                 # 显式模型身份升级允许历史别名为空，以供应商和上游标识限制重复。
                 expected = expected.replace(

@@ -121,6 +121,30 @@ async def test_audio_uses_conversation_and_returns_transcript():
         await provider.aclose()
 
 
+async def test_media_request_uses_provider_user_agent():
+    """直接媒体调用与文本模型使用同一供应商 User-Agent。"""
+    from agent_bot.media.providers import MediaProvider
+
+    raw = picture("PNG")
+
+    def handle(request):
+        """检查最终媒体请求头并返回单一内联图片。"""
+        assert request.headers["user-agent"] == "AgentBot-Media/1.0"
+        return httpx.Response(
+            200, json={"data": [{"b64_json": base64.b64encode(raw).decode()}]}
+        )
+
+    selected = resolved()
+    selected = selected.model_copy(update={
+        "provider": selected.provider.model_copy(update={"user_agent": "AgentBot-Media/1.0"})
+    })
+    provider = MediaProvider(ProviderTransport(httpx.MockTransport(handle)))
+    try:
+        await provider.generate(media_request(), selected, None)
+    finally:
+        await provider.aclose()
+
+
 @pytest.mark.parametrize(
     "value",
     [

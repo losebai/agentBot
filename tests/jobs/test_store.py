@@ -90,7 +90,7 @@ async def test_active_limit_and_cancelled_capacity(job_store):
 
 
 async def test_due_claim_cancel_late_finish_and_restart(job_store, job_clock):
-    """只有一个执行者，取消不被迟到成功覆盖，中断任务不再领取。"""
+    """只有一个执行者，取消不可覆盖，租约过期后以新执行身份恢复。"""
     first = await job_store.create(scope(), create())
     assert await job_store.claim_due() is None
     job_clock[0] += timedelta(seconds=1)
@@ -98,14 +98,21 @@ async def test_due_claim_cancel_late_finish_and_restart(job_store, job_clock):
     assert sum(value is not None for value in claims) == 1
     assert next(value for value in claims if value).model == "offline-model"
     await job_store.cancel(scope(), first.id)
-    await job_store.finish(first.id, result="迟到结果")
+    await job_store.finish(
+        first.id, lease_token=next(value for value in claims if value).lease_token,
+        result="迟到结果",
+    )
     assert (await job_store.get(scope(), first.id)).status == "CANCELLED"
     second = await job_store.create(scope("second"), create())
     job_clock[0] += timedelta(seconds=1)
-    assert (await job_store.claim_due()).id == second.id
+    original = await job_store.claim_due()
+    assert original.id == second.id
     job_clock[0] += timedelta(minutes=7)
-    assert await job_store.claim_due() is None
-    assert (await job_store.get(scope(), second.id)).error_code == "EXECUTION_INTERRUPTED"
+    recovered = await job_store.claim_due()
+    assert recovered.id == second.id and recovered.lease_token != original.lease_token
+    assert not await job_store.finish(second.id, lease_token=original.lease_token, result="旧结果")
+    assert await job_store.finish(second.id, lease_token=recovered.lease_token, result="新结果")
+    assert (await job_store.get(scope(), second.id)).result == "新结果"
 
 
 async def test_scope_time_summary_results_and_ack(job_store, job_clock):
@@ -123,7 +130,7 @@ async def test_scope_time_summary_results_and_ack(job_store, job_clock):
     job_clock[0] += timedelta(seconds=2)
     for _ in range(12):
         record = await job_store.claim_due()
-        await job_store.finish(record.id, result="生成结果")
+        await job_store.finish(record.id, lease_token=record.lease_token, result="生成结果")
     page = await job_store.pending_results("10001")
     assert len(page) == 10
     assert len(await job_store.pending_results("10001", page[-1].id)) == 2
@@ -138,3 +145,19 @@ async def test_scope_time_summary_results_and_ack(job_store, job_clock):
     await job_store.acknowledge("10001", item.id)
     assert item.id not in {value.id for value in await job_store.pending_results("10001")}
     assert (await job_store.get(scope(), item.id)).status == "SUCCEEDED"
+
+
+async def test_repeated_crashes_are_bounded_and_audited(job_store, job_clock):
+    """三次执行都硬中断后停止恢复，历史保留原身份与每次租约。"""
+    job = await job_store.create(scope(), create())
+    job_clock[0] += timedelta(seconds=1)
+    for _ in range(3):
+        assert (await job_store.claim_due()).id == job.id
+        job_clock[0] += timedelta(minutes=6)
+    assert await job_store.claim_due() is None
+    history = await job_store.inspect(job.id)
+    assert history["job"]["errorCode"] == "RECOVERY_LIMIT_REACHED"
+    assert history["job"]["botId"] == "10001"
+    assert len(history["attempts"]) == 3
+    assert {attempt["status"] for attempt in history["attempts"]} == {"INTERRUPTED"}
+    assert "system_prompt" not in history["job"]

@@ -159,6 +159,7 @@ def build_runtime_state(
         store=conversation_store,
         system_prompt=config.chat_system_prompt,
         max_input_chars=config.chat_max_input_chars,
+        max_context_chars=config.chat_llm_context_max_chars,
         cooldown_seconds=config.chat_cooldown_seconds,
         max_concurrent_requests=config.chat_max_concurrent_requests,
         max_concurrent_media_requests=config.chat_queue_media_workers,
@@ -178,7 +179,7 @@ def build_runtime_state(
     )
 
     auto_speak_service: AutoSpeakService | None = None
-    if config.chat_auto_speak_enabled:
+    if config.chat_auto_speak_enabled and not config.chat_active_actions_paused:
         assert config.chat_auto_speak_bot_id is not None
         decision_client: AutoSpeakDecisionClient
         if config.chat_auto_speak_decision_backend == "llm":

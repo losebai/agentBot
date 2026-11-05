@@ -98,6 +98,8 @@ class JobView(JobOwner):
     result: str | None = Field(default=None, max_length=64000)
     error_code: str | None = Field(default=None, alias="errorCode")
     run_at: datetime = Field(alias="runAt")
+    autonomy_profile_id: str | None = Field(default=None, alias='autonomyProfileId',
+                                           exclude_if=lambda value: value is None)
 
     @field_validator("run_at", mode="after")
     @classmethod
@@ -121,3 +123,4 @@ class JobRecord(JobView):
 
     model: str
     system_prompt: str = Field(repr=False, exclude=True)
+    lease_token: str = Field(pattern=JOB_ID, repr=False, exclude=True)

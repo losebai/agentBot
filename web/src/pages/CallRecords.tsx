@@ -51,7 +51,7 @@ export function CallRecords({token, category = 'conversation'}: {token: string; 
   const agent = useMemo(() => new AgentApi(token), [token]);
   const [draft, setDraft] = useState(initial), [filters, setFilters] = useState(initial);
   const [page, setPage] = useState<Page<CallSummary>>({items: [], next_cursor: null});
-  const [pageNumber, setPageNumber] = useState(1), [pageSize, setPageSize] = useState(20);
+  const [pageNumber, setPageNumber] = useState(1), [pageSize, setPageSize] = useState(10);
   const [total, setTotal] = useState<number | null>(null), [countError, setCountError] = useState('');
   const [detail, setDetail] = useState<CallDetail>(), [steps, setSteps] = useState<string>();
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [refresh, setRefresh] = useState(0);
@@ -123,7 +123,7 @@ export function CallRecords({token, category = 'conversation'}: {token: string; 
     </form>
     {busy && <div role="status" aria-label="正在加载记录"><Spin size="small" /> 正在加载记录…</div>}
     <div className="panel table-wrap" aria-busy={busy}><table className="data-table"><thead><tr><th>ID / 时间</th><th>类型 / 会话</th><th>模型</th><th>Token 用量</th><th>状态 / 耗时</th><th>操作</th></tr></thead><tbody>
-      {page.items.map(item => <tr key={item.id}><td>#{item.id}<small>{item.create_time?.replace('T', ' ') ?? '时间未知'}</small></td><td><Tag>{item.system_kind ? systemTypes[item.system_kind] : types[item.type]}</Tag><small>{item.session_Id ?? '—'}</small></td><td>{item.model ?? '—'}</td><td><CallTokenUsage usage={item.usage} compact /></td><td>{statuses[item.status] ?? item.status}<small>{item.duration === null ? '耗时未知' : `${item.duration} ms`}</small></td><td><Button disabled={busy} onClick={() => void open(item.id)}>查看详情</Button></td></tr>)}
+      {page.items.map(item => <tr key={item.id}><td>#{item.id}<small>{item.create_time?.replace('T', ' ') ?? '时间未知'}</small></td><td><Tag>{item.system_kind ? systemTypes[item.system_kind] : types[item.type]}</Tag><small>{item.session_Id ?? '—'}</small></td><td>{item.model ?? '—'}<small>{item.provider_name ?? '供应商未知'}</small></td><td><CallTokenUsage usage={item.usage} compact /></td><td>{statuses[item.status] ?? item.status}<small>{item.duration === null ? '耗时未知' : `${item.duration} ms`}</small></td><td><Button disabled={busy} onClick={() => void open(item.id)}>查看详情</Button></td></tr>)}
     </tbody></table>{!busy && !page.items.length && <p className="empty-list">暂无符合条件的调用记录。</p>}</div>
     <RecordPagination current={pageNumber} pageSize={pageSize} total={total} loading={busy}
       countFailed={Boolean(countError)}

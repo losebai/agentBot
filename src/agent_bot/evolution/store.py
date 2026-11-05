@@ -1,5 +1,6 @@
 """在所选业务库中原子保存反馈、有限状态与因果事件，不写运行配置。"""
 
+import hashlib
 import json
 import uuid
 from collections.abc import Callable
@@ -68,18 +69,27 @@ class EvolutionStore(AiDatabase):
             return {'enabled': enabled, 'revision': expected_revision + 1}
         return await self.run(write, write=True)
 
-    async def profiles(self, agent_id: int | None, *, after: int = 0) -> dict:
-        """画像按稳定主键分页，匿名主体不会作为其他用户的提示输入。"""
+    async def profiles(
+        self, agent_id: int | None, *, after: int = 0, page: int | None = None, limit: int = 10
+    ) -> dict:
+        """画像支持直接页码，匿名主体不会作为其他用户的提示输入。"""
+        if not 1 <= limit <= 100 or (page is not None and (page < 1 or after)):
+            raise AgentError('AGENT_INVALID_PAGE', status_code=422)
         def read(connection):
             """同时读取配置和当前页，不修改证据消费状态。"""
             scope = self._scope(connection, agent_id)
+            total = query(connection, 'SELECT COUNT(*) AS total FROM agent_bot_evolution_state '
+                          'WHERE scope_key=%s', (scope['scope_key'],), one=True)['total']
             rows = query(connection, 'SELECT p.*,s.agent_id FROM agent_bot_evolution_state p '
                          'JOIN agent_bot_evolution_scope s ON s.scope_key=p.scope_key '
-                         'WHERE p.scope_key=%s AND p.id>%s ORDER BY p.id LIMIT 51',
-                         (scope['scope_key'], after))
+                         'WHERE p.scope_key=%s AND p.id>%s ORDER BY p.id LIMIT %s'
+                         + (' OFFSET %s' if page is not None else ''),
+                         (scope['scope_key'], after, limit + 1,
+                          *(((page - 1) * limit,) if page is not None else ())))
             return {'config': self._config(scope),
-                    'items': [_profile(row) for row in rows[:50]],
-                    'next_cursor': rows[49]['id'] if len(rows) > 50 else None}
+                    'items': [_profile(row) for row in rows[:limit]],
+                    'next_cursor': rows[limit - 1]['id'] if len(rows) > limit else None,
+                    'total': total}
         return await self.run(read)
 
     def _profile(self, connection, profile_id: int, *, lock: bool = False) -> dict:
@@ -100,35 +110,46 @@ class EvolutionStore(AiDatabase):
             raise AgentError('AGENT_CONFIG_NOT_FOUND', status_code=404)
         return profile
 
-    async def history(self, agent_id: int | None, profile_id: int, *, before: int = 0) -> dict:
+    async def history(self, agent_id: int | None, profile_id: int, *, before: int = 0,
+                      page: int | None = None, limit: int = 10) -> dict:
         """倒序分页返回原始反馈及因果引用，避免截断后无法追溯早期变化。"""
         def read(connection):
             """先验证画像归属，事件不能跨 Agent 查询。"""
             profile = self._owned_profile(connection, agent_id, profile_id)
-            return self._history(connection, profile, before)
+            return self._history(connection, profile, before, page=page, limit=limit)
         return await self.run(read)
 
-    def _history(self, connection, profile: dict, before: int) -> dict:
+    def _history(self, connection, profile: dict, before: int, *, page: int | None = None,
+                 limit: int = 10) -> dict:
         """画像详情和全局记录详情共用有界历史分页。"""
+        if not 1 <= limit <= 100 or (page is not None and (page < 1 or before)):
+            raise AgentError('AGENT_INVALID_PAGE', status_code=422)
+        total = query(connection, 'SELECT COUNT(*) AS total FROM agent_bot_evolution_record '
+                      'WHERE profile_id=%s', (profile['id'],), one=True)['total']
         rows = query(connection, 'SELECT * FROM agent_bot_evolution_record '
                      'WHERE profile_id=%s' + (' AND id<%s' if before else '')
-                     + ' ORDER BY id DESC LIMIT 51',
-                     (profile['id'], before) if before else (profile['id'],))
+                     + ' ORDER BY id DESC LIMIT %s' + (' OFFSET %s' if page is not None else ''),
+                     (profile['id'], *((before,) if before else ()), limit + 1,
+                      *(((page - 1) * limit,) if page is not None else ())))
         return {'profile': profile, 'items': [
-            {**row, 'evidence_ids': json.loads(row['evidence_ids'])} for row in rows[:50]
-        ], 'next_cursor': rows[49]['id'] if len(rows) > 50 else None}
+            {**row, 'evidence_ids': json.loads(row['evidence_ids'])} for row in rows[:limit]
+        ], 'next_cursor': rows[limit - 1]['id'] if len(rows) > limit else None,
+            'total': total}
 
-    async def record_history(self, profile_id: int, *, before: int = 0) -> dict:
+    async def record_history(self, profile_id: int, *, before: int = 0,
+                             page: int | None = None, limit: int = 10) -> dict:
         """认证管理端可从跨范围列表直接查看依据，不要求先选择关联角色。"""
-        return await self.run(lambda c: self._history(c, self._profile(c, profile_id), before))
+        return await self.run(lambda c: self._history(
+            c, self._profile(c, profile_id), before, page=page, limit=limit
+        ))
 
     async def records(self, *, before: int = 0, kind: str | None = None,
-                      agent_id: int | None = None, unbound: bool = False) -> dict:
+                      agent_id: int | None = None, unbound: bool = False,
+                      page: int | None = None, limit: int = 10) -> dict:
         """跨范围记录倒序分页；类型和可选角色筛选不扩大普通对话的个人权限。"""
+        if not 1 <= limit <= 100 or (page is not None and (page < 1 or before)):
+            raise AgentError('AGENT_INVALID_PAGE', status_code=422)
         conditions, args = [], []
-        if before:
-            conditions.append('r.id<%s')
-            args.append(before)
         if kind is not None:
             conditions.append('r.kind=%s')
             args.append(kind)
@@ -141,15 +162,28 @@ class EvolutionStore(AiDatabase):
 
         def read(connection):
             """单次联表获取记录及当前关联名称，不要求关联角色仍存在。"""
+            total = query(connection, 'SELECT COUNT(*) AS total FROM agent_bot_evolution_record r '
+                          'JOIN agent_bot_evolution_state p ON p.id=r.profile_id '
+                          'JOIN agent_bot_evolution_scope s ON s.scope_key=p.scope_key' + where,
+                          tuple(args), one=True)['total']
+            page_conditions, page_args = [*conditions], [*args]
+            if before:
+                page_conditions.append('r.id<%s')
+                page_args.append(before)
+            page_where = ' WHERE ' + ' AND '.join(page_conditions) if page_conditions else ''
             rows = query(connection, 'SELECT r.*,p.subject_key,p.scope_key,s.agent_id,'
                          'a.name AS agent_name FROM agent_bot_evolution_record r '
                          'JOIN agent_bot_evolution_state p ON p.id=r.profile_id '
                          'JOIN agent_bot_evolution_scope s ON s.scope_key=p.scope_key '
-                         'LEFT JOIN agent_bot_agent a ON a.id=s.agent_id' + where
-                         + ' ORDER BY r.id DESC LIMIT 51', tuple(args))
+                         'LEFT JOIN agent_bot_agent a ON a.id=s.agent_id' + page_where
+                         + ' ORDER BY r.id DESC LIMIT %s'
+                         + (' OFFSET %s' if page is not None else ''),
+                         (*page_args, limit + 1,
+                          *(((page - 1) * limit,) if page is not None else ())))
             return {'items': [{**row, 'evidence_ids': json.loads(row['evidence_ids'])}
-                              for row in rows[:50]],
-                    'next_cursor': rows[49]['id'] if len(rows) > 50 else None}
+                              for row in rows[:limit]],
+                    'next_cursor': rows[limit - 1]['id'] if len(rows) > limit else None,
+                    'total': total}
         return await self.run(read)
 
     def _event(self, connection, profile_id: int, source_key: str, kind: str,
@@ -204,6 +238,60 @@ class EvolutionStore(AiDatabase):
                 now = self.clock().astimezone(timezone.utc).replace(tzinfo=None)
                 self._advance(connection, profile, dimension, now)
             return self._owned_profile(connection, agent_id, row['id'])
+        return await self.run(write, write=True)
+
+    def _research(self, connection, profile: dict) -> dict:
+        """只读研究真实未消费反馈，预览摘要绑定证据、画像版本和当前规则。"""
+        now = self.clock().astimezone(timezone.utc).replace(tzinfo=None)
+        after = dict(profile['traits'])
+        evidence, changes = [], []
+        for dimension in TRAITS:
+            rows = query(connection,
+                         'SELECT id,direction,observed_at FROM agent_bot_evolution_record '
+                         "WHERE profile_id=%s AND dimension=%s AND kind='feedback' AND consumed=0 "
+                         'AND observed_at>=%s AND observed_at<=%s ORDER BY id',
+                         (profile['id'], dimension, now - timedelta(days=90), now))
+            evidence.extend(row['id'] for row in rows)
+            net = sum(row['direction'] for row in rows)
+            direction = 1 if net > 0 else -1
+            dates = [datetime.fromisoformat(str(row['observed_at']))
+                     for row in rows if row['direction'] == direction]
+            eligible = (abs(net) >= 3 and len({date.date() for date in dates}) >= 3
+                        and max(dates) - min(dates) >= timedelta(days=7))
+            if eligible:
+                after[dimension] = max(-3, min(3, after[dimension] + direction))
+            changes.append({'dimension': dimension, 'before': profile['traits'][dimension],
+                            'after': after[dimension], 'net_support': net,
+                            'dates': len({date.date() for date in dates}), 'eligible': eligible,
+                            'evidence_ids': [row['id'] for row in rows]})
+        payload = {'profile_id': profile['id'], 'revision': profile['revision'],
+                   'before': profile['traits'], 'after': after, 'changes': changes,
+                   'evidence_ids': evidence}
+        digest = json.dumps(payload, sort_keys=True).encode()
+        payload['preview_key'] = hashlib.sha256(digest).hexdigest()
+        return payload
+
+    async def preview(self, profile_id: int) -> dict:
+        """管理员只读预览，不生成证据、不消费反馈、不调用付费模型。"""
+        return await self.run(lambda db: self._research(db, self._profile(db, profile_id)))
+
+    async def advance_profile(self, profile_id: int, *, expected_revision: int,
+                              preview_key: str) -> dict:
+        """手动演进仅消费已预览且成熟的真实证据，暂停或新反馈使旧预览失效。"""
+        def write(connection):
+            """锁定范围后重新研究，避免预览期间到达的反向反馈被遗漏。"""
+            old = self._profile(connection, profile_id)
+            scope = query(connection, 'SELECT * FROM agent_bot_evolution_scope '
+                          'WHERE scope_key=%s FOR UPDATE', (old['scope_key'],), one=True)
+            profile = self._profile(connection, profile_id)
+            research = self._research(connection, profile)
+            if (not scope['enabled'] or profile['revision'] != expected_revision
+                    or research['preview_key'] != preview_key):
+                raise AgentError('AGENT_CONFIG_CONFLICT', status_code=409)
+            now = self.clock().astimezone(timezone.utc).replace(tzinfo=None)
+            for dimension in TRAITS:
+                self._advance(connection, profile, dimension, now)
+            return self._profile(connection, profile_id)
         return await self.run(write, write=True)
 
     def _advance(self, connection, profile: dict, dimension: str, stamp: datetime) -> None:

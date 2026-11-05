@@ -23,7 +23,12 @@ async def test_each_provider_uses_own_key_and_protocol(catalog, protocol, path, 
 
     def handle(request):
         """模拟模型列表，不执行生成请求。"""
-        seen.append((request.method, str(request.url), request.headers["Authorization"]))
+        seen.append((
+            request.method,
+            str(request.url),
+            request.headers["Authorization"],
+            request.headers["User-Agent"],
+        ))
         assert not request.content
         return httpx.Response(200, json=body)
 
@@ -35,6 +40,7 @@ async def test_each_provider_uses_own_key_and_protocol(catalog, protocol, path, 
                     name=name,
                     protocol=protocol,
                     base_url=f"https://{name}.invalid/v1",
+                    user_agent=f"AgentBot-{name}/1.0",
                     credential=f"{name}-key",
                 )
             )
@@ -42,7 +48,12 @@ async def test_each_provider_uses_own_key_and_protocol(catalog, protocol, path, 
             assert result.models == ("same/model",)
             assert result.provider_id == provider.id
         assert seen == [
-            ("GET", f"https://{name}.invalid/v1{path}", f"Bearer {name}-key")
+            (
+                "GET",
+                f"https://{name}.invalid/v1{path}",
+                f"Bearer {name}-key",
+                f"AgentBot-{name}/1.0",
+            )
             for name in ("first", "second")
         ]
     finally:
@@ -90,6 +101,7 @@ async def test_empty_list_is_a_successful_discovery(catalog):
             name="empty",
             protocol="openai-chat",
             base_url="https://empty.invalid/v1",
+            credential="empty-key",
         )
     )
     transport = ProviderTransport(

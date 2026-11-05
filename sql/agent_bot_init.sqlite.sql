@@ -1,4 +1,4 @@
--- 用途：显式初始化 agentBot 0.5.9 SQLite 的业务表与可选本地队列表。
+-- 用途：显式初始化 agentBot 0.6.3 SQLite 的业务表与可选本地队列表。
 -- Comfy 插件沿用配置及工作流表，无新增结构；新库默认不启用，旧库由 comfy-plugin-v1 流水保留原启用选择。
 -- 执行顺序：由 agent-bot database init 在启用外键的事务中执行，再运行 settings init。
 -- 数据影响：仅创建缺失结构，不清空数据、不写入配置或密钥。
@@ -243,6 +243,8 @@ CREATE TABLE IF NOT EXISTS agent_bot_ai_provider (
     protocol TEXT COLLATE NOCASE NOT NULL,
     -- 供应商接口根地址
     base_url TEXT COLLATE NOCASE NOT NULL,
+    -- 请求上游时使用的自定义 User-Agent，空值沿用客户端默认值
+    user_agent TEXT NOT NULL DEFAULT '',
     -- 供应商或 MCP 实际凭据，仅写入和内部调用，不通过管理接口回显
     credential TEXT COLLATE NOCASE NULL,
     -- 是否要求鉴权：零无需凭据，一必须配置凭据
@@ -634,6 +636,29 @@ CREATE INDEX IF NOT EXISTS idx_job_started ON agent_bot_job (status,started_at);
 CREATE INDEX IF NOT EXISTS idx_job_delivery ON agent_bot_job (bot_id,status,delivered_at,id);
 
 -- Python 自动发言固定选择决策记录
+-- 定时任务执行租约与审计；先创建所属任务，不修改既有历史。
+CREATE TABLE IF NOT EXISTS agent_bot_job_attempt (
+    -- 随机执行租约标识，拒绝旧执行器迟到提交
+    id TEXT NOT NULL PRIMARY KEY,
+    -- 所属持久任务标识
+    job_id TEXT NOT NULL,
+    -- 执行状态 RUNNING、SUCCEEDED、FAILED、INTERRUPTED、CANCELLED
+    status TEXT NOT NULL,
+    -- 领取时间，UTC
+    started_at DATETIME NOT NULL,
+    -- 执行权过期时间，UTC；晚于模型硬超时
+    lease_expires_at DATETIME NOT NULL,
+    -- 执行结束或确认中断时间，UTC
+    completed_at DATETIME NULL,
+    -- 稳定脱敏错误码，不记录凭据或供应商异常正文
+    error_code TEXT NULL,
+    -- 审计依附原任务，禁止删除仍有执行历史的任务
+    CONSTRAINT fk_job_attempt_job FOREIGN KEY (job_id) REFERENCES agent_bot_job(id)
+);
+-- 任务索引支持恢复次数统计与审计查询。
+CREATE INDEX IF NOT EXISTS idx_job_attempt_history
+    ON agent_bot_job_attempt (job_id,started_at,id);
+
 CREATE TABLE IF NOT EXISTS agent_bot_auto_speak_decision (
     -- 服务端决策记录标识
     id TEXT NOT NULL,
@@ -683,7 +708,26 @@ CREATE TABLE IF NOT EXISTS agent_bot_call_record (
   source TEXT NOT NULL COLLATE BINARY, -- 来源系统及表命名空间
   source_id TEXT NOT NULL COLLATE BINARY, -- 来源原始主键
   execution_id TEXT, -- 本地执行标识，用于关联步骤与附件
-  status TEXT NOT NULL -- 执行状态，历史缺失时为 unknown
+  status TEXT NOT NULL, -- 执行状态，历史缺失时为 unknown
+  -- 系统分类：auto_speak、command；NULL 为普通对话，兼容历史标记，由索引维护分类值。
+  system_kind TEXT COLLATE BINARY GENERATED ALWAYS AS (
+  CASE WHEN (
+    type = 'auto_speak'
+    OR source = 'python:agent_bot_auto_speak_decision'
+    OR SUBSTR(request_id, 1, 14) = 'auto-decision-'
+    OR JSON_EXTRACT(data, '$.type') IN ('auto_speak_decision', '"auto_speak_decision"')
+    OR JSON_EXTRACT(data, '$.system_kind') IN ('auto_speak', '"auto_speak"')
+    OR (JSON_EXTRACT(request_context, '$.state') IS NOT NULL
+        AND JSON_EXTRACT(data, '$.shouldSpeak') IS NOT NULL)
+  ) THEN 'auto_speak' WHEN (
+    COALESCE(JSON_EXTRACT(data, '$.system_kind') IN ('command', '"command"'), 0)
+    OR JSON_EXTRACT(data, '$.original_data.system_kind') IN ('command', '"command"')
+    OR SUBSTR(request_id, 1, 11) = 'qq-summary-'
+    OR SUBSTR(request_id, 1, 8) = 'qq-draw-'
+    OR SUBSTR(session_Id, -15) = ':quoted-summary'
+    OR (SUBSTR(request_id, 1, 9) = 'qq-reply-' AND SUBSTR(content, 1, 1) = '/')
+  ) THEN 'command' ELSE NULL END
+  ) VIRTUAL
 );
 -- 来源内唯一，重复导入不得覆盖新记录。
 CREATE UNIQUE INDEX IF NOT EXISTS uk_call_source ON agent_bot_call_record(source, source_id);
@@ -694,6 +738,8 @@ CREATE INDEX IF NOT EXISTS idx_call_status ON agent_bot_call_record(status, crea
 
 -- 按调用时间及主键稳定分页。
 CREATE INDEX IF NOT EXISTS idx_call_time ON agent_bot_call_record(create_time, id);
+-- 分类前缀用于精确计数，时间和主键用于分类后的稳定分页，避免解析归档 JSON。
+CREATE INDEX IF NOT EXISTS idx_call_system_time ON agent_bot_call_record(system_kind, create_time, id);
 
 
 -- 可选本地队列结构同步；运行时默认使用独立 data/queue.sqlite3。
@@ -1176,3 +1222,110 @@ CREATE INDEX IF NOT EXISTS idx_evolution_record_pending
     ON agent_bot_evolution_record(profile_id,dimension,kind,consumed,observed_at);
 -- 按事件类型和主键支持管理记录列表倒序分页。
 CREATE INDEX IF NOT EXISTS idx_evolution_record_kind ON agent_bot_evolution_record(kind,id);
+
+-- 用途：为完整 0.6.2 业务库增加持续身份、任务、情节及审批审计；由显式升级清单执行。
+-- 顺序：现有任务恢复及调用分类迁移之后；数据影响仅新增表，不启用自主循环、不改身份或密钥。
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_profile (
+  -- 稳定身份主键，修改设定不改变此标识
+  id CHAR(32) NOT NULL PRIMARY KEY,
+  -- 会话密钥派生命名空间，换密钥保留旧记录但不重新认领
+  namespace CHAR(64) NOT NULL,
+  -- 同一命名空间的可信机器人、会话、用户摘要
+  owner_key CHAR(64) NOT NULL,
+  -- 管理设定乐观锁版本，不因工作线程更新进度而推进
+  revision INTEGER NOT NULL,
+  -- 受信绑定、设定、宿主策略、自我状态及预算计数
+  document_json TEXT NOT NULL CHECK(json_valid(document_json)),
+  -- 下次事件发现与复盘时间，UTC
+  next_wake_at DATETIME NOT NULL,
+  -- 创建UTC时间
+  created_at DATETIME NOT NULL,
+  -- 最近状态提交UTC时间
+  updated_at DATETIME NOT NULL,
+  -- 唯一约束避免重启后创建重复身份
+  UNIQUE(namespace,owner_key)
+);
+-- 索引仅检索当前密钥空间的到期唤醒
+CREATE INDEX IF NOT EXISTS idx_autonomy_wake ON agent_bot_autonomy_profile(namespace,next_wake_at,id);
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_task (
+  -- 持久任务主键，同时作为汇报幂等标识
+  id CHAR(32) NOT NULL PRIMARY KEY,
+  -- 所属固定身份，外键阻止身份被随意删除
+  profile_id CHAR(32) NOT NULL REFERENCES agent_bot_autonomy_profile(id),
+  -- 创建事件或请求的幂等键
+  request_id VARCHAR(128) NOT NULL,
+  -- 审批和计划变更版本
+  revision INTEGER NOT NULL,
+  -- pending/running/retry/blocked/approval/succeeded/failed/cancelled
+  status VARCHAR(16) NOT NULL,
+  -- 目标、计划、已完成步骤、原始身份版本和错误
+  document_json TEXT NOT NULL CHECK(json_valid(document_json)),
+  -- 当前步骤已领取次数，完成步骤后清零
+  attempts INTEGER NOT NULL,
+  -- 拒绝旧工作线程迟到提交的随机租约令牌
+  lease_token CHAR(32) NULL,
+  -- 执行租约结束UTC时间，网络超时必须小于该值
+  lease_expires_at DATETIME NULL,
+  -- 重试或定时执行UTC时间
+  next_run_at DATETIME NOT NULL,
+  -- 创建UTC时间
+  created_at DATETIME NOT NULL,
+  -- 最近提交UTC时间
+  updated_at DATETIME NOT NULL,
+  -- 同一身份的创建事件仅产生一个任务
+  UNIQUE(profile_id,request_id)
+);
+-- 调度索引支持到期任务及中断租约恢复
+CREATE INDEX IF NOT EXISTS idx_autonomy_task_due ON agent_bot_autonomy_task(profile_id,status,next_run_at);
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_episode (
+  -- 情节主键，由身份和来源事件确定
+  id CHAR(32) NOT NULL PRIMARY KEY,
+  -- 可信身份绑定
+  profile_id CHAR(32) NOT NULL REFERENCES agent_bot_autonomy_profile(id),
+  -- 去重后的来源事件标识
+  event_id VARCHAR(128) NOT NULL,
+  -- 原始来源、发生时间、摘要和任务意图
+  document_json TEXT NOT NULL CHECK(json_valid(document_json)),
+  -- 有限保留原情节的到期UTC时间，不影响已确认长期事实
+  expires_at DATETIME NOT NULL,
+  -- 创建UTC时间
+  created_at DATETIME NOT NULL,
+  -- 同一来源不会重复归档或发现任务
+  UNIQUE(profile_id,event_id)
+);
+-- 过期索引支持有界情节遗忘，不扫描长期事实正文
+CREATE INDEX IF NOT EXISTS idx_autonomy_episode_expiry ON agent_bot_autonomy_episode(profile_id,expires_at);
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_proposal (
+  -- 事实提取提案主键
+  id CHAR(32) NOT NULL PRIMARY KEY,
+  -- 所属身份
+  profile_id CHAR(32) NOT NULL REFERENCES agent_bot_autonomy_profile(id),
+  -- 来源情节，不删除情节记录以保留证据关联
+  episode_id CHAR(32) NOT NULL REFERENCES agent_bot_autonomy_episode(id),
+  -- 申请/执行/完成/拒绝/人工核对状态
+  status VARCHAR(16) NOT NULL,
+  -- 提案审批版本
+  revision INTEGER NOT NULL,
+  -- 有来源绑定的操作及最终回执；不保存模型凭据
+  document_json TEXT NOT NULL CHECK(json_valid(document_json)),
+  -- 创建UTC时间
+  created_at DATETIME NOT NULL
+);
+-- 审批列表按身份和状态定位
+CREATE INDEX IF NOT EXISTS idx_autonomy_proposal_status ON agent_bot_autonomy_proposal(profile_id,status,created_at);
+CREATE TABLE IF NOT EXISTS agent_bot_autonomy_audit (
+  -- 审计主键，UTC时间前缀加随机后缀，支持稳定倒序分页
+  id CHAR(32) NOT NULL PRIMARY KEY,
+  -- 审计所属身份
+  profile_id CHAR(32) NOT NULL REFERENCES agent_bot_autonomy_profile(id),
+  -- 事件类型，不记录供应商原始异常或密钥
+  kind VARCHAR(40) NOT NULL,
+  -- 对应任务或提案；空值表示身份级事件
+  subject_id CHAR(32) NULL,
+  -- 版本快照、状态变化或评估结果
+  document_json TEXT NOT NULL CHECK(json_valid(document_json)),
+  -- 事件UTC时间
+  created_at DATETIME NOT NULL
+);
+-- 审计支持按身份和时间进行有限分页
+CREATE INDEX IF NOT EXISTS idx_autonomy_audit_time ON agent_bot_autonomy_audit(profile_id,created_at,id);

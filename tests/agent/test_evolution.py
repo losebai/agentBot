@@ -177,9 +177,10 @@ async def test_records_list_pages_filters_and_preserves_detached_history(evoluti
     for index in range(53):
         global_profile = await observe(store, None, 0, source=f'global-{index}')
     linked = await observe(store, agent, 0, source='linked')
-    first = await store.records()
-    second = await store.records(before=first['next_cursor'])
-    assert len(first['items']) == 50 and len(second['items']) == 4
+    first = await store.records(page=1)
+    second = await store.records(page=6)
+    assert len(first['items']) == 10 and len(second['items']) == 4
+    assert first['total'] == second['total'] == 54
     assert first['items'][0]['agent_id'] == agent
     assert first['items'][0]['agent_name'] == '助手'
     assert not ({row['id'] for row in first['items']}

@@ -29,6 +29,23 @@ EVOLUTION_TABLES = frozenset({
     "agent_bot_evolution_config", "agent_bot_evolution_profile", "agent_bot_evolution_event",
     "agent_bot_evolution_scope", "agent_bot_evolution_state", "agent_bot_evolution_record",
 })
+AUTONOMY_TABLES = frozenset({
+    'agent_bot_autonomy_profile', 'agent_bot_autonomy_task', 'agent_bot_autonomy_episode',
+    'agent_bot_autonomy_proposal', 'agent_bot_autonomy_audit',
+})
+AUTONOMY_INDEXES = {
+    'agent_bot_autonomy_profile': (
+        (('namespace', 'owner_key'), True), (('namespace', 'next_wake_at', 'id'), False),
+    ),
+    'agent_bot_autonomy_task': (
+        (('profile_id', 'request_id'), True), (('profile_id', 'status', 'next_run_at'), False),
+    ),
+    'agent_bot_autonomy_episode': (
+        (('profile_id', 'event_id'), True), (('profile_id', 'expires_at'), False),
+    ),
+    'agent_bot_autonomy_proposal': ((('profile_id', 'status', 'created_at'), False),),
+    'agent_bot_autonomy_audit': ((('profile_id', 'created_at', 'id'), False),),
+}
 
 
 class UpgradeError(SettingsError):
@@ -59,6 +76,13 @@ MIGRATIONS = (
               "agent-evolution.sqlite.sql", True),
     Migration("0.6.0", "evolution-independent-v2", "evolution-independent.sql",
               "evolution-independent.sqlite.sql", True),
+    Migration("0.6.2", "provider-user-agent-v1", "provider-user-agent.sql",
+              "provider-user-agent.sqlite.sql", True),
+    Migration("0.6.2", "job-recovery-v1", "job-recovery.sql", "job-recovery.sqlite.sql", True),
+    Migration("0.6.2", "call-record-classification-v1", "call-record-classification.sql",
+              "call-record-classification.sqlite.sql", True),
+    Migration('0.6.3', 'persistent-agent-v1', 'persistent-agent.sql',
+              'persistent-agent.sqlite.sql', True),
 )
 
 
@@ -102,7 +126,7 @@ def _schema(connection: Any, backend: str) -> dict[str, set[str]]:
         result = {}
         for name in names:
             quoted = name.replace('"', '""')
-            cursor.execute(f'PRAGMA table_info("{quoted}")')
+            cursor.execute(f'PRAGMA table_xinfo("{quoted}")')
             result[name] = {row["name"] for row in cursor.fetchall()}
         return result
 
@@ -118,7 +142,7 @@ def _expected(script: str) -> dict[str, set[str]]:
             )
         ]
         return {
-            name: {row[1] for row in connection.execute(f'PRAGMA table_info("{name}")')}
+            name: {row[1] for row in connection.execute(f'PRAGMA table_xinfo("{name}")')}
             for name in names
         }
 
@@ -166,6 +190,55 @@ def _validate_model_baseline(connection: Any, backend: str) -> None:
             )
         if not valid or columns != ("provider_id", "upstream_model"):
             raise UpgradeError("数据库尚未完成旧版模型身份升级，请先执行对应历史数据迁移。")
+
+
+def _validate_autonomy(connection: Any, backend: str) -> None:
+    """持续执行依赖唯一键和外键仲裁，不能把只有同名列的残缺表登记为升级成功。"""
+    with connection.cursor() as cursor:
+        for table, required in AUTONOMY_INDEXES.items():
+            indexes: set[tuple[tuple[str, ...], bool]] = set()
+            if backend == 'sqlite':
+                cursor.execute(f'PRAGMA index_list("{table}")')
+                listed = cursor.fetchall()
+                for index in listed:
+                    name = index['name'].replace('"', '""')
+                    cursor.execute(f'PRAGMA index_info("{name}")')
+                    columns = tuple(row['name'] for row in sorted(
+                        cursor.fetchall(), key=lambda row: row['seqno']))
+                    if not index['partial']:
+                        indexes.add((columns, bool(index['unique'])))
+                cursor.execute(f'PRAGMA foreign_key_list("{table}")')
+                foreign_keys = {(row['from'], row['table'], row['to'])
+                                for row in cursor.fetchall()}
+            else:
+                cursor.execute(
+                    'SELECT INDEX_NAME AS index_name,NON_UNIQUE AS non_unique,'
+                    'SEQ_IN_INDEX AS position,COLUMN_NAME AS column_name,SUB_PART AS sub_part '
+                    'FROM information_schema.statistics '
+                    'WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s', (table,))
+                grouped: dict[str, list[dict]] = {}
+                for row in cursor.fetchall():
+                    grouped.setdefault(row['index_name'], []).append(row)
+                for rows in grouped.values():
+                    if all(row['sub_part'] is None for row in rows):
+                        indexes.add((tuple(row['column_name'] for row in sorted(
+                            rows, key=lambda row: row['position'])), not rows[0]['non_unique']))
+                cursor.execute(
+                    'SELECT COLUMN_NAME AS column_name,REFERENCED_TABLE_NAME AS referenced_table,'
+                    'REFERENCED_COLUMN_NAME AS referenced_column FROM information_schema.'
+                    'key_column_usage WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s '
+                    'AND REFERENCED_TABLE_NAME IS NOT NULL', (table,))
+                foreign_keys = {
+                    (row['column_name'], row['referenced_table'], row['referenced_column'])
+                    for row in cursor.fetchall()
+                }
+            expected_foreign = set()
+            if table != 'agent_bot_autonomy_profile':
+                expected_foreign.add(('profile_id', 'agent_bot_autonomy_profile', 'id'))
+            if table == 'agent_bot_autonomy_proposal':
+                expected_foreign.add(('episode_id', 'agent_bot_autonomy_episode', 'id'))
+            if not set(required) <= indexes or not expected_foreign <= foreign_keys:
+                raise UpgradeError(f'持续智能体索引或外键结构不匹配：{table}，停止启动。')
 
 
 def _execute(connection: Any, script: str) -> None:
@@ -216,6 +289,41 @@ def _upgrade_personality(connection: Any, backend: str, script: str) -> None:
             for statement in statements[1:]:
                 cursor.execute(statement)
     _validate_personality(connection, backend)
+
+
+def _upgrade_call_classification(connection: Any, backend: str, script: str) -> None:
+    """按已提交的生成列和索引恢复中断，拒绝普通列或错误索引冒充分类结构。"""
+    statements = split_sql(script)
+    with connection.cursor() as cursor:
+        if "system_kind" not in _schema(connection, backend).get("agent_bot_call_record", set()):
+            cursor.execute(statements[0])
+        if backend == "sqlite":
+            cursor.execute("PRAGMA table_xinfo(agent_bot_call_record)")
+            column = next(row for row in cursor.fetchall() if row["name"] == "system_kind")
+            generated = column["hidden"] == 2 and column["type"].lower() == "text"
+            cursor.execute("PRAGMA index_info(idx_call_system_time)")
+            indexed = tuple(row["name"] for row in sorted(
+                cursor.fetchall(), key=lambda row: row["seqno"],
+            ))
+        else:
+            cursor.execute(
+                "SELECT EXTRA AS extra,COLUMN_TYPE AS column_type "
+                "FROM information_schema.columns WHERE TABLE_SCHEMA=DATABASE() "
+                "AND TABLE_NAME='agent_bot_call_record' AND COLUMN_NAME='system_kind'"
+            )
+            column = cursor.fetchone()
+            generated = column["extra"] == "VIRTUAL GENERATED" and (
+                column["column_type"].lower() == "varchar(16)"
+            )
+            cursor.execute("SHOW INDEX FROM agent_bot_call_record "
+                           "WHERE Key_name='idx_call_system_time'")
+            indexed = tuple(row["Column_name"] for row in sorted(
+                cursor.fetchall(), key=lambda row: row["Seq_in_index"],
+            ))
+        if not generated or (indexed and indexed != ("system_kind", "create_time", "id")):
+            raise UpgradeError("调用记录分类列或索引结构不匹配，停止启动；请核对分类增量。")
+        if not indexed:
+            cursor.execute(statements[1])
 
 
 def upgrade_database(
@@ -291,13 +399,17 @@ def upgrade_database(
                 if previous is None:
                     # 有版本记录的旧结构须先跑增量，不能拿新结构提前拒绝它。
                     baseline = {
-                        name: columns - {"personality_prompt"} if name == "agent_bot_agent"
-                        else columns for name, columns in expected.items()
+                        name: columns
+                        - ({"personality_prompt"} if name == "agent_bot_agent" else set())
+                        - ({"user_agent"} if name == "agent_bot_ai_provider" else set())
+                        - ({"system_kind"} if name == "agent_bot_call_record" else set())
+                        for name, columns in expected.items()
                     }
                     _validate(
                         actual, baseline,
                         exclude=(METADATA_TABLES | BILIBILI_TABLES | MATERIAL_CLASSIFICATION_TABLES
-                                 | STICKER_TABLES | EVOLUTION_TABLES),
+                                 | STICKER_TABLES | EVOLUTION_TABLES | AUTONOMY_TABLES
+                                 | {"agent_bot_job_attempt"}),
                     )
                     _validate_model_baseline(connection, params.backend)
                 if not METADATA_TABLES <= actual.keys():
@@ -353,8 +465,22 @@ def upgrade_database(
                         connection.commit()
                     if item.name == "agent-personality-v1":
                         _upgrade_personality(connection, params.backend, script)
+                    elif item.name == "call-record-classification-v1":
+                        _upgrade_call_classification(connection, params.backend, script)
+                    elif (
+                        item.name == "provider-user-agent-v1"
+                        and "user_agent" in _schema(connection, params.backend).get(
+                            "agent_bot_ai_provider", set()
+                        )
+                    ):
+                        # 新库初始化脚本已包含该列；只补迁移记录，避免重复执行 ALTER。
+                        pass
                     else:
                         _execute(connection, script)
+                    if item.name == 'persistent-agent-v1':
+                        _validate(_schema(connection, params.backend),
+                                  {key: expected[key] for key in AUTONOMY_TABLES})
+                        _validate_autonomy(connection, params.backend)
                     with connection.cursor() as cursor:
                         cursor.execute(
                             f"UPDATE {HISTORY_TABLE} SET status=%s,"
@@ -367,6 +493,8 @@ def upgrade_database(
                     current_step = None
                     applied.append(item.name)
                 _validate(_schema(connection, params.backend), expected)
+                if any(item.name == 'persistent-agent-v1' for item in active):
+                    _validate_autonomy(connection, params.backend)
                 if any(item.name == "agent-personality-v1" for item in active):
                     _validate_personality(connection, params.backend)
                 if previous != target:

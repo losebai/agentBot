@@ -20,6 +20,7 @@ from pydantic import (
 )
 from pydantic.networks import IPvAnyAddress
 
+from agent_bot.ai.context import DEFAULT_CONTEXT_MAX_CHARS
 from agent_bot.keyword_reply import (
     MAX_KEYWORD_CHARS,
     MAX_KEYWORD_REPLY_CHARS,
@@ -65,6 +66,8 @@ class PluginConfig(BaseModel):
         repr=False,
     )
     chat_llm_max_tokens: int | None = Field(default=None, ge=1, le=128_000)
+    # 输入上下文预算独立于输出 Token 上限，修改后由运行快照热刷新生效。
+    chat_llm_context_max_chars: int = Field(default=DEFAULT_CONTEXT_MAX_CHARS, gt=0)
     chat_llm_temperature: float | None = Field(
         default=None,
         ge=0,
@@ -202,6 +205,8 @@ class PluginConfig(BaseModel):
     # Job 由本地 Python 执行，通过请求令牌绑定原 QQ 身份。
     chat_job_enabled: bool = False
     chat_job_poll_seconds: float = Field(default=5, ge=1, le=60, allow_inf_nan=False)
+    chat_active_actions_paused: bool = False
+    chat_autonomy_capture_enabled: bool = False
     # 决策端点和凭据只从管理端 MCP 目录读取，配置中只保存 code。
     chat_auto_speak_enabled: bool = False
     chat_auto_speak_decision_backend: Literal["laya", "llm"] = "laya"
@@ -831,12 +836,13 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     "agent_bot_comfy_directory": "ComfyUI 目录 (包含 main.py，重启生效)",
     "agent_bot_comfy_args": "ComfyUI 附加启动参数 (JSON 字符串数组，重启生效)",
     # AI 服务
-    "chat_python_agent_code": "Python Agent 预设代码 (空值使用当前聊天模型与提示词)",
+    "chat_python_agent_code": "角色 选择",
     "chat_model": "聊天模型 (供应商 / 模型)",
     "chat_vision_model": "图片理解模型 (供应商 / 模型)",
     "chat_image_model": "图片生成模型 (供应商 / 模型)",
     "chat_system_prompt": "系统提示词(可留空)",
     "chat_llm_max_tokens": "LLM 最大生成 Token 数",
+    "chat_llm_context_max_chars": "LLM 上下文最大字符数",
     "chat_llm_temperature": "LLM Temperature 采样参数",
     "chat_llm_top_p": "LLM Top P 采样参数",
     "chat_llm_top_k": "LLM Top K 采样参数",
@@ -964,6 +970,10 @@ CONFIG_DESCRIPTIONS: dict[str, str] = {
     # 自动发言
     "chat_job_enabled": "启用 Python 定时任务、结果轮询和投递确认",
     "chat_job_poll_seconds": "任务执行检查和结果轮询间隔秒数，范围 1-60",
+    "chat_active_actions_paused": (
+        "宿主主动行动总暂停：任务、持续智能体及群主动发言停止新执行与后续发送"
+    ),
+    "chat_autonomy_capture_enabled": "为已有持续身份归档真实会话事件并恢复身份设定，默认关闭",
     "chat_auto_speak_enabled": "是否启用自动发言",
     "chat_auto_speak_decision_backend": "自动发言决策方式",
     "chat_auto_speak_decision_model": "自动发言决策模型",

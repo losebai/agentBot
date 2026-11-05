@@ -117,9 +117,22 @@ async def test_tool_get_bounds_full_result_with_explicit_truncation(job_store):
     value = await session.call(call({"action": "create", "prompt": "正文", "delaySeconds": 1}))
     id = json.loads(value.content)["jobs"][0]["id"]
     job_store.clock = lambda: datetime(2026, 10, 13, tzinfo=timezone.utc)
-    await job_store.claim_due()
-    await job_store.finish(id, result="长正文" * 20000)
+    job = await job_store.claim_due()
+    await job_store.finish(id, lease_token=job.lease_token, result="长正文" * 20000)
     result = await session.call(call({"action": "get", "jobId": id}))
     assert len(result.content) <= 32000
     assert json.loads(result.content)["truncated"] is True
     assert len((await job_store.get(scope(), id)).result) == 60000
+
+
+async def test_scheduled_job_keeps_role_and_personality_snapshot(job_store, job_clock):
+    """重启执行使用创建时的角色与人格，不读取后来变更的预设。"""
+    preset = snapshot()
+    preset.agent = SimpleNamespace(system_prompt="原角色", personality_prompt="原人格")
+    session = JobTools(job_store).bind(preset, request(), context())
+    await session.call(call({"action": "create", "prompt": "提醒", "delaySeconds": 1}))
+    preset.agent.personality_prompt = "修改后的人格"
+    job_clock[0] += timedelta(seconds=1)
+    restored = await job_store.claim_due()
+    assert restored.system_prompt == "【角色设定】\n原角色\n\n【人格设定】\n原人格"
+    assert restored.model == "model:31"

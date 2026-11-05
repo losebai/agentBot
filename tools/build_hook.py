@@ -14,6 +14,10 @@ class CustomBuildHook(BuildHookInterface):
         """生成标准导入映射并随 editable wheel 发布所需依赖。"""
         # Git 忽略不能导致发布缺少升级资源；缺失时在打包前明确失败。
         for filename in ('agent_bot_init.sql', 'agent_bot_init.sqlite.sql',
+                         'UPGRADE-0.6.3.md',
+                         'persistent-agent.sql', 'persistent-agent.sqlite.sql',
+                         'call-record-classification.sql', 'call-record-classification.sqlite.sql',
+                         'job-recovery.sql', 'job-recovery.sqlite.sql',
                          'stickers-init.sql', 'stickers-init.sqlite.sql',
                          'agent-evolution.sql', 'agent-evolution.sqlite.sql',
                          'evolution-independent.sql', 'evolution-independent.sqlite.sql',
@@ -22,7 +26,8 @@ class CustomBuildHook(BuildHookInterface):
                          'startup-versioning.sql', 'startup-versioning.sqlite.sql',
                          'UPGRADE-AUTOMATIC.md', '2026-10-28-comfy-plugin.sql',
                          '2026-10-28-comfy-plugin.sqlite.sql', 'material-classification.sql',
-                         'material-classification.sqlite.sql'):
+                         'material-classification.sqlite.sql', 'provider-user-agent.sql',
+                         'provider-user-agent.sqlite.sql'):
             if not (Path(self.root) / 'sql' / filename).is_file():
                 raise FileNotFoundError(f'required database resource missing: {filename}')
         if version != "editable":

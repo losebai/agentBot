@@ -10,7 +10,7 @@ from starlette.responses import Response
 from agent_bot.admin.media_models import MaterialUploadView, MediaGenerationProbeRequest
 from agent_bot.admin.media_requests import run_with_disconnect
 from agent_bot.admin.streaming import ManagedStreamingResponse
-from agent_bot.ai.contracts import Page
+from agent_bot.ai.contracts import CatalogPage, Page
 from agent_bot.database_pool import finish_database_write
 from agent_bot.materials.contracts import (
     MAX_FILE_BYTES,
@@ -179,7 +179,7 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         session_id: str = Query(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
         query: str = Query("", max_length=200),
         kind: str | None = Query(None, pattern=r"^(image|file)$"),
-        limit: int = Query(20, ge=1, le=20),
+        limit: int = Query(10, ge=1, le=20),
         offset: int = Query(0, ge=0, le=10000),
     ):
         """排空时仍可按所属管理会话只读查询素材，不扩大到 QQ 素材。"""
@@ -197,7 +197,7 @@ def install_media_routes(router: APIRouter, runtime) -> None:
         category: MaterialCategory | None = None,
         tag: str = Query("", max_length=128),
         session_id: str = Query("", max_length=256, pattern=r"^[^\x00]*$"),
-        limit: int = Query(20, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = Query(None, min_length=1, max_length=1024),
         page: int | None = Query(None),
     ) -> Page[MaterialLibraryView]:
@@ -344,17 +344,19 @@ def install_media_routes(router: APIRouter, runtime) -> None:
 
         return await run_with_disconnect(request, execute())
 
-    @router.get("/media/runs", response_model=Page[MediaRunSummary])
+    @router.get("/media/runs", response_model=CatalogPage[MediaRunSummary])
     async def runs(
-        limit: int = Query(50, ge=1, le=100),
+        limit: int = Query(10, ge=1, le=100),
         cursor: str | None = Query(None, max_length=1024),
+        page: int | None = Query(None, ge=1),
         session_id: str | None = Query(None, max_length=256),
         status: str | None = Query(None, max_length=16),
     ):
         """排空时只读管理入口记录，游标仍绑定入口与过滤条件。"""
         async with runtime.lease(read_only=True):
             return await resources().records.list_runs(
-                limit=limit, cursor=cursor, session_id=session_id, status=status, entry="admin"
+                limit=limit, cursor=cursor, page=page, session_id=session_id,
+                status=status, entry="admin"
             )
 
     @router.get("/media/runs/{execution_id}", response_model=MediaRunDetail)

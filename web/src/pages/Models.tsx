@@ -1,8 +1,9 @@
-import { Alert, Button, Switch } from 'antd';
+import { CloudDownloadOutlined } from '@ant-design/icons';
+import { Alert, Button, Pagination, Switch } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AiApi } from '../ai-api';
 import { ApiFailure, errorMessage } from '../api';
-import type { AiModel, ModelDraft, Page, Provider } from '../ai-types';
+import type { AiModel, CatalogPage, ModelDraft, Provider } from '../ai-types';
 import type { ModelMediaCapabilities } from '../media-types';
 import { ChoiceSelect } from '../components/ChoiceSelect';
 
@@ -12,9 +13,9 @@ export function Models({ token, provider, onReloadProvider }: {
   onReloadProvider?: (signal: AbortSignal) => Promise<void>;
 }) {
   const api = useMemo(() => new AiApi(token), [token]);
-  const [page, setPage] = useState<Page<AiModel>>({ items: [], next_cursor: null });
-  const [cursor, setCursor] = useState<string>();
-  const [previous, setPrevious] = useState<(string | undefined)[]>([]);
+  const [page, setPage] = useState<CatalogPage<AiModel>>({ items: [], next_cursor: null, total: 0 });
+  const [pageNumber, setPageNumber] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(true);
@@ -22,19 +23,24 @@ export function Models({ token, provider, onReloadProvider }: {
 
   /** 分页读取与操作后的刷新共用同一取消信号，旧供应商的结果不能覆盖新面板。 */
   async function readPage(signal: AbortSignal) {
-    const next = await api.models(cursor, provider.id, signal);
-    if (!signal.aborted) setPage(next);
+    const next = await api.modelPage(provider.id, pageNumber, pageSize, signal);
+    if (!signal.aborted) {
+      const lastPage = Math.max(1, Math.ceil(next.total / pageSize));
+      if (pageNumber > lastPage) setPageNumber(lastPage);
+      else setPage(next);
+    }
   }
 
   useEffect(() => {
     const current = new AbortController();
     controller.current = current;
     setBusy(true); setError('');
-    void (cursor ? readPage(current.signal) : sync(current.signal))
+    // 打开或切换供应商仅读取已保存目录，上游发现必须由管理员显式触发。
+    void readPage(current.signal)
       .catch(failure => { if (!current.signal.aborted) setError(errorMessage(failure)); })
       .finally(() => { if (!current.signal.aborted) setBusy(false); });
     return () => current.abort();
-  }, [api, cursor, provider.id]);
+  }, [api, pageNumber, pageSize, provider.id]);
 
   /** 版本冲突只重新读取供应商，不自动重试导入，避免悄悄采用已更改的连接配置。 */
   async function syncFailure(failure: unknown, signal: AbortSignal) {
@@ -51,14 +57,14 @@ export function Models({ token, provider, onReloadProvider }: {
     return message;
   }
 
-  /** 选择供应商或返回首页时自动同步；失败仍读取已保存目录，不自动重试写入。 */
+  /** 管理员显式同步上游目录；失败仍读取已保存目录，不自动重试写入。 */
   async function sync(signal: AbortSignal) {
     setNotice('');
     let failureMessage = '';
     try {
       const result = await api.syncModels(provider.id, provider.revision, signal);
       if (!signal.aborted) {
-        setNotice('已检查 ' + result.total + ' 个上游模型，新增 ' + result.added + ' 个。新模型默认停用。');
+        setNotice('上游 /models 返回 ' + result.total + ' 个模型，新增 ' + result.added + ' 个。新模型默认停用。');
       }
     } catch (failure) {
       failureMessage = '模型同步失败：' + await syncFailure(failure, signal) + '。已保存的模型会保留。';
@@ -66,7 +72,16 @@ export function Models({ token, provider, onReloadProvider }: {
     if (signal.aborted) return;
     try { await readPage(signal); }
     catch (failure) { failureMessage += ' 列表读取失败：' + errorMessage(failure); }
-    if (!signal.aborted) { setError(failureMessage); setBusy(false); }
+    if (!signal.aborted) setError(failureMessage);
+  }
+
+  /** 管理员显式重新获取上游目录，补充缺失模型后刷新当前本地分页。 */
+  async function refreshUpstreamModels() {
+    const current = controller.current;
+    if (busy || !current || current.signal.aborted) return;
+    setBusy(true); setError(''); setNotice('');
+    try { await sync(current.signal); }
+    finally { if (!current.signal.aborted) setBusy(false); }
   }
 
   /** 仅提交目标字段及版本；冲突重新读取状态，不以失败操作覆盖数据库配置。 */
@@ -108,7 +123,11 @@ export function Models({ token, provider, onReloadProvider }: {
 
   return <div className="provider-models">
     <div className="page-heading"><div><p className="eyebrow">MODEL CATALOG</p>
-      <h2>{provider.name} 的模型</h2><p>{provider.protocol} · {provider.base_url}</p></div></div>
+      <h2>{provider.name} 的模型</h2><p>{provider.protocol} · {provider.base_url}</p></div>
+      <Button aria-label="获取上游模型列表" icon={<CloudDownloadOutlined aria-hidden />} loading={busy}
+        onClick={() => void refreshUpstreamModels()}>
+        获取上游模型列表
+      </Button></div>
     {error && <Alert className="notice" showIcon type="error" message={error} />}
     {notice && <Alert className="notice" showIcon type="success" message={notice} />}
     <p className="field-help">“图片理解”开关会立即保存。请为供应商实际支持识图的模型开启，并同时启用模型与供应商。</p>
@@ -116,7 +135,7 @@ export function Models({ token, provider, onReloadProvider }: {
     <div className="panel table-wrap"><table className="data-table"><thead><tr>
       <th>上游模型</th><th>是否启用</th><th>图片理解</th><th>图片生成协议</th>
     </tr></thead><tbody>{page.items.map(item => <tr key={item.id}>
-      <td><strong>{item.upstream_model}</strong><small>{provider.name} / {item.upstream_model}</small></td>
+      <td><strong>{item.upstream_model}</strong></td>
       <td><Switch aria-label={'启用 ' + item.upstream_model} checked={item.enabled} disabled={busy}
         checkedChildren="启用" unCheckedChildren="停用" onChange={enabled => void updateModel(item, { enabled })} /></td>
       <td><Switch aria-label={'图片理解 ' + item.upstream_model} checked={item.media?.vision_enabled ?? false}
@@ -130,10 +149,11 @@ export function Models({ token, provider, onReloadProvider }: {
         <option value="none">不启用</option><option value="gpt-image">GPT Image</option>
         <option value="legacy-b64">兼容 Base64（PNG）</option>
       </ChoiceSelect></td>
-    </tr>)}</tbody></table>{!page.items.length && <p className="empty-list">{busy ? '正在加载模型…' : '暂无模型。每次选择供应商时自动同步全部模型。'}</p>}</div>
+    </tr>)}</tbody></table>{!page.items.length && <p className="empty-list">{busy ? '正在加载模型…' : '暂无已保存模型。可点击“获取上游模型列表”进行同步。'}</p>}</div>
     <div className="catalog-pagination">
-      <Button disabled={!previous.length || busy} onClick={() => { setCursor(previous.at(-1)); setPrevious(previous.slice(0, -1)); }}>上一页</Button>
-      <Button disabled={!page.next_cursor || busy} onClick={() => { setPrevious([...previous, cursor]); setCursor(page.next_cursor!); }}>下一页</Button>
+      <Pagination current={pageNumber} pageSize={pageSize} total={page.total} disabled={busy}
+        showSizeChanger pageSizeOptions={[10, 20, 50, 100]} showTotal={total => `共 ${total} 个模型`}
+        onChange={(number, size) => { setPageNumber(number); setPageSize(size); }} />
     </div>
   </div>;
 }

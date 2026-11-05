@@ -1,4 +1,4 @@
-import { Alert, Button } from 'antd';
+import { Alert } from 'antd';
 import { ModelSelect } from './ModelSelect';
 import { useModelDirectory } from './useModelDirectory';
 
@@ -36,8 +36,5 @@ export function AgentModelSelect({ token, value, onChange, visionValue, fallback
       placeholder="不启用错误转发" onChange={next => onFallbackChange(next === null ? null : Number(next))} /></label>}
     {onFallbackChange && <p className="field-help">模型失败时由备用模型接管一次，继续使用已有工具结果。与本次使用的模型相同时不会重复请求同一模型。带图请求的备用模型也需启用图片理解。</p>}
     </fieldset>
-    <div className="heading-actions">
-      {page.next_cursor && <Button disabled={busy} onClick={() => void load(page.next_cursor!)}>加载更多模型</Button>}
-    </div>
   </>;
 }

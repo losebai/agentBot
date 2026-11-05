@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { errorMessage } from '../api';
 import { EvolutionApi } from '../evolution-api';
 import type { EvolutionKind, EvolutionRecord } from '../evolution-api';
+import { RecordPagination } from './RecordPagination';
 
 const kinds: Record<EvolutionKind, string> = { feedback: '反馈', change: '习惯变化', reset: '重置' };
 const dimensions: Record<string, string> = { verbosity: '详略', warmth: '亲切', humor: '幽默', initiative: '主动' };
@@ -14,29 +15,28 @@ export function EvolutionRecords({ token, revision, disabled, onView }: {
   const api = useMemo(() => new EvolutionApi(token), [token]);
   const [kind, setKind] = useState<EvolutionKind | ''>('');
   const [scope, setScope] = useState('all');
-  const [items, setItems] = useState<EvolutionRecord[]>([]);
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [items, setItems] = useState<EvolutionRecord[]>([]),[total,setTotal]=useState(0);
+  const [pageNumber,setPageNumber]=useState(1),[pageSize,setPageSize]=useState(10);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const pending = useRef<AbortController>();
 
-  /** 首页替换旧筛选结果，续页仅追加更早主键；晚到的响应不能污染当前筛选。 */
-  const load = useCallback(async (before = 0) => {
+  /** 页码或筛选变化时替换当前页；晚到的响应不能污染当前筛选。 */
+  const load = useCallback(async () => {
     pending.current?.abort();
     const controller = new AbortController(); pending.current = controller;
     setLoading(true); setError('');
-    if (!before) { setItems([]); setCursor(null); }
+    setItems([]);
     try {
-      const page = await api.records(controller.signal, before, {
+      const page = await api.records(controller.signal, pageNumber, pageSize, {
         ...(kind ? { kind } : {}), ...(scope === 'unbound' ? { unbound: true } : {}),
       });
       if (controller.signal.aborted) return;
-      setItems(old => before ? [...old, ...page.items] : page.items);
-      setCursor(page.next_cursor);
+      setItems(page.items);setTotal(page.total);const last=Math.max(1,Math.ceil(page.total/pageSize));if(pageNumber>last)setPageNumber(last);
     } catch (failure) {
       if (!controller.signal.aborted) setError(errorMessage(failure));
     } finally { if (!controller.signal.aborted) setLoading(false); }
-  }, [api, kind, scope]);
+  }, [api, kind, scope, pageNumber, pageSize]);
 
   useEffect(() => {
     void load();
@@ -47,11 +47,11 @@ export function EvolutionRecords({ token, revision, disabled, onView }: {
     <h3>演化记录</h3>
     <p className="field-help">展示所有范围的反馈、变化和重置，可查看每次变化的依据。</p>
     <div className="record-filter evolution-record-filters">
-      <label>记录类型<select value={kind} onChange={event => setKind(event.target.value as EvolutionKind | '')}>
+      <label>记录类型<select value={kind} onChange={event => {setPageNumber(1);setKind(event.target.value as EvolutionKind | '');}}>
         <option value="">全部类型</option>
         <option value="feedback">反馈</option><option value="change">习惯变化</option><option value="reset">重置</option>
       </select></label>
-      <label>记录范围<select value={scope} onChange={event => setScope(event.target.value)}>
+      <label>记录范围<select value={scope} onChange={event => {setPageNumber(1);setScope(event.target.value);}}>
         <option value="all">全部范围</option><option value="unbound">未关联角色</option>
       </select></label>
       <Button loading={loading} disabled={disabled} onClick={() => void load()}>刷新演化记录</Button>
@@ -74,7 +74,7 @@ export function EvolutionRecords({ token, revision, disabled, onView }: {
         <td><Button disabled={disabled} onClick={() => onView(record.profile_id)}>查看依据</Button></td>
       </tr>)}</tbody>
     </table></div>}
-    {cursor !== null && <Button loading={loading} disabled={disabled}
-      onClick={() => void load(cursor)}>加载更早演化记录</Button>}
+    <RecordPagination current={pageNumber} pageSize={pageSize} total={total} loading={loading}
+      hasNext={pageNumber*pageSize<total} onChange={(number,size)=>{setPageNumber(number);setPageSize(size);}}/>
   </section>;
 }

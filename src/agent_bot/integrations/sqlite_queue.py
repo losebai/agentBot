@@ -237,8 +237,10 @@ class SqliteConversationQueueStore:
         """标记开画提示全部发送完成。"""
         await self._update_state(stream_id, image_start_delivered=True)
 
-    async def save_result(self, stream_id: str, result: ConversationResult) -> None:
-        """原子保存生成结果和完成标记，避免投递重试重复调用模型。"""
+    async def save_result(
+        self, stream_id: str, result: ConversationResult, *, persistent: bool = False,
+    ) -> None:
+        """原子保存结果与检查点；定时投递保留到确认，其余使用原保留期。"""
         payload = result.model_dump_json(by_alias=True)
         limit = (32 if result.tool_images else 16) * 1024 * 1024
         if len(payload.encode("utf-8")) > limit:
@@ -252,7 +254,8 @@ class SqliteConversationQueueStore:
             connection.execute(
                 "UPDATE chat_queue_jobs SET result = ?, result_expires_at = ?, state = ? "
                 "WHERE namespace = ? AND stream_id = ?",
-                (payload, time.time() + self._result_ttl_seconds, state.model_dump_json(),
+                (payload, None if persistent else time.time() + self._result_ttl_seconds,
+                 state.model_dump_json(),
                  self._namespace, stream_id),
             )
 
@@ -268,7 +271,7 @@ class SqliteConversationQueueStore:
             ).fetchone()
             if row is None or row["result"] is None:
                 return None
-            if row["result_expires_at"] <= time.time():
+            if row["result_expires_at"] is not None and row["result_expires_at"] <= time.time():
                 connection.execute(
                     "UPDATE chat_queue_jobs SET result = NULL, result_expires_at = NULL "
                     "WHERE namespace = ? AND stream_id = ?", (self._namespace, stream_id),

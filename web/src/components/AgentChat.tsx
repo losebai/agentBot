@@ -14,7 +14,7 @@ import { useRunningPlugins } from '../plugin-runtime';
 /** 图片仅随当前请求发送；工具附件独立于最后一轮模型回复保存。 */
 export function AgentChat({token}:{token:string}) {
   const { runningPlugins, pluginsError } = useRunningPlugins(token);
-  const api=useMemo(()=>new AgentApi(token),[token]);const [agents,setAgents]=useState<Agent[]>([]),[cursor,setCursor]=useState<string|null>(null);
+  const api=useMemo(()=>new AgentApi(token),[token]);const [agents,setAgents]=useState<Agent[]>([]);
   const [code,setCode]=useState(''),[input,setInput]=useState(''),[error,setError]=useState(''),[sending,setSending]=useState(false),[streaming,setStreaming]=useState(true);
   const [session,setSession]=useState(()=>crypto.randomUUID());const [messages,setMessages]=useState<ChatMessage[]>([]),[steps,setSteps]=useState<AgentEvent[]>([]);
   const [video, setVideo] = useState<MediaAsset>();
@@ -26,12 +26,11 @@ export function AgentChat({token}:{token:string}) {
   useEffect(()=>{let alive=true;api.settings().then(value=>{const count=value.fields?.find(f=>f.name==='chat_max_images_per_message')?.value;if(alive&&typeof count==='number')setMaximumImages(Math.max(1,Math.min(8,count)));}).catch(()=>{});return()=>{alive=false;};},[api]);
   useEffect(()=>{
     mounted.current=true;const reading=new AbortController();
-    // 首次读取按目录顺序选择首个启用 Agent；晚到响应不能覆盖用户已有选择。
-    api.listAgents(undefined,reading.signal).then(p=>{if(!reading.signal.aborted){setAgents(p.items);setCursor(p.next_cursor);setCode(current=>current||p.items.find(agent=>agent.enabled)?.code||'');}}).catch(e=>{if(!reading.signal.aborted)setError(errorMessage(e));});
+    // 选择器自动读完 Agent 目录；重复游标立即失败，避免异常分页无限循环。
+    async function loadAgents(){try{const items:Agent[]=[];const ids=new Set<number>(),cursors=new Set<string>();let cursor:string|undefined;do{const page=await api.listAgents(cursor,reading.signal);reading.signal.throwIfAborted();for(const item of page.items)if(!ids.has(item.id)){ids.add(item.id);items.push(item);}const next=page.next_cursor??undefined;if(next&&cursors.has(next))throw new Error('Agent 目录返回了重复分页游标');if(next)cursors.add(next);cursor=next;}while(cursor);if(!reading.signal.aborted){setAgents(items);setCode(current=>current||items.find(agent=>agent.enabled)?.code||'');}}catch(e){if(!reading.signal.aborted)setError(errorMessage(e));}}
+    void loadAgents();
     return()=>{mounted.current=false;reading.abort();controller.current?.abort();};
   },[api]);
-  /** 分页首次找到可用 Agent 时补上默认选择，后续分页保留用户的选择和会话。 */
-  async function more(){try{const p=await api.listAgents(cursor!);if(mounted.current){setAgents(previous=>[...previous,...p.items]);setCursor(p.next_cursor);setCode(current=>current||p.items.find(agent=>agent.enabled)?.code||'');}}catch(e){if(mounted.current)setError(errorMessage(e));}}
   /** 切 Agent 或新会话时让旧响应失去更新状态的资格。 */
   function reset(){controller.current?.abort();controller.current=undefined;setSending(false);setUploading(false);setInputs([]);setVideo(undefined);setConsumed([]);setArtifacts([]);setMessages([]);setSteps([]);setPartial(undefined);setMetadata(undefined);setError('');setSession(crypto.randomUUID());}
   /** 只有有效终态和 EOF 都到达才提交文字历史，附件先行保留。 */
@@ -61,7 +60,7 @@ export function AgentChat({token}:{token:string}) {
     finally{if(controller.current===abort){controller.current=undefined;if(mounted.current)setSending(false);}}
   }
   return <div className="page-content chat-page"><div className="page-heading"><div><p className="eyebrow">AGENT CONVERSATION</p><h1>Agent 对话</h1><p>使用已启用的 Agent，查看模型与工具执行进度。</p></div><Button onClick={reset}>新会话</Button></div>
-    <div className="chat-controls"><label htmlFor="agent-choice">选择 Agent</label><ChoiceSelect id="agent-choice" value={code} onChange={value=>{setCode(value);reset();}}><option value="">选择已启用的 Agent</option>{agents.filter(a=>a.enabled).map(a=><option key={a.id} value={a.code}>{a.name}</option>)}</ChoiceSelect>{cursor&&<Button disabled={sending} onClick={()=>void more()}>加载更多 Agent</Button>}<label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式执行</label></div>
+    <div className="chat-controls"><label htmlFor="agent-choice">选择 Agent</label><ChoiceSelect id="agent-choice" value={code} onChange={value=>{setCode(value);reset();}}><option value="">选择已启用的 Agent</option>{agents.filter(a=>a.enabled).map(a=><option key={a.id} value={a.code}>{a.name}</option>)}</ChoiceSelect><label className="checkbox-label"><input type="checkbox" disabled={sending} checked={streaming} onChange={e=>setStreaming(e.target.checked)}/>流式执行</label></div>
     <p className="chat-scope">管理测试可使用网页、预设 MCP 和已启用的绘图、语音工具。QQ 会话工具需在机器人会话中使用。</p>
     {pluginsError && <Alert className="notice" type="error" showIcon message={'插件状态读取失败：' + pluginsError} />}
     {error&&<Alert className="notice" type="error" showIcon message={error}/>}{metadata&&!metadata.record_saved&&<Alert className="notice" type="warning" message="回复已生成，但运行记录未保存。请检查数据库，无需重新发送。"/>}

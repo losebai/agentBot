@@ -6,6 +6,12 @@ from agent_bot.ai.errors import AiError
 def classify_api_error(error: AiError) -> tuple[int, str, str]:
     """稳定中文错误文案不回显上游响应、文件路径或凭据。"""
     messages = {
+        'AUTONOMY_LOCAL_CHANNEL_REQUIRED': '此操作需要独立本地身份，不能绑定QQ出站',
+        'AUTONOMY_NOT_FOUND': '持续身份或任务不存在，或不属于当前密钥命名空间',
+        'AUTONOMY_CONFLICT': '身份、任务或提案版本已变化，请刷新核对',
+        'AUTONOMY_UNAVAILABLE': '持续智能体存储不可用，请核对数据库升级',
+        'AUTONOMY_SOURCE_EXPIRED': '来源情节已过期，不能继续写入新的长期事实',
+        'AUTONOMY_TASK_LIMIT': '该身份未完成任务已达五十项，请先完成或取消现有任务',
         "STICKER_DISABLED": "表情包插件未运行，请在插件中心启用并手动重启后端",
         "STICKER_MODEL_REQUIRED": "请在表情包配置中选择独立视觉与语境检索模型",
         "STICKER_NOT_FOUND": "表情包不存在或已删除，请刷新图库",
@@ -105,6 +111,8 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         ),
         "AGENT_TOOL_SCHEMA_INVALID": "MCP 工具参数 schema 格式无效，请检查服务端工具定义",
         "AGENT_MCP_RESPONSE_TOO_LARGE": "MCP 响应超过允许的大小限制",
+        "AGENT_TOOL_RESULT_TOO_LARGE": "工具返回内容超过允许的大小限制",
+        "AGENT_CONTEXT_TOO_LARGE": "输入上下文超过已配置的最大字符数，请调整 LLM 上下文设置",
         "AGENT_MCP_TOOL_LIMIT": "MCP 工具数量超过上限，单次最多支持 32 个工具",
         "AGENT_MCP_DISCOVERY_LIMIT": "MCP 工具目录过大或分页异常，管理目录最多支持 256 项",
         "AI_MODEL_LIST_INVALID": "上游模型列表格式无效或超过数量限制",
@@ -112,6 +120,7 @@ def classify_api_error(error: AiError) -> tuple[int, str, str]:
         "AI_UPSTREAM_REJECTED": "上游拒绝请求，请检查协议、地址和模型列表接口支持情况",
         "AI_UPSTREAM_UNAVAILABLE": "上游服务暂时不可用，请检查地址及连接",
         "AI_RATE_LIMITED": "上游限制请求频率，请稍后再试",
+        "AI_CONTEXT_TOO_LARGE": "输入上下文超过已配置的最大字符数，请调整 LLM 上下文设置",
         "AI_OPTION_UNSUPPORTED": "当前协议不支持已配置的采样参数",
         "AI_TIMEOUT": "模型请求已超时",
         "AGENT_NOT_INITIALIZED": (

@@ -41,6 +41,7 @@ class ProviderFields(AiModel):
     name: str = Field(min_length=1, max_length=100)
     protocol: ProviderProtocol
     base_url: str = Field(min_length=1, max_length=2048)
+    user_agent: str = Field(default="", max_length=512)
     enabled: bool = False
     description: str = Field(default="", max_length=1000)
 
@@ -73,11 +74,26 @@ class ProviderFields(AiModel):
             raise ValueError("use API root rather than complete endpoint")
         return value.rstrip("/")
 
+    @field_validator("user_agent")
+    @classmethod
+    def check_user_agent(cls, value: str) -> str:
+        """自定义请求头只允许可打印 ASCII，避免非法编码和头部注入。"""
+        if any(not 32 <= ord(char) <= 126 for char in value):
+            raise ValueError("invalid user agent")
+        return value.strip()
+
 
 class ProviderCreate(ProviderFields):
     """创建供应商时直接接收密钥，不使用环境变量引用。"""
 
     credential: CredentialValue | None = Field(default=None, repr=False)
+
+    @model_validator(mode="after")
+    def require_remote_credential(self):
+        """OpenAI 兼容协议必须鉴权，只有本地 Ollama 可以显式匿名访问。"""
+        if self.protocol != "ollama" and self.credential is None:
+            raise ValueError("credential is required for OpenAI-compatible providers")
+        return self
 
 
 class ProviderView(ProviderFields, CredentialSnapshot):
@@ -89,6 +105,12 @@ class ProviderView(ProviderFields, CredentialSnapshot):
     updated_at: datetime | None = None
 
 
+class ProviderCredential(AiModel):
+    """管理员显式查看单个供应商时返回明文，不进入目录列表。"""
+
+    credential: str = Field(min_length=1, max_length=4096, repr=False)
+
+
 class ProviderUpdate(AiModel):
     """版本化修改供应商；省略凭据保留，显式 null 清除。"""
 
@@ -96,6 +118,7 @@ class ProviderUpdate(AiModel):
     name: str | None = None
     protocol: ProviderProtocol | None = None
     base_url: str | None = None
+    user_agent: str | None = None
     credential: CredentialValue | None = Field(default=None, repr=False)
     enabled: bool | None = None
     description: str | None = None
@@ -231,6 +254,12 @@ class Page(AiModel, Generic[T]):
     next_cursor: str | None = None
 
 
+class CatalogPage(Page[T], Generic[T]):
+    """模型目录页额外返回筛选后的总数，供管理页面直接按页码跳转。"""
+
+    total: int = Field(ge=0)
+
+
 class ResolvedModel(AiModel):
     model: ModelView
     provider: ProviderView
@@ -255,6 +284,7 @@ class TextRequest(AiModel):
 
     @model_validator(mode="after")
     def validate_messages(self):
+        """校验消息结构和单条长度；总上下文预算由服务端运行配置决定。"""
         messages = self.messages or (ChatMessage(role="user", content=self.prompt),)
         if not self.prompt.strip() or not self.model.strip():
             raise ValueError("empty text")
@@ -262,7 +292,6 @@ class TextRequest(AiModel):
             messages[-1].role != "user"
             or not messages[-1].content.strip()
             or any(len(item.content) > 32000 for item in messages)
-            or sum(len(item.content) for item in messages) > 120000
         ):
             raise ValueError("invalid text conversation")
         object.__setattr__(self, "messages", messages)

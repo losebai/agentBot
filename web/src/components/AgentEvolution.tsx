@@ -1,9 +1,10 @@
-import { Alert, Button } from 'antd';
+import { Alert, Button, Modal, Table } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { errorMessage } from '../api';
 import { EvolutionApi } from '../evolution-api';
-import type { EvolutionConfig, EvolutionHistory, EvolutionProfile } from '../evolution-api';
+import type { EvolutionConfig, EvolutionHistory, EvolutionProfile, EvolutionResearch } from '../evolution-api';
 import { EvolutionRecords } from './EvolutionRecords';
+import { RecordPagination } from './RecordPagination';
 
 const labels: Record<string, string> = {
   verbosity: '详略', warmth: '亲切', humor: '幽默', initiative: '主动',
@@ -23,11 +24,13 @@ export function AgentEvolution({ token, agentId = null }: { token: string; agent
 
 /** 暂停、重置独立于角色草稿立即保存；冲突时保留当前内容并提示刷新。 */
 function EvolutionBody({ token, agentId }: { token: string; agentId: number | null }) {
+  const [research, setResearch] = useState<EvolutionResearch>();
   const api = useMemo(() => new EvolutionApi(token), [token]);
   const [config, setConfig] = useState<EvolutionConfig>();
   const [profiles, setProfiles] = useState<EvolutionProfile[]>([]);
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [profilePage,setProfilePage]=useState(1),[profilePageSize,setProfilePageSize]=useState(10),[profileTotal,setProfileTotal]=useState(0);
   const [history, setHistory] = useState<EvolutionHistory>();
+  const [historyPage,setHistoryPage]=useState(1),[historyPageSize,setHistoryPageSize]=useState(10);
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -40,16 +43,16 @@ function EvolutionBody({ token, agentId }: { token: string; agentId: number | nu
   const detail = useRef<HTMLElement>(null);
 
   /** 刷新目录不保留过期画像版本；已有分页可明确继续加载。 */
-  async function load(after = 0) {
+  async function load() {
     pending.current?.abort(); reading.current?.abort();
     const controller = new AbortController();
     pending.current = controller;
     setLoading(true); setError(''); setHistory(undefined); setConfirm(false);
     try {
-      const page = await api.profiles(agentId, controller.signal, after);
+      const page = await api.profiles(agentId, controller.signal, profilePage, profilePageSize);
       if (controller.signal.aborted) return;
-      setConfig(page.config); setCursor(page.next_cursor);
-      setProfiles(old => after ? [...old, ...page.items] : page.items);
+      setConfig(page.config); setProfiles(page.items); setProfileTotal(page.total);
+      const last=Math.max(1,Math.ceil(page.total/profilePageSize));if(profilePage>last)setProfilePage(last);
     } catch (failure) {
       if (!controller.signal.aborted) setError(errorMessage(failure));
     } finally { if (!controller.signal.aborted) setLoading(false); }
@@ -60,7 +63,7 @@ function EvolutionBody({ token, agentId }: { token: string; agentId: number | nu
     void load();
     return () => { alive.current = false; pending.current?.abort(); reading.current?.abort(); };
     // 当前组件按范围与 token 重新挂载，保证每一代查询只写入自己的状态。
-  }, [api, agentId]);
+  }, [api, agentId, profilePage, profilePageSize]);
 
   useEffect(() => {
     // 详情位于长列表之后，读取成功后移入焦点，使键盘和窄屏用户能立即找到依据。
@@ -68,16 +71,15 @@ function EvolutionBody({ token, agentId }: { token: string; agentId: number | nu
   }, [history?.profile.id]);
 
   /** 切换对象即取消旧历史，晚到响应不得污染新选择。 */
-  async function read(profileId: number, before = 0) {
+  async function read(profileId: number, pageNumber = 1, pageSize = historyPageSize) {
     reading.current?.abort();
     const controller = new AbortController(); reading.current = controller;
     setError(''); setConfirm(false);
-    if (!before) setHistory(undefined);
+    if (pageNumber === 1) setHistory(undefined);
     try {
-      const page = await api.history(profileId, controller.signal, before);
+      const page = await api.history(profileId, controller.signal, pageNumber, pageSize);
       if (controller.signal.aborted) return;
-      setHistory(old => before && old?.profile.id === profileId
-        ? { ...page, items: [...old.items, ...page.items] } : page);
+      setHistory(page);setHistoryPage(pageNumber);setHistoryPageSize(pageSize);
     } catch (failure) {
       if (!controller.signal.aborted) setError(errorMessage(failure));
     }
@@ -109,7 +111,35 @@ function EvolutionBody({ token, agentId }: { token: string; agentId: number | nu
     finally { if (alive.current) setBusy(false); }
   }
 
+  /** 预览研究不更改习惯，应用必须基于当前画像与证据版本。 */
+  async function preview(profile: EvolutionProfile) {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { const result = await api.preview(profile.id); if (alive.current) setResearch(result); }
+    catch (failure) { if (alive.current) setError(errorMessage(failure)); }
+    finally { if (alive.current) setBusy(false); }
+  }
+  /** 执行成功后刷新持久结果；证据冲突保留研究以便核对。 */
+  async function advance() {
+    if (!research || busy) return;
+    setBusy(true); setError('');
+    try {
+      await api.advance(research);
+      if (alive.current) { setResearch(undefined); setNotice('手动演进已完成。'); setRecordRevision(old => old + 1); await load(); }
+    } catch (failure) { if (alive.current) setError(errorMessage(failure)); }
+    finally { if (alive.current) setBusy(false); }
+  }
+
   return <div className="agent-evolution-body">
+    <Modal title="演进研究预览" open={!!research} onCancel={() => setResearch(undefined)} footer={null}>
+      <p>仅研究已保存的真实反馈，不修改习惯。手动演进沿用三日、七天跨度与净支持阈值。</p>
+      <Table rowKey="dimension" pagination={false} dataSource={research?.changes || []} columns={[
+        { title: '习惯', dataIndex: 'dimension', render: (key: string) => labels[key] },
+        { title: '预计变化', render: (_, row) => `${row.before} → ${row.after}` },
+        { title: '净支持', dataIndex: 'net_support' }, { title: '不同日期', dataIndex: 'dates' },
+      ]} />
+      <Button type="primary" loading={busy} disabled={!config?.enabled || !research?.changes.some(item => item.eligible && item.before !== item.after)} onClick={() => void advance()}>手动演进</Button>
+    </Modal>
     <p>长期互动逐步形成表达习惯。相同对象的明确反馈需出现在至少 3 个不同日期，跨度至少 7 天；相反反馈会抵消，每次只调整一档。</p>
     <p className="field-help">先支持“以后请简洁一点”“以后请详细一点”“以后请亲切一点”“以后请幽默一点”“以后请主动一点”等完整反馈句。使用最近 90 天的证据，个人习惯互相隔离；不修改角色和工具权限。此处操作立即保存。</p>
     <p className="field-help">通用习惯适用于所有普通对话；角色范围的非零习惯优先，零值沿用通用习惯。各范围分别暂停和重置。</p>
@@ -125,8 +155,10 @@ function EvolutionBody({ token, agentId }: { token: string; agentId: number | nu
     {profiles.map(profile => <div key={profile.id} className="panel agent-evolution-profile">
       <p>互动对象 {profile.subject_key.slice(0, 8)}</p><p>{traitText(profile)}</p>
       <Button disabled={busy || loading} onClick={() => void read(profile.id)}>查看演化记录</Button>
+      <Button disabled={busy || loading} onClick={() => void preview(profile)}>预览演进研究</Button>
     </div>)}
-    {cursor !== null && <Button disabled={busy || loading} onClick={() => void load(cursor)}>加载更多对象</Button>}
+    <RecordPagination current={profilePage} pageSize={profilePageSize} total={profileTotal} loading={loading}
+      hasNext={profilePage*profilePageSize<profileTotal} onChange={(number,size)=>{setProfilePage(number);setProfilePageSize(size);}}/>
     <EvolutionRecords token={token} revision={recordRevision} disabled={busy}
       onView={profileId => void read(profileId)} />
     {history && <section ref={detail} tabIndex={-1} className="agent-evolution-history" aria-label="演化记录">
@@ -148,8 +180,9 @@ function EvolutionBody({ token, agentId }: { token: string; agentId: number | nu
         <p>{event.excerpt}</p>
         {event.evidence_ids.length > 0 && <p>依据反馈 {event.evidence_ids.map(id => `#${id}`).join('、')}</p>}
       </li>)}</ol>
-      {history.next_cursor !== null && <Button disabled={busy || loading}
-        onClick={() => void read(history.profile.id, history.next_cursor!)}>加载更早记录</Button>}
+      <RecordPagination current={historyPage} pageSize={historyPageSize} total={history.total} loading={loading}
+        hasNext={historyPage*historyPageSize<history.total}
+        onChange={(number,size)=>void read(history.profile.id,number,size)}/>
     </section>}
   </div>;
 }

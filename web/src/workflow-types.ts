@@ -34,6 +34,7 @@ export interface WorkflowCatalog {
   settings_revision: number;
   directory_configured: boolean;
   next_cursor: string | null;
+  total: number;
 }
 
 /** 网页允许编辑名称、说明、附加提示词和启用状态，不允许修改执行节点映射。 */

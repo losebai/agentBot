@@ -50,7 +50,7 @@ it('新增 Agent 分别保存角色与性格，预览反映尚未保存的两段
   fireEvent.change(screen.getByLabelText('名称'), { target: { value: '讲师' } });
   fireEvent.change(screen.getByLabelText('Agent 代码'), { target: { value: 'teacher' } });
   await waitFor(() => expect(screen.getByRole('combobox', { name: '聊天模型' })).toBeEnabled());
-  await chooseSelect(screen.getByRole('combobox', { name: '聊天模型' }), '离线供应商 / chat');
+  await chooseSelect(screen.getByRole('combobox', { name: '聊天模型' }), 'chat');
   fireEvent.change(screen.getByLabelText('角色'), { target: { value: '  负责教学  ' } });
   fireEvent.change(screen.getByLabelText('性格'), { target: { value: '  耐心温和\n' } });
   expect(screen.getByLabelText('组合提示词预览').textContent).toBe('【角色设定】\n负责教学\n\n【人格设定】\n耐心温和');

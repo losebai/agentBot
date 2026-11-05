@@ -1,0 +1,9 @@
+/* 长说明按需展开，窄屏自然换行；使用原生折叠控件保留键盘与焦点支持。 */
+.agent-usage-guide { min-width: 0; margin: 0 0 20px; }
+.agent-usage-guide > summary { padding: 14px 18px; color: var(--accent); font-size: 14px; font-weight: 600; cursor: pointer; }
+.agent-usage-guide > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+.agent-usage-guide-content { padding: 0 18px 16px; color: var(--text-secondary); font-size: 13px; line-height: 1.9; overflow-wrap: anywhere; }
+.agent-usage-guide-content h2 { margin: 18px 0 8px; color: var(--text); font-size: 14px; font-weight: 600; }
+.agent-usage-guide-content p { margin: 8px 0; }
+.agent-usage-guide-content ol, .agent-usage-guide-content ul { margin: 8px 0; padding-left: 22px; }
+.agent-usage-guide-content li + li { margin-top: 8px; }

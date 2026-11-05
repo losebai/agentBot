@@ -1,3 +1,4 @@
+import { AgentUsageGuide } from '../components/AgentUsageGuide';
 import { Alert, Button } from 'antd';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentApi } from '../agent-api';
@@ -40,6 +41,7 @@ export function AgentEvolutionPage({ token }: { token: string }) {
       <h1>自我演进</h1><p>查看通用表达习惯，也可选择关联角色管理专属习惯与变化依据。</p></div>
       <Button loading={loading} onClick={() => void load()}>刷新 Agent</Button>
     </div>
+    <AgentUsageGuide feature="evolution" />
     {error && <Alert type="error" showIcon message={error} />}
     <div className="agent-switcher" role="group" aria-label="选择演进 Agent">
       <Button type={selected === null ? 'primary' : 'default'} aria-pressed={selected === null}

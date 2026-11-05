@@ -31,7 +31,7 @@ def test_installed_package_resources_share_wheel_layout(tmp_path: Path, editable
         "from pathlib import Path\n"
         "import agent_bot\n"
         "import agent_bot.config\n"
-        "assert agent_bot.__version__ == version('agent-bot')\n"
+        "assert agent_bot.__version__ == version('taobot')\n"
         "resources = files('agent_bot').joinpath('resources')\n"
         "template = json.loads(resources.joinpath('sdxl_lightning_4step_api.json')"
         ".read_text(encoding='utf-8'))\n"

@@ -144,6 +144,6 @@ def create_host() -> FastAPI:
         return JSONResponse({'ready': not app.state.worker.done()},
                             status_code=503 if app.state.worker.done() else 200)
 
-    static = distribution('agent-bot').locate_file('agent_bot/static')
+    static = distribution('taobot').locate_file('agent_bot/static')
     app.mount('/', StaticFiles(directory=static, html=True))
     return app

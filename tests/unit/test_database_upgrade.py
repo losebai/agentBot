@@ -25,7 +25,8 @@ def released_resource(name: str) -> str:
     script = resource(name)
     if name == 'agent_bot_init.sqlite.sql':
         return ';\n'.join(statement for statement in split_sql(script)
-                          if 'agent_bot_autonomy_' not in statement) + ';'
+                          if 'agent_bot_autonomy_' not in statement
+                          and 'agent_bot_agent_portrait' not in statement) + ';'
     return script
 
 
@@ -36,6 +37,7 @@ def legacy_database(tmp_path):
     with sqlite3.connect(path) as connection:
         connection.executescript(resource("agent_bot_init.sqlite.sql"))
         for name in (
+            "agent_bot_agent_portrait",
             "agent_bot_autonomy_audit",
             "agent_bot_autonomy_proposal",
             "agent_bot_autonomy_episode",
@@ -74,7 +76,7 @@ def test_unversioned_database_upgrades_and_second_start_has_no_ddl(legacy_databa
         "bilibili-v1", "comfy-plugin-v1", "material-classification-v1", "agent-personality-v1",
         "stickers-v1", "agent-evolution-v1", "evolution-independent-v2",
         "provider-user-agent-v1", "job-recovery-v1", "call-record-classification-v1",
-        "persistent-agent-v1",
+        "persistent-agent-v1", "agent-portrait-v1",
     )
     assert query(legacy_database, "SELECT value FROM private_business") == [("must-preserve",)]
     assert query(legacy_database, "SELECT version FROM agent_bot_schema_version") == [
@@ -82,7 +84,7 @@ def test_unversioned_database_upgrades_and_second_start_has_no_ddl(legacy_databa
     ]
     second = upgrade_database(legacy_database, read_resource=resource)
     assert second.applied == () and second.previous_version == __version__
-    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(11,)]
+    assert query(legacy_database, "SELECT count(*) FROM agent_bot_schema_migration") == [(12,)]
     assert query(
         legacy_database,
         "SELECT count(*) FROM pragma_table_info('agent_bot_ai_provider') "
@@ -179,7 +181,7 @@ def test_two_startups_serialize_and_only_one_applies_migration(legacy_database):
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(lambda _: start(), range(2)))
-    assert sorted(len(result.applied) for result in results) == [0, 11]
+    assert sorted(len(result.applied) for result in results) == [0, 12]
 
 
 def test_missing_existing_sqlite_file_is_not_created(tmp_path):
@@ -341,7 +343,7 @@ def test_autonomy_upgrade_from_released_version_matches_fresh_schema(legacy_data
     assert len(old.applied) == 10
     result = upgrade_database(legacy_database, read_resource=resource)
     assert result.previous_version == '0.6.2'
-    assert result.applied == ('persistent-agent-v1',)
+    assert result.applied == ('persistent-agent-v1', 'agent-portrait-v1')
     with sqlite3.connect(legacy_database.sqlite_path) as upgraded, sqlite3.connect(
         tmp_path / 'fresh-autonomy.db'
     ) as fresh:
@@ -376,4 +378,48 @@ def test_applied_autonomy_is_revalidated_before_every_startup(legacy_database):
     with sqlite3.connect(legacy_database.sqlite_path) as connection:
         connection.execute('DROP INDEX idx_autonomy_task_due')
     with pytest.raises(UpgradeError, match='索引或外键'):
+        upgrade_database(legacy_database, read_resource=resource)
+
+
+
+def test_portrait_supplement_upgrades_existing_063_and_matches_fresh(legacy_database, tmp_path):
+    """已是0.6.3但尚无人像迁移的库仍升级，原角色不变且重启不重复DDL。"""
+    from agent_bot.database_upgrade import MIGRATIONS
+
+    old_steps = tuple(item for item in MIGRATIONS if item.name != "agent-portrait-v1")
+
+    def old_resource(name):
+        """模拟尚未包含人物图功能的0.6.3完整结构。"""
+        from agent_bot.sql_scripts import split_sql
+
+        script = resource(name)
+        if name == "agent_bot_init.sqlite.sql":
+            return ";\n".join(statement for statement in split_sql(script)
+                               if "agent_bot_agent_portrait" not in statement) + ";"
+        return script
+
+    upgrade_database(legacy_database, migrations=old_steps, read_resource=old_resource)
+    result = upgrade_database(legacy_database, read_resource=resource)
+    assert result.previous_version == "0.6.3"
+    assert result.applied == ("agent-portrait-v1",)
+    with sqlite3.connect(legacy_database.sqlite_path) as upgraded, sqlite3.connect(
+        tmp_path / "fresh-portrait.db"
+    ) as fresh:
+        fresh.executescript(resource("agent_bot_init.sqlite.sql"))
+        for pragma in ("table_info", "index_list", "foreign_key_list"):
+            assert upgraded.execute(f"PRAGMA {pragma}(agent_bot_agent_portrait)").fetchall() == (
+                fresh.execute(f"PRAGMA {pragma}(agent_bot_agent_portrait)").fetchall())
+    assert query(legacy_database, "SELECT value FROM private_business") == [("must-preserve",)]
+    assert upgrade_database(legacy_database, read_resource=resource).applied == ()
+
+
+def test_portrait_constraint_corruption_stops_startup(legacy_database):
+    """已有流水不能掩盖缺少级联外键的人像表，必须停止而非默认为迁移成功。"""
+    upgrade_database(legacy_database, read_resource=resource)
+    with sqlite3.connect(legacy_database.sqlite_path) as connection:
+        connection.execute("DROP TABLE agent_bot_agent_portrait")
+        connection.execute("CREATE TABLE agent_bot_agent_portrait (agent_id INTEGER PRIMARY KEY,"
+                           "mime_type TEXT NOT NULL,image_data BLOB NOT NULL,"
+                           "sha256 TEXT NOT NULL,updated_at DATETIME NOT NULL)")
+    with pytest.raises(UpgradeError, match="级联外键"):
         upgrade_database(legacy_database, read_resource=resource)

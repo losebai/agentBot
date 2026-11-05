@@ -12,7 +12,7 @@ from agent_bot.settings import SettingsError
 
 def run(argv: Sequence[str]) -> int:
     """初始化与升级分开；升级复用启动清单，不重新初始化已有业务表。"""
-    parser = argparse.ArgumentParser(prog="agent-bot database")
+    parser = argparse.ArgumentParser(prog="taobot database")
     parser.add_argument("command", choices=['init', 'upgrade'])
     arguments = parser.parse_args(list(argv))
     try:

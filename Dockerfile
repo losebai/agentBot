@@ -22,4 +22,4 @@ EXPOSE 8080
 # 就绪检查只检查本进程与队列，不调用 QQ 或付费模型。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=3).close()"
-ENTRYPOINT ["agent-bot"]
+ENTRYPOINT ["taobot"]

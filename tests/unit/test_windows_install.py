@@ -42,7 +42,7 @@ def test_install_checks_download_before_execution(
         "numeric_upgrade": "0.5.9",
         "invalid_installed_version": "unknown",
     }.get(scenario, "")
-    filename = f"AgentBot-{release_version}-windows-x64-Setup.exe"
+    filename = f"taobot-{release_version}-windows-x64-Setup.exe"
     (tmp_path / filename).write_bytes(payload)
     manifest = {
         "version": release_version,
@@ -66,7 +66,7 @@ function Test-Path {
     if ($LiteralPath -like 'HKCU:*') {
         $expectedKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
             '{379D6B51-BAED-48B4-A39D-FB1E5A424042}_is1'
-        if ($LiteralPath -ne $expectedKey) { throw 'incorrect AgentBot installation key' }
+        if ($LiteralPath -ne $expectedKey) { throw 'incorrect taobot installation key' }
         return [bool]$env:INSTALL_EXISTING_VERSION
     }
     if ($PathType) {
@@ -139,16 +139,16 @@ try {
     if not succeeds:
         expected_error = {
             "bad_hash": "SHA256 verification failed",
-            "bad_filename": "Invalid AgentBot release manifest",
+            "bad_filename": "Invalid taobot release manifest",
             "download_failure": "fixture download failed",
             "installer_failure": "exit code 5",
-            "invalid_installed_version": "Invalid installed AgentBot version",
+            "invalid_installed_version": "Invalid installed taobot version",
         }[scenario]
         assert expected_error in result.stderr.decode(errors="replace")
     if scenario in {"same_version", "newer_installed", "invalid_installed_version"}:
         assert not (tmp_path / "downloaded.txt").exists()
     if scenario in {"upgrade", "numeric_upgrade"}:
-        expected_update = f"Updating AgentBot {installed_version} -> {release_version}"
+        expected_update = f"Updating taobot {installed_version} -> {release_version}"
         assert expected_update in result.stdout.decode()
     if scenario == "same_version":
         assert b"already up to date" in result.stdout
@@ -169,5 +169,5 @@ def test_cmd_download_failure_returns_error_and_removes_partial_script(tmp_path:
         capture_output=True, timeout=15,
     )
     assert result.returncode != 0
-    assert b"Failed to download AgentBot install script" in result.stdout
+    assert b"Failed to download taobot install script" in result.stdout
     assert list(tmp_path.iterdir()) == []

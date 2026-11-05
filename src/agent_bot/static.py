@@ -10,7 +10,7 @@ from starlette.staticfiles import StaticFiles
 
 def install_static(app: FastAPI, directory: Path | None = None) -> None:
     """开发源码与 wheel 共用资源定位，缺失构建时返回明确错误。"""
-    root = directory or Path(distribution('agent-bot').locate_file('agent_bot/static'))
+    root = directory or Path(distribution('taobot').locate_file('agent_bot/static'))
     if (root / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=root / "assets"), name="management-assets")
 

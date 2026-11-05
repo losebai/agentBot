@@ -32,7 +32,7 @@ def check_gui(
         debug_port = listener.getsockname()[1]
     started_at = time.perf_counter()
     process = subprocess.Popen(
-        [str(deployment / "AgentBot.exe")], cwd=deployment.parent,
+        [str(deployment / "taobot.exe")], cwd=deployment.parent,
         env=os.environ | {
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS": f"--remote-debugging-port={debug_port}"
         },
@@ -126,7 +126,7 @@ def check_gui(
 
 def check(bundle: Path, screenshot: Path | None = None) -> None:
     """不读取开发配置，不连接 QQ/模型；检查 CLI、资源、API 和正常关闭。"""
-    for name in ("AgentBot.exe", "agent-bot.exe", "_internal", ".env.example"):
+    for name in ("taobot.exe", "taobot-cli.exe", "_internal", ".env.example"):
         if not (bundle / name).exists():
             raise ValueError(f"missing bundle entry: {name}")
     package = bundle / "_internal" / "agent_bot"
@@ -158,7 +158,7 @@ def check(bundle: Path, screenshot: Path | None = None) -> None:
                 f"HOST=127.0.0.1\nPORT={port}\n",
                 encoding="utf-8",
             )
-            executable = deployment / "agent-bot.exe"
+            executable = deployment / "taobot-cli.exe"
             # 使用无关 cwd，确保 EXE 从自身目录读取配置及 SQL。
             for arguments in (["--help"], ["database", "init"], ["settings", "init"]):
                 started_at = time.perf_counter()
@@ -228,7 +228,7 @@ def check_first_run(bundle: Path, screenshot: Path | None) -> None:
             if screenshot is not None:
                 check_gui(deployment, port, screenshot)
             backend = BackendProcess(
-                [str(deployment / "agent-bot.exe"), "--desktop-child"], Path(temporary),
+                [str(deployment / "taobot-cli.exe"), "--desktop-child"], Path(temporary),
                 deployment / "logs" / "first-run-check.log",
                 desktop_handshake=True,
             )

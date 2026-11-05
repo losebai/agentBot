@@ -1,5 +1,5 @@
 import { Alert, Button } from 'antd';
-import { CheckOutlined, DownOutlined, PlusOutlined, ReloadOutlined, UserOutlined } from '@ant-design/icons';
+import { CheckOutlined, DeleteOutlined, DownOutlined, PlusOutlined, ReloadOutlined, UserOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { AgentApi } from '../agent-api';
@@ -98,7 +98,7 @@ export function Agents({ token, active = true }: { token: string; active?: boole
   const alive = useRef(true);
   const wasActive = useRef(active);
   const errorRef = useRef<HTMLDivElement>(null);
-  const portraits = useCharacterPortraits();
+  const portraits = useCharacterPortraits(api, items);
 
   /** 刷新只替换目录；已经编辑的草稿仍绑定原快照，不能绕过乐观锁覆盖外部修改。 */
   const load = useCallback(async () => {
@@ -192,14 +192,16 @@ export function Agents({ token, active = true }: { token: string; active?: boole
     pending.current?.abort(); setLoading(false);
     setBusy(true); setError(''); setNotice('');
     try {
-      const changes = original ? dirtyFields(editableAgent(original), draft) : draft;
+      const portrait = await portraits.upload(key);
+      const changes = { ...(original ? dirtyFields(editableAgent(original), draft) : draft),
+        ...(portrait ? { portrait } : {}) };
       if (original && !Object.keys(changes).length) {
         setNotice('没有需要保存的修改。');
         return;
       }
       const saved = original
         ? await api.updateAgent(original.id, original.revision, changes)
-        : await api.createAgent(draft);
+        : await api.createAgent(changes as AgentDraft);
       if (!alive.current) return;
       setItems(previous => previous.some(agent => agent.id === saved.id)
         ? previous.map(agent => agent.id === saved.id ? { ...saved, is_current: agent.is_current && saved.enabled } : agent) : [...previous, saved]);
@@ -223,6 +225,7 @@ export function Agents({ token, active = true }: { token: string; active?: boole
   /** 撤销仅丢弃当前身份的草稿；取消新建后回到已有 Agent。 */
   function discard() {
     if (!selected) return;
+    portraits.reset(selected);
     setDrafts(previous => { const next = { ...previous }; delete next[selected]; return next; });
     if (isCreating) setSelected(items[0] ? String(items[0].id) : null);
     setError(''); setNotice(''); setConfirmDelete(false); setRefresh(value => value + 1);
@@ -255,8 +258,16 @@ export function Agents({ token, active = true }: { token: string; active?: boole
     <div className="page-heading"><div><p className="eyebrow">CHARACTER STUDIO</p>
       <h1>角色和人格</h1><p>赋予每个角色独特的形象、职责与表达方式。</p></div>
       <div className="heading-actions"><Button aria-label="新增 Agent" type="primary" icon={<PlusOutlined />} disabled={busy || loading} onClick={create}>新增 Agent</Button>
+        <Button aria-label="删除 Agent" danger icon={<DeleteOutlined aria-hidden="true" />}
+          disabled={busy || !original || original.enabled || Boolean(draft?.enabled)}
+          onClick={() => setConfirmDelete(true)}>删除 Agent</Button>
         <Button aria-label="刷新" icon={<ReloadOutlined />} disabled={busy} loading={loading} onClick={() => void load()}>刷新</Button></div>
     </div>
+        {confirmDelete && original && <div className="agent-delete-confirm" role="group" aria-label="删除确认">
+          <p>确定删除“{original.name}”？此操作也会丢弃当前 Agent 的未保存修改。</p>
+          <Button danger disabled={busy} onClick={() => void remove()}>确认删除</Button>
+          <Button disabled={busy} onClick={() => setConfirmDelete(false)}>取消删除</Button>
+        </div>}
     <div className="agent-gallery-heading"><h2>我的角色 <span>{total}</span></h2><span>选择一张角色卡片开始编辑</span></div>
     <div className="agent-switcher agent-card-grid" role="group" aria-label="切换 Agent">
       {/* 默认模板紧随运行角色；目录本身由后端在分页前完成运行角色置顶与时间排序。 */}
@@ -313,7 +324,14 @@ export function Agents({ token, active = true }: { token: string; active?: boole
     {draft && <form className="catalog-form panel agent-editor" aria-label="Agent 配置"
       onSubmit={event => { event.preventDefault(); void save(); }}>
       <fieldset className="agent-editor-fields" disabled={busy}>
-        <div className="agent-editor-section-title"><span>01</span><div><h2>基本信息</h2><p>让角色拥有清晰的身份。</p></div></div>
+        {/* 保存留在表单内维持原生校验，标题操作区随窄屏换行。 */}
+        <div className="agent-basics-header">
+          <div className="agent-editor-section-title"><span>01</span><div><h2>基本信息</h2><p>让角色拥有清晰的身份。</p></div></div>
+          <div className="heading-actions agent-basics-actions">
+            <Button disabled={busy} onClick={discard}>{isCreating ? '取消新建' : '撤销修改'}</Button>
+            <Button type="primary" htmlType="submit" loading={busy} disabled={busy || Boolean(promptError(draft)) || Boolean(selected && portraits.preparing[selected])}>保存 Agent</Button>
+          </div>
+        </div>
         <div className="agent-basics">
           <label>名称<input required maxLength={200} value={draft.name}
             onChange={event => setDraft(previous => ({ ...previous, name: event.target.value }))}/></label>
@@ -324,7 +342,7 @@ export function Agents({ token, active = true }: { token: string; active?: boole
         </div>
         <label>说明<input maxLength={2000} value={draft.description}
           onChange={event => setDraft(previous => ({ ...previous, description: event.target.value }))}/></label>
-        {/* 折叠只隐藏内容，保留草稿与子组件状态；保存按钮保持可见。 */}
+        {/* 折叠只隐藏内容，保留草稿与子组件状态；基本信息中的保存按钮保持可见。 */}
         <div className="agent-editor-section-title agent-collapsible-title"><span>02</span><div>
           <h2><button type="button" aria-expanded={promptExpanded} aria-controls="agent-personality-fields"
             onClick={() => setPromptExpanded(value => !value)}>角色与人格<DownOutlined aria-hidden="true" /></button></h2>
@@ -332,17 +350,6 @@ export function Agents({ token, active = true }: { token: string; active?: boole
         <div id="agent-personality-fields" className="agent-collapsible-body" hidden={!promptExpanded}>
           <AgentPromptFields draft={draft} set={setDraft}/>
         </div>
-        <div className="heading-actions agent-save-actions">
-          <Button type="primary" htmlType="submit" loading={busy} disabled={busy || Boolean(promptError(draft))}>保存 Agent</Button>
-          <Button disabled={busy} onClick={discard}>{isCreating ? '取消新建' : '撤销修改'}</Button>
-          {original && <Button danger disabled={busy || original.enabled || draft.enabled}
-            onClick={() => setConfirmDelete(true)}>删除 Agent</Button>}
-        </div>
-        {confirmDelete && original && <div className="agent-delete-confirm" role="group" aria-label="删除确认">
-          <p>确定删除“{original.name}”？此操作也会丢弃当前 Agent 的未保存修改。</p>
-          <Button danger disabled={busy} onClick={() => void remove()}>确认删除</Button>
-          <Button disabled={busy} onClick={() => setConfirmDelete(false)}>取消删除</Button>
-        </div>}
         <div className="agent-editor-section-title agent-collapsible-title"><span>03</span><div>
           <h2><button type="button" aria-expanded={abilitiesExpanded} aria-controls="agent-ability-fields"
             onClick={() => setAbilitiesExpanded(value => !value)}>模型与能力<DownOutlined aria-hidden="true" /></button></h2>

@@ -81,7 +81,8 @@ class AiJobPoller:
                             userId=result.sender_id,
                             prompt=result.prompt,
                             aiJobId=result.id,
-                            autonomyProfileId=result.autonomy_profile_id,
+                            # 兼容未携带持续身份字段的既有任务结果，普通 Job 无需此关联。
+                            autonomyProfileId=getattr(result, "autonomy_profile_id", None),
                             aiJobReply=PersistedGeneratedReply(
                                 text=result.result, requestId=request_id
                             ),

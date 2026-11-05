@@ -16,6 +16,7 @@ class CustomBuildHook(BuildHookInterface):
         for filename in ('agent_bot_init.sql', 'agent_bot_init.sqlite.sql',
                          'UPGRADE-0.6.3.md',
                          'persistent-agent.sql', 'persistent-agent.sqlite.sql',
+                         'agent-portrait.sql', 'agent-portrait.sqlite.sql',
                          'call-record-classification.sql', 'call-record-classification.sqlite.sql',
                          'job-recovery.sql', 'job-recovery.sqlite.sql',
                          'stickers-init.sql', 'stickers-init.sqlite.sql',

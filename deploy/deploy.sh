@@ -43,4 +43,4 @@ if [[ -n "$previous" && "$previous" != "releases/$release_id" ]]; then
 fi
 ln -sfn "releases/$release_id" "$base/current.next"
 mv -Tf "$base/current.next" "$base/current"
-printf 'agentBot 已部署发布 %s\n' "$release_id"
+printf 'taobot 已部署发布 %s\n' "$release_id"

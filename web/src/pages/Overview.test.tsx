@@ -5,7 +5,7 @@ import { Overview } from './Overview';
 
 /** 用离线接口观察真实指标与刷新，不连接服务或模型。 */
 function status(statistics: object | null) {
-  return { service: 'agentBot', ready: true, bot_count: 0, database_revision: 4,
+  return { service: 'taobot', ready: true, bot_count: 0, database_revision: 4,
     applied_revision: 4, restart_required_fields: [], statistics };
 }
 

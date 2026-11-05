@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, create_model, field_validator, model_validator
 
 from agent_bot.agent.persona import MAX_SYSTEM_PROMPT_LENGTH, compose_system_prompt
+from agent_bot.agent.portraits import PortraitUpload
 from agent_bot.ai.contracts import AiModel, ResolvedModel, TokenUsage
 from agent_bot.credential_values import CredentialSnapshot, CredentialValue
 from agent_bot.media.contracts import MediaAssetView, ModelImage
@@ -60,6 +61,7 @@ class AgentCreate(CodedItem):
     max_steps: int = Field(default=3, ge=1, deprecated=True,
                            description="已弃用且执行时忽略，工具调用预算统一使用全局配置")
     options: LlmRequestOptions = Field(default_factory=LlmRequestOptions)
+    portrait: PortraitUpload | None = Field(default=None, exclude=True, repr=False)
 
     @model_validator(mode="after")
     def validate_system_prompt_length(self):
@@ -148,6 +150,7 @@ class AgentView(AgentCreate, VersionedItem):
     """角色目录携带只读使用状态，不混入创建字段或数据库列。"""
 
     is_current: bool = False
+    portrait_sha256: str | None = None
 
 
 class SkillView(SkillCreate, VersionedItem):

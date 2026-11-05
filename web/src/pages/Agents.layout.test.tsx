@@ -77,3 +77,36 @@ it('Agent 管理使用页码切换目录，不显示加载更多按钮', async (
   expect(screen.getByLabelText('角色')).toHaveValue('次页助手');
   expect(screen.getByRole('button', {name: '次页助手'})).toHaveAttribute('aria-pressed', 'true');
 });
+
+
+/** 使用真实页面提交图片，并通过再次挂载验证数据库接口的读取路径。 */
+it('人物图随保存请求提交，重新打开角色页读取已保存图', async () => {
+  vi.stubGlobal('Image', class { src = ''; async decode() {} });
+  let sequence = 0;
+  vi.stubGlobal('URL', { createObjectURL: vi.fn(() => `blob:portrait-${++sequence}`), revokeObjectURL: vi.fn() });
+  let agent = { id: 1, revision: 1, name: '人物', code: 'portrait', description: '',
+    enabled: false, model_id: 1, system_prompt: '原角色', personality_prompt: '',
+    skill_ids: [], tools: [], mcp_ids: [], options: {}, portrait_sha256: null as string | null };
+  const patches: { portrait?: { mime_type: string; data: string } }[] = [];
+  const fetcher = vi.fn(async (url, options) => {
+    if (options?.method === 'PATCH') {
+      patches.push(JSON.parse(String(options.body)));
+      agent = { ...agent, revision: 2, portrait_sha256: 'saved-hash' };
+      return Response.json(agent);
+    }
+    if (String(url).endsWith('/agents/1/portrait')) return new Response('picture', { headers: { 'Content-Type': 'image/png' } });
+    return Response.json({ items: String(url).includes('/agents?') ? [agent] : [], next_cursor: null, total: 1 });
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const first = render(<Agents token="offline" />);
+  await screen.findByLabelText('角色');
+  fireEvent.change(screen.getByLabelText('选择人物形象'), { target: { files: [new File(['picture'], 'portrait.png', { type: 'image/png' })] } });
+  await waitFor(() => expect(screen.getByRole('img', { name: '人物的人物形象' })).toBeVisible());
+  fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
+  await screen.findByText('Agent 已保存。');
+  expect(patches[0].portrait).toEqual({ mime_type: 'image/png', data: btoa('picture') });
+  first.unmount();
+  render(<Agents token="offline" />);
+  await waitFor(() => expect(screen.getByRole('img', { name: '人物的人物形象' })).toBeVisible());
+  expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/agents/1/portrait'))).toBe(true);
+});

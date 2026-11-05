@@ -369,14 +369,14 @@ def status_page(message: str) -> str:
     return (
         '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<title>AgentBot</title><style>'
+        '<title>taobot</title><style>'
         '*{box-sizing:border-box}body{font:16px system-ui;margin:0;color:#303030;'
         'background:#fafafa;min-height:100vh;display:grid;place-items:center;padding:32px}'
         'main{display:flex;flex-direction:column;align-items:center;text-align:center;'
         'max-width:560px;width:100%;gap:20px}'
         'img{width:96px;height:96px;object-fit:contain}'
         'p{margin:0;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}</style>'
-        f'<body><main><img src="{status_icon()}" alt="AgentBot">'
+        f'<body><main><img src="{status_icon()}" alt="taobot">'
         f'<p role="status" aria-live="polite">{html.escape(message)}</p></main></body></html>'
     )
 
@@ -394,12 +394,12 @@ def main() -> int:
 
     directory = prepare_directory()
     command = (
-        [str(directory / "agent-bot.exe"), "--desktop-child"]
+        [str(directory / "taobot-cli.exe"), "--desktop-child"]
         if getattr(sys, "frozen", False)
         else [sys.executable, "-m", "agent_bot.desktop", "--desktop-child"]
     )
     window = webview.create_window(
-        "AgentBot", html=status_page("正在启动服务…"), width=1280, height=860,
+        "taobot", html=status_page("正在启动服务…"), width=1280, height=860,
         min_size=(800, 600), text_select=True,
     )
 

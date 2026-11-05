@@ -48,7 +48,7 @@ def check(bundle: Path, screenshot: Path | None) -> None:
         prepare_first_run(deployment)
         initial, changed = free_port(), free_port()
         save_port(deployment, initial)
-        command = [str(deployment / "AgentBot.exe")]
+        command = [str(deployment / "taobot.exe")]
         process = subprocess.Popen(command, cwd=deployment)
         window = None
 

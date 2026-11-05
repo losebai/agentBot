@@ -34,7 +34,7 @@ function setup(running = true) {
     if (path.includes('/bilibili/login/qr/')) return Response.json({ status: 'waiting' });
     if (path.endsWith('/bots')) return Response.json([]);
     if (path.includes('/queues/')) return Response.json({ available: false, text: 0, images: 0, total: 0 });
-    return Response.json({ service: 'agentBot', ready: true, bot_count: 0,
+    return Response.json({ service: 'taobot', ready: true, bot_count: 0,
       database_revision: 1, applied_revision: 1, restart_required_fields: [] });
   });
   vi.stubGlobal('fetch', fetcher);

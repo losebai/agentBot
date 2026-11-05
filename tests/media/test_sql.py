@@ -150,6 +150,11 @@ def test_unified_initialization_preserves_owned_schema_and_orders_dependencies()
         "agent_bot_bilibili_account", "agent_bot_bilibili_operation",
         "agent_bot_schema_version", "agent_bot_schema_migration",
         "chat_material_category", "chat_material_tag", "agent_bot_sticker",
+        "agent_bot_job_attempt", "agent_bot_agent_portrait",
+        "agent_bot_evolution_config", "agent_bot_evolution_profile", "agent_bot_evolution_event",
+        "agent_bot_evolution_scope", "agent_bot_evolution_state", "agent_bot_evolution_record",
+        "agent_bot_autonomy_profile", "agent_bot_autonomy_task", "agent_bot_autonomy_episode",
+        "agent_bot_autonomy_proposal", "agent_bot_autonomy_audit",
     }
     # 插件既有库增量和新库完整脚本必须得到相同字段、默认值及约束。
     bilibili = definitions((ROOT / 'sql/bilibili-init.sql').read_text('utf-8'))

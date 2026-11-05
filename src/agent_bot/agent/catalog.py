@@ -39,6 +39,9 @@ class AgentCatalog(AiDatabase):
                         (id,),
                     )
                 )
+            portrait = query(connection, "SELECT sha256 FROM agent_bot_agent_portrait "
+                             "WHERE agent_id=%s", (id,), one=True)
+            values["portrait_sha256"] = portrait["sha256"] if portrait else None
         return VIEW[kind].model_validate(row_values(values, VIEW[kind]))
 
     def _relations(self, connection, id, values):
@@ -54,6 +57,18 @@ class AgentCatalog(AiDatabase):
                         f"(agent_id,{related}_id) VALUES (%s,%s)",
                         (id, related_id),
                     )
+
+    def _save_portrait(self, connection, id, upload):
+        """图片替换与角色写入使用同一事务，失败回滚并保留旧图。"""
+        raw, digest = upload.decode() if upload else (None, None)
+        with connection.cursor() as cursor:
+            cursor.execute("DELETE FROM agent_bot_agent_portrait WHERE agent_id=%s", (id,))
+            if upload:
+                cursor.execute("INSERT INTO agent_bot_agent_portrait "
+                               "(agent_id,mime_type,image_data,sha256,updated_at) "
+                               "VALUES (%s,%s,%s,%s,%s)",
+                               (id, upload.mime_type, raw, digest,
+                                datetime.now(timezone.utc).replace(tzinfo=None)))
 
     async def _create(self, kind, body):
         """保存目录并校验所有模型引用，图片专用路由需要显式识图能力。"""
@@ -77,14 +92,17 @@ class AgentCatalog(AiDatabase):
                 id = cursor.lastrowid
             if kind == "agent":
                 self._relations(connection, id, relations)
+                if body.portrait:
+                    self._save_portrait(connection, id, body.portrait)
             return self._get(connection, kind, id)
 
         return await self.run(write, write=True)
 
     async def _update(self, kind, id, patch):
         """合并省略及清空字段后一次校验，版本冲突不产生部分路由修改。"""
-        changes = patch.model_dump(exclude_unset=True, exclude={"expected_revision"})
-        if not changes:
+        changes = patch.model_dump(exclude_unset=True, exclude={"expected_revision", "portrait"})
+        portrait_changed = kind == "agent" and "portrait" in patch.model_fields_set
+        if not changes and not portrait_changed:
             raise AgentError("AGENT_EMPTY_PATCH", status_code=422)
 
         def write(connection):
@@ -116,9 +134,23 @@ class AgentCatalog(AiDatabase):
                     + ",revision=revision+1 WHERE id=%s AND revision=%s",
                     (*values.values(), id, patch.expected_revision),
                 )
+            if portrait_changed:
+                self._save_portrait(connection, id, patch.portrait)
             return self._get(connection, kind, id)
 
         return await self.run(write, write=True)
+
+    async def portrait_content(self, id):
+        """按已认证角色身份读取图片，图片字节不进入目录、提示词或执行快照。"""
+        def read(connection):
+            """角色存在性和图片在同一事务读取。"""
+            self._get(connection, "agent", id)
+            row = query(connection, "SELECT mime_type,image_data,sha256 "
+                        "FROM agent_bot_agent_portrait WHERE agent_id=%s", (id,), one=True)
+            if row is None:
+                raise AgentError("AGENT_CONFIG_NOT_FOUND", status_code=404)
+            return row
+        return await self.run(read)
 
     def _validate_models(self, connection, values: dict) -> None:
         """各角色可复用模型；引用和图片能力仍须有效，启用状态在执行时检查。"""
@@ -416,7 +448,8 @@ class AgentCatalog(AiDatabase):
             def check(connection):
                 """检查必需结构；附件和统一记录请求快照不要求新增历史表列。"""
                 for kind, view in VIEW.items():
-                    fields = set(view.model_fields) - {*RELATIONS} - {"is_current"}
+                    fields = (set(view.model_fields) - {*RELATIONS}
+                              - {"is_current", "portrait", "portrait_sha256"})
                     query(
                         connection,
                         f"SELECT {sql_columns(sorted(fields))} FROM agent_bot_{kind} LIMIT 0",

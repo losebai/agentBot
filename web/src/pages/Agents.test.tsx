@@ -98,6 +98,7 @@ it('422 中文保存错误移入视口并保留模型与提示词草稿供重试
   expect(screen.getByLabelText('角色')).toHaveValue('保留用户编写的提示词');
   fireEvent.click(screen.getByRole('button', { name: '保存 Agent' }));
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  await waitFor(() => expect(patches).toHaveLength(2));
   expect(patches).toEqual([
     { expected_revision: 1, model_id: 2, vision_model_id: 2, fallback_model_id: 2,
       system_prompt: '保留用户编写的提示词' },

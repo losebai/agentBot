@@ -120,6 +120,6 @@ def show_error(window: Any, message: str) -> None:
 
     def show() -> None:
         """通过所属 UI 线程弹窗，避免跨线程操作 WinForms。"""
-        MessageBox.Show(window.native, message, "AgentBot 服务")
+        MessageBox.Show(window.native, message, "taobot 服务")
 
     window.native.Invoke(Func[Object](show))

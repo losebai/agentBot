@@ -17,7 +17,7 @@ def test_frozen_working_directory_uses_executable(monkeypatch, tmp_path):
     install.mkdir()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "executable", str(install / "AgentBot.exe"))
+    monkeypatch.setattr(sys, "executable", str(install / "taobot.exe"))
     assert prepare_directory() == install
     assert Path.cwd() == install
 

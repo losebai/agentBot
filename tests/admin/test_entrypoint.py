@@ -11,7 +11,7 @@ def test_help_does_not_load_database_or_start_bot(capsys):
     from agent_bot.__main__ import main
 
     assert main(["--help"]) == 0
-    assert "agent-bot" in capsys.readouterr().out
+    assert "taobot" in capsys.readouterr().out
 
 
 def test_settings_command_uses_existing_offline_cli(monkeypatch):
@@ -51,7 +51,7 @@ def test_non_fastapi_driver_is_rejected(admin_runtime):
         create_application(VersionedSettings(config, 1), AdminConfig(token="x" * 48))
 
 
-@pytest.mark.parametrize("entrypoint", ["agent-bot", "chat"])
+@pytest.mark.parametrize("entrypoint", ["taobot", "chat"])
 def test_forward_ws_requires_client_driver_before_adapter_registration(
     monkeypatch, admin_runtime, admin_store, entrypoint,
 ):

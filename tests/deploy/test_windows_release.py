@@ -34,7 +34,7 @@ def staged(tmp_path, release):
     (root / 'old.exe').write_bytes(b'old')
     stage = root / '.release-test'
     stage.mkdir()
-    name = 'AgentBot-0.5.5-windows-x64-Setup.exe'
+    name = 'taobot-0.5.5-windows-x64-Setup.exe'
     (stage / name).write_bytes(b'new')
     digest = release.sha256(stage / name)
     (stage / 'latest.json').write_text(json.dumps({
@@ -89,8 +89,8 @@ def test_prepare_includes_ignored_sql_and_migration_tools_only(tmp_path, release
     (root / 'sql/private.db').write_bytes(b'private')
     (root / '.env').write_text('SECRET=private')
     (root / 'tools/migrate_model_identity.py').write_text('# fixture')
-    (root / 'dist/release-0.5.5/agent_bot-0.5.5-py3-none-any.whl').write_bytes(b'wheel')
-    name = 'AgentBot-0.5.5-windows-x64-Setup.exe'
+    (root / 'dist/release-0.5.5/taobot-0.5.5-py3-none-any.whl').write_bytes(b'wheel')
+    name = 'taobot-0.5.5-windows-x64-Setup.exe'
     (stage / name).write_bytes(b'installer')
     (stage / 'latest.json').write_text(json.dumps({
         'version': '0.5.5', 'filename': name, 'sha256': release.sha256(stage / name),
@@ -98,7 +98,7 @@ def test_prepare_includes_ignored_sql_and_migration_tools_only(tmp_path, release
     for script in ['install.ps1', 'install.bat']:
         (stage / script).write_text('fixture')
     release.prepare(root, stage, '0.5.5')
-    with ZipFile(stage / 'AgentBot-0.5.5-sql.zip') as archive:
+    with ZipFile(stage / 'taobot-0.5.5-sql.zip') as archive:
         assert 'sql/2026-10-20-model-identity.sql' in archive.namelist()
         assert 'tools/migrate_model_identity.py' in archive.namelist()
         assert archive.read('sql/agent_bot_init.sqlite.sql') == b'-- fixture'
@@ -135,8 +135,8 @@ def test_public_download_verification_checks_actual_bytes(tmp_path, release, cor
 def test_set_version_preserves_dependencies_and_history(tmp_path, release, valid):
     """定向改项目与固定断言；非法版本不写文件，依赖和历史说明保持原样。"""
     fixtures = {
-        'pyproject.toml': '[project]\nname = "agent-bot"\nversion = "0.5.5"\n',
-        'uv.lock': '[[package]]\nname = "agent-bot"\nversion = "0.5.5"\n'
+        'pyproject.toml': '[project]\nname = "taobot"\nversion = "0.5.5"\n',
+        'uv.lock': '[[package]]\nname = "taobot"\nversion = "0.5.5"\n'
                    '[[package]]\nname = "other"\nversion = "0.5.5"\n',
         'src/agent_bot/__init__.py': '__version__ = "0.5.5"\n',
         'web/package.json': '{"version":"0.5.5"}',

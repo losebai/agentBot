@@ -77,7 +77,7 @@ async def serve(*, once: bool = False, inspect_id: str | None = None) -> None:
 
 def run(argv: Sequence[str]) -> int:
     """提供任务或纯记忆维护模式，单轮检查与本机审计均不开放网页进程控制。"""
-    parser = argparse.ArgumentParser(prog="agent-bot worker")
+    parser = argparse.ArgumentParser(prog="taobot worker")
     kind = parser.add_mutually_exclusive_group()
     kind.add_argument("--memory-only", action="store_true", help="仅整理记忆和生成每日复盘")
     kind.add_argument(

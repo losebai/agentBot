@@ -11,7 +11,7 @@ from agent_bot.autonomy.evaluation import run_fixed_suite
 
 def run(argv: Sequence[str]) -> int:
     """显式serve启动独立宿主；evaluate仅使用临时测试库且失败返回非零。"""
-    parser = argparse.ArgumentParser(prog="agent-bot autonomy")
+    parser = argparse.ArgumentParser(prog="taobot autonomy")
     parser.add_argument("command", choices=["evaluate", "serve"])
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8081, choices=range(1, 65536), metavar='PORT')

@@ -1,6 +1,11 @@
-# agentBot
+# taobot
 
 基于 Python、NoneBot 和 OneBot V11 的机器人服务，提供 React 浏览器管理界面。支持普通对话、多轮 Agent、Skill、MCP、图片理解、图片与对话音频生成，以及 ComfyUI 和 GPT-SoVITS 工具。
+
+项目现名为 `taobot`，源码安装后使用 `uv run taobot` 启动。内部 Python 包名
+`agent_bot`、既有环境变量、数据库表名和数据路径继续沿用，升级无需迁移数据。
+Windows 桌面入口为 `taobot.exe`，后台命令入口为 `taobot-cli.exe`；安装器沿用原 AppId，
+已有安装继续在原目录升级。下载站地址与历史版本文件名保持原值。
 
 管理界面集中提供机器人配置、供应商和模型管理、Agent 配置、远程服务、对话测试及调用记录。默认使用 SQLite，MySQL、Redis 为可选后端；Windows 桌面版支持一键安装。
 
@@ -67,13 +72,13 @@
 ### 独立进程运行
 
 每个内置插件均可通过独立命令启动为一个服务进程，提供自己的管理页面、端口和运行资源。
-从项目根目录执行（安装包部署可直接使用 `agent-bot`）：
+从项目根目录执行（安装包部署可直接使用 `taobot`）：
 
 ```powershell
-uv run agent-bot plugin list
-uv run agent-bot plugin run qqbot --workdir runtime/qqbot --port 8081
-uv run agent-bot plugin run comfy --workdir runtime/comfy --port 8082
-uv run agent-bot plugin run bilibili --workdir runtime/bilibili --port 8083
+uv run taobot plugin list
+uv run taobot plugin run qqbot --workdir runtime/qqbot --port 8081
+uv run taobot plugin run comfy --workdir runtime/comfy --port 8082
+uv run taobot plugin run bilibili --workdir runtime/bilibili --port 8083
 ```
 
 分别在终端运行上述命令，可同时启动多个进程。`--workdir` 必须明确指定，静态配置 `.env`、
@@ -178,17 +183,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1
 ```
 
 脚本读取项目版本，完成测试、安装器与 SQL 包构建、上传校验及公网验证。
-也可加 `-Version 0.6.2` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.6.2.md`。
+也可加 `-Version 0.6.3` 自动同步项目版本及固定版本断言；先准备 `sql/UPGRADE-0.6.3.md`。
 参数与环境要求见 [发布说明](deploy/README.md#一键构建并发布)。
 
-当前 Windows 发布版本：**0.6.2**。后续安装与更新以下载站的
+当前 Windows 发布版本：**0.6.3**。后续安装与更新以下载站的
 [`latest.json`](https://public.loserbai.cn/agentbot/latest.json) 为准。
 
-0.6.2 更新：NapCat 改为独立 Node 运行方式，首次登录后记住账号，后续启动尝试快速登录。
-从已完成数据库升级的 0.6.1 更新无需新增 SQL 迁移；详见 [0.6.2 升级说明](sql/UPGRADE-0.6.2.md)。
-[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.6.2-sql.zip) 同时提供完整初始化与历史适用增量。
+0.6.3 更新：发布名称统一为 taobot，新增四阶段持续智能体与角色人物图持久保存。
+[SQL 下载包](https://public.loserbai.cn/agentbot/taobot-0.6.3-sql.zip) 同时提供 MySQL、SQLite 完整初始化与适用增量。
 
-当前源码待发布版本为 **0.6.3**，包含四阶段持续智能体及 `persistent-agent-v1`
+本版包含 `persistent-agent-v1` 和 `agent-portrait-v1`
 自动迁移。更新后首次启动必须迁移、核验成功才会提供服务，失败返回非零并停止启动；
 安装器完成文件替换不代表数据库已升级。详见 [0.6.3 升级说明](sql/UPGRADE-0.6.3.md)。
 
@@ -207,14 +211,14 @@ curl -fsSL -o "%TEMP%\agentbot-install.bat" https://public.loserbai.cn/agentbot/
 ```
 
 脚本下载当前 Windows 安装器并校验 SHA256，默认安装到
-`%LOCALAPPDATA%\Programs\AgentBot`，无需管理员权限。升级保留已有配置、数据库与媒体。
+`%LOCALAPPDATA%\Programs\taobot`，无需管理员权限。升级保留已有配置、数据库与媒体。
 
 再次执行同一命令即可检查更新：未安装时安装；已有旧版时显示本机和服务器版本，
 并在原安装目录升级；版本相同则提示已是最新版并跳过下载，本机版本更高时保留现有版本。
 版本号使用 `主版本.次版本.修订号`，按数字比较，例如 `0.5.10` 高于 `0.5.9`。
 本机版本读取安装器登记的信息，安装成功后由安装器更新；便携版需手动更新。
 
-安装完成后，从桌面或开始菜单打开 `AgentBot`。首次启动自动生成配置和本地 SQLite 数据库，
+安装完成后，从桌面或开始菜单打开 `taobot`。首次启动自动生成配置和本地 SQLite 数据库，
 进入管理页面后添加模型供应商和机器人接入地址。桌面运行需要 WebView2 Runtime；
 运行要求、配置和排查方法见 [Windows 桌面版说明](WINDOWS_README.md)。
 
@@ -240,7 +244,7 @@ tools/              开发安装映射和包检查工具
 docs/               设计文档
 ```
 
-Python 源码平铺在 `src/`，通过构建配置和开发安装钩子映射为 `agent_bot` 包。代码导入使用 `agent_bot.*`，NoneBot 插件路径为 `agent_bot.plugin`。请通过 `uv sync` 安装项目，再使用 `agent-bot` 或 `python -m agent_bot` 入口。
+Python 源码位于 `src/agent_bot/`，发布项目名为 `taobot`，内部导入包名保留为 `agent_bot`。代码导入使用 `agent_bot.*`，NoneBot 插件路径为 `agent_bot.plugin`。请通过 `uv sync` 安装项目，再使用 `taobot` 或 `python -m agent_bot` 入口。
 
 ## 源码运行与构建环境
 
@@ -263,12 +267,12 @@ Python 源码平铺在 `src/`，通过构建配置和开发安装钩子映射为
 uv sync --extra dev --python 3.12
 npm --prefix web ci
 npm --prefix web run build
-uv run agent-bot --help
+uv run taobot --help
 ```
 
 前端构建产物写入 `src/static/`，由后端提供。不要手动编辑生成文件。
 
-全新目录无需任何配置，直接执行 `uv run agent-bot`（桌面包双击 `AgentBot.exe`）。
+全新目录无需任何配置，直接执行 `uv run taobot`（桌面包双击 `taobot.exe`）。
 程序自动生成 `.env`、两个独立随机密钥、SQLite 业务库、默认运行配置与本地持久队列；
 OneBot Token 和会话密钥均写入 `.env`。
 默认仅监听本机且免登录，进入管理页面后添加模型供应商和机器人接入地址即可。
@@ -310,7 +314,7 @@ uv run python -c "import secrets; print(secrets.token_urlsafe(48))"
 配置后执行：
 
 ```powershell
-uv run agent-bot database init
+uv run taobot database init
 ```
 
 命令按所选后端创建业务结构，覆盖配置、群成员、记忆、工作流、模型、Agent、Skill、MCP、媒体、Job 和记录。SQLite 会在首次自动配置或明确初始化时创建文件及父目录，并启用外键和 WAL；已有配置的启动只打开已有业务库。MySQL 需先创建数据库，初始化账户需要建表权限。
@@ -326,8 +330,8 @@ uv run agent-bot database init
 新安装写入默认运行配置，再查看有效配置：
 
 ```powershell
-uv run agent-bot settings init
-uv run agent-bot settings list
+uv run taobot settings init
+uv run taobot settings list
 ```
 
 默认访问策略不允许所有会话；启动后在“插件管理 → QQ 配置”设置允许的群和用户，再登记模型供应商及模型。初始化命令不读取动态环境值；若需要导入已有旧 `.env` 的业务参数，可用 `settings import-env` 代替 `settings init`。两者只允许首次初始化，重复执行拒绝覆盖。配置表只保存动态字段，静态字段始终保留在启动文件中。
@@ -335,7 +339,7 @@ uv run agent-bot settings list
 已有混合配置表升级前先停止服务，使用现有数据库连接配置导出历史静态行：
 
 ```powershell
-uv run agent-bot settings export-static .env.static-export
+uv run taobot settings export-static .env.static-export
 ```
 
 导出包含 OneBot Token、会话密钥等敏感值；终端只报告路径，目标文件必须不存在。备份当前 `.env` 后，把导出的静态字段合并到启动文件，保留数据库、Redis、管理员凭据和媒体目录；确认 `CHAT_DB_BACKEND=mysql` 后启动。不要在合并前运行配置保存：新版本读取时忽略历史静态行，下一次动态保存会清理这些行。导出文件合并后按部署权限管理，勿提交。
@@ -347,7 +351,7 @@ uv run agent-bot settings export-static .env.static-export
 ### 5. 启动服务并连接 QQ
 
 ```powershell
-uv run agent-bot
+uv run taobot
 ```
 
 也可使用 `uv run python -m agent_bot`。该入口同时启动机器人、管理 API 和浏览器界面。
@@ -360,7 +364,7 @@ OneBot Token 在网页“插件管理 → QQ 配置”中不回显；存在启�
 
 `CHAT_SESSION_SECRET` 用于生成会话 ID 与标签记忆身份摘要。修改并重启后会使用新的会话与身份命名空间；旧历史和记忆数据保留，但不再匹配原会话身份。供应商和 MCP 密钥不受影响。修改数据库类型或连接也只会在重启后选择新后端，不迁移已有数据。
 
-使用反向 WebSocket 时，在 NapCat 配置地址 `ws://127.0.0.1:8080/onebot/v11/ws`，跨机器连接时改用 agentBot 所在主机地址。不要同时运行两个连接同一机器人和队列前缀的实例。
+使用反向 WebSocket 时，在 NapCat 配置地址 `ws://127.0.0.1:8080/onebot/v11/ws`，跨机器连接时改用 taobot 所在主机地址。不要同时运行两个连接同一机器人和队列前缀的实例。
 
 ## 管理界面与运行配置
 
@@ -380,11 +384,11 @@ QQ 支持主动发送文件工具 `file_send`：在 Agent 的允许工具中勾�
 
 会话记录分为“调用记录”、“系统调用”和“媒体运行记录”。系统调用集中显示自动发言决策及机器人显式指令（如总结、查询）触发的模型调用，支持按“自动发言决策”或“指令调用”筛选；普通调用页排除这些记录。所有详情在弹窗内查看。Laya 决策只归档脱敏结果，不保存群聊状态正文；LLM 决策沿用普通调用归档，可在系统调用详情查看本次提示词、群聊输入、输出及实际模型用量，决策记录不进入聊天历史。
 
-已有独立决策记录可手动执行 `uv run agent-bot records migrate` 回填到统一记录表（需已安装当前数据库结构）。命令按来源去重，重复执行不覆盖已有记录；普通启动不会自动回填。历史指令仅在已有请求标识或指令输入能明确识别时归入系统调用。
+已有独立决策记录可手动执行 `uv run taobot records migrate` 回填到统一记录表（需已安装当前数据库结构）。命令按来源去重，重复执行不覆盖已有记录；普通启动不会自动回填。历史指令仅在已有请求标识或指令输入能明确识别时归入系统调用。
 
-统一调用记录的 `create_time` 使用北京时间（UTC+8），与旧系统历史记录保持一致；普通调用的原始 UTC 微秒保存在同表 `created_at_utc`，Agent 执行及自动发言决策表的 `created_at` 继续使用 UTC。`uv run agent-bot records repair-times` 按仍存在的源表校正统一归档时间，不会猜测已退出来源的时间或重复加八小时。校正后刷新记录并回到第一页，原分页游标应丢弃。
+统一调用记录的 `create_time` 使用北京时间（UTC+8），与旧系统历史记录保持一致；普通调用的原始 UTC 微秒保存在同表 `created_at_utc`，Agent 执行及自动发言决策表的 `created_at` 继续使用 UTC。`uv run taobot records repair-times` 按仍存在的源表校正统一归档时间，不会猜测已退出来源的时间或重复加八小时。校正后刷新记录并回到第一页，原分页游标应丢弃。
 
-普通调用已停止双写 `agent_bot_ai_session`，旧普通列表和详情接口直接读取统一归档，并保留原 UTC 微秒、完整长正文、用量和失败代码。已有部署先备份，执行一次 `sql/2026-10-20-merge-ai-sessions.sql`（MySQL）或对应 `.sqlite.sql`，再运行 `uv run --no-sync agent-bot records merge-ai-sessions`。合并按原来源及执行 ID 去重，补录缺失记录；已有记录逐字段校验后只补原始 UTC 时间，不改 ID、请求快照和指令分类；冲突明确失败，重跑不重复写入。所有旧后台停用并完成新版启动、全字段及备份校验后，显式执行 `sql/2026-10-20-retire-ai-session.sql` 或对应 SQLite 脚本删除旧普通表。普通启动不回放这些历史转换或执行旧表清理，新库初始化不再创建旧普通表，其结构归档在 `sql/legacy/ai-session-v1.*`。
+普通调用已停止双写 `agent_bot_ai_session`，旧普通列表和详情接口直接读取统一归档，并保留原 UTC 微秒、完整长正文、用量和失败代码。已有部署先备份，执行一次 `sql/2026-10-20-merge-ai-sessions.sql`（MySQL）或对应 `.sqlite.sql`，再运行 `uv run --no-sync taobot records merge-ai-sessions`。合并按原来源及执行 ID 去重，补录缺失记录；已有记录逐字段校验后只补原始 UTC 时间，不改 ID、请求快照和指令分类；冲突明确失败，重跑不重复写入。所有旧后台停用并完成新版启动、全字段及备份校验后，显式执行 `sql/2026-10-20-retire-ai-session.sql` 或对应 SQLite 脚本删除旧普通表。普通启动不回放这些历史转换或执行旧表清理，新库初始化不再创建旧普通表，其结构归档在 `sql/legacy/ai-session-v1.*`。
 
 ## 配置模型与对话
 
@@ -492,8 +496,8 @@ QQ 发送遇到 WebSocket 异常断连时，按现有次数和期限限制重试
 同步工作流目录并查看已登记工作流：
 
 ```powershell
-uv run agent-bot workflows sync "D:\workflows"
-uv run agent-bot workflows list
+uv run taobot workflows sync "D:\workflows"
+uv run taobot workflows list
 ```
 
 将示例路径替换为实际工作流目录。省略 `sync` 的目录参数时，使用已加载的 `chat_local_workflow_directory`。
@@ -510,16 +514,16 @@ uv run agent-bot workflows list
 
 Job 到期使用创建时的稳定模型引用、角色和人格快照，调用普通文本模型。结果先持久保存，再由 QQ 队列投递；读取不等于消费，完整发送后才确认。正常退出释放当前执行权，硬中断在六分钟租约到期后恢复；每项任务至多执行三次，明确模型错误仍直接失败。恢复可能再次产生模型费用，供应商请求和 QQ 发送无法承诺跨外部系统恰好一次。取消执行中的任务阻止结果发布，但已产生的调用费用无法撤回。
 
-可在同一部署目录运行 `uv run agent-bot worker`，独立于机器人进程领取到期任务；
-`uv run agent-bot worker --once` 只检查并执行一项，
-`uv run agent-bot worker --inspect <任务ID>` 查看任务、投递确认和逐次执行审计。
+可在同一部署目录运行 `uv run taobot worker`，独立于机器人进程领取到期任务；
+`uv run taobot worker --once` 只检查并执行一项，
+`uv run taobot worker --inspect <任务ID>` 查看任务、投递确认和逐次执行审计。
 
 持续身份的四阶段工作台位于“Agent → 持续智能体”：版本化身份、分层记忆整理、
 有界多步骤计划、独立状态与每日固定评测共用宿主暂停、预算和审计。
 “循环对话”按身份展示来源发言、目标、计划与已保存的逐步结果，支持历史分页和
 只读自动刷新；QQ 汇报分别显示本地记录、待投递和已投递，过期情节不再显示原文。
-新增身份默认暂停。独立循环使用 `agent-bot worker --autonomy`，
-离线机制验收使用 `agent-bot autonomy evaluate`；详见[四阶段实现与运行边界](docs/persistent-agent.md)。
+新增身份默认暂停。独立循环使用 `taobot worker --autonomy`，
+离线机制验收使用 `taobot autonomy evaluate`；详见[四阶段实现与运行边界](docs/persistent-agent.md)。
 独立 worker 不监听管理端口、不连接 QQ，也不调用任务工具；消息由已连接的 QQ 服务投递。
 它可与内置执行器共存，数据库租约仲裁同一任务，旧执行器的迟到提交被拒绝。
 空闲时按 `chat_job_poll_seconds` 休眠，只检查数据库，不调用模型。
@@ -536,7 +540,7 @@ Job 到期使用创建时的稳定模型引用、角色和人格快照，调用�
 
 管理员可使用 `GET /api/v1/memory-reviews?limit=30` 查询复盘历史，使用响应的 `next_before` 作为下一页 `before` 日期。报告复用现有记忆操作回执表，无新增数据库结构；修改会话密钥后使用独立的新报告命名空间，旧回执保留。
 
-QQ 插件关闭时，可独立运行 `uv run agent-bot worker --memory-only` 继续维护长期记忆；加 `--once` 只执行一轮。该模式不装配模型客户端、不连接 QQ、不执行定时消息任务；启动后立即检查，此后每小时最多整理 500 条。每轮按 `chat_config_refresh_interval_seconds` 读取数据库中的 `chat_tagged_memory_enabled`，关闭后停止后续维护，恢复时立即检查；已开始的事务允许完成。空闲只休眠与刷新配置，不持续推理。可与 QQ 后台整理共存，事实版本与日报沿用数据库事务去重；单轮失败返回非零状态，常驻失败记录错误并休眠后重新读取配置。
+QQ 插件关闭时，可独立运行 `uv run taobot worker --memory-only` 继续维护长期记忆；加 `--once` 只执行一轮。该模式不装配模型客户端、不连接 QQ、不执行定时消息任务；启动后立即检查，此后每小时最多整理 500 条。每轮按 `chat_config_refresh_interval_seconds` 读取数据库中的 `chat_tagged_memory_enabled`，关闭后停止后续维护，恢复时立即检查；已开始的事务允许完成。空闲只休眠与刷新配置，不持续推理。可与 QQ 后台整理共存，事实版本与日报沿用数据库事务去重；单轮失败返回非零状态，常驻失败记录错误并休眠后重新读取配置。
 
 自动发言在“机器人配置 → 自动回复设置”填写机器人 QQ 号和最多 20 个目标群，开启群近期上下文，保留至少 2 个 AI 并发名额，再启用 `chat_auto_speak_enabled`。`interval` 为定时判断（最短 60 秒），`message` 为合格群消息触发。通过 `chat_auto_speak_decision_backend` 选择决策方式，默认 `laya`；配置保存到所选数据库并热刷新，不增加表结构或要求额外 SQL 升级。
 
@@ -601,14 +605,14 @@ Comfy 服务地址决定，不可在附加参数中重复设置。额外模型�
 直接安装桌面版请使用上方的 [Windows 一键安装](#windows-一键安装)。以下说明从源码构建发布包。
 
 Windows 独立桌面版可执行 `powershell -ExecutionPolicy Bypass -File tools/build_windows.ps1`。
-构建后分发整个 `dist/windows/AgentBot` 目录，双击 `AgentBot.exe` 打开内嵌管理界面；
-`agent-bot.exe` 用于初始化数据库和命令行运行。配置、数据库及媒体保持外置，
+构建后分发整个 `dist/windows/taobot` 目录，双击 `taobot.exe` 打开内嵌管理界面；
+`taobot-cli.exe` 用于初始化数据库和命令行运行。配置、数据库及媒体保持外置，
 首次配置、WebView2 要求与升级说明见 [Windows 桌面版说明](WINDOWS_README.md)。
 
 ```powershell
 npm --prefix web run build
 uv build
-uv run python tools/check_package.py dist/agent_bot-0.6.2-py3-none-any.whl
+uv run python tools/check_package.py dist/taobot-0.6.3-py3-none-any.whl
 ```
 
 wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行模块、静态界面和 SQL 资源，并排除凭据、缓存、日志及媒体文件。
@@ -617,17 +621,17 @@ wheel 文件名随 `pyproject.toml` 的版本变化。包检查会核对运行�
 
 ```powershell
 uv venv --python 3.12
-uv pip install "D:\packages\agent_bot-0.6.2-py3-none-any.whl"
-.venv\Scripts\agent-bot.exe --help
+uv pip install "D:\packages\taobot-0.6.3-py3-none-any.whl"
+.venv\Scripts\taobot.exe --help
 ```
 
 将示例 wheel 路径替换为实际文件。部署目录需提供 `.env`，完成数据库初始化后，用安装后的入口初始化配置并启动服务：
 
 ```powershell
-.venv\Scripts\agent-bot.exe database init
-.venv\Scripts\agent-bot.exe settings init
-.venv\Scripts\agent-bot.exe settings list
-.venv\Scripts\agent-bot.exe
+.venv\Scripts\taobot.exe database init
+.venv\Scripts\taobot.exe settings init
+.venv\Scripts\taobot.exe settings list
+.venv\Scripts\taobot.exe
 ```
 
 已构建的界面随 wheel 提供。
@@ -637,10 +641,10 @@ uv pip install "D:\packages\agent_bot-0.6.2-py3-none-any.whl"
 
 ### 独立Agent对话与自主循环
 
-运行 `agent-bot autonomy serve --host 127.0.0.1 --port 8081`，在浏览器打开
+运行 `taobot autonomy serve --host 127.0.0.1 --port 8081`，在浏览器打开
 `http://127.0.0.1:8081/`。该入口提供独立页面、HTTP消息接口和后台循环，
 不创建NoneBot机器人或QQ连接，仅处理本地身份；关闭进程会停止循环，未完成任务保留。
-需要跨进程托管时仍可运行 `agent-bot worker --autonomy`，数据库租约仲裁同一身份。
+需要跨进程托管时仍可运行 `taobot worker --autonomy`，数据库租约仲裁同一身份。
 
 新建身份只填写名称和参与者标识，宿主生成稳定Agent标识与会话标识。
 消息在同一事务中保存来源和回复任务；网络重试使用同一幂等键，刷新及重启保留历史。
@@ -654,3 +658,6 @@ uv pip install "D:\packages\agent_bot-0.6.2-py3-none-any.whl"
 执行时重新核对画像版本与证据摘要；仍要求90天内至少三个日期、七天跨度和净支持三次。
 暂停、反向反馈、已消费证据和档位上限继续生效。本次使用已有JSON文档与审计结构，
 不修改已发布迁移脚本或数据库表结构。
+
+
+角色人物图：在角色页面选择 PNG、JPG 或 WebP（最大 5 MB），点击“保存 Agent”后，图片与角色资料在同一事务中持久保存。图片存于当前业务数据库的 `agent_bot_agent_portrait` 表，不放入临时附件目录，不随媒体过期清理；重新打开页面或重启服务后仍可加载。备份业务数据库即可同时备份人物图，删除角色时图片级联删除。仅选择图片但未保存的预览不会持久化；旧版仅存在浏览器内存的图片需重新选择并保存。已有数据库由启动升级器按登记清单自动执行 `agent-portrait.sql` 或 `agent-portrait.sqlite.sql`，包括已标记 0.6.3 但尚未执行此补充迁移的部署。

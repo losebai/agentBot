@@ -25,7 +25,7 @@ function managementResponse(url: string) {
   if (url.endsWith('/plugins')) return Response.json([]);
   return url.endsWith('/bots')
     ? Response.json([{ id: '123456', adapter: 'OneBot V11' }])
-    : Response.json({ service: 'agentBot', ready: true, bot_count: 1,
+    : Response.json({ service: 'taobot', ready: true, bot_count: 1,
       database_revision: 4, applied_revision: 3, restart_required_fields: ['port'],
       ai_backend: 'python-ordinary' });
 }

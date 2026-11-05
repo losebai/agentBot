@@ -278,3 +278,33 @@ async def test_failed_ack_retries_commit_without_repeating_delivery(chat_plugin,
         assert await store.source_length() == 0
     finally:
         await redis.aclose()
+
+
+@pytest.mark.parametrize("kind", ["legacy", "ordinary", "autonomy"])
+async def test_poller_accepts_legacy_and_preserves_autonomy_association(kind):
+    """旧结果无关联字段仍可入队，持续身份关联必须保留供投递策略复核。"""
+    from types import SimpleNamespace
+
+    result = job_result()
+    if kind == "legacy":
+        result = SimpleNamespace(**result.model_dump(exclude={"autonomy_profile_id"}))
+    elif kind == "autonomy":
+        result = AiJobResult.model_validate({
+            **result.model_dump(), "autonomy_profile_id": "c" * 32,
+        })
+    queue = Mock(enqueue=AsyncMock())
+    client = Mock(pending_jobs=AsyncMock(return_value=(result,)), acknowledge_job=AsyncMock())
+    poller = AiJobPoller(
+        config_provider=lambda: make_config(chat_job_enabled=True, chat_mcp_enabled=True),
+        client_provider=lambda: client,
+        queue_provider=lambda: queue,
+        bot_ids_provider=lambda: ["90001"],
+        runtime_lease=lease,
+    )
+    await poller.run_once()
+    queued = queue.enqueue.await_args.args[0]
+    assert queued.autonomy_profile_id == ("c" * 32 if kind == "autonomy" else None)
+    assert queued.ai_job_id == result.id and queued.ai_job_reply.text == result.result
+    client.acknowledge_job.assert_not_awaited()
+    if kind == "ordinary":
+        assert "autonomyProfileId" not in result.model_dump(by_alias=True)

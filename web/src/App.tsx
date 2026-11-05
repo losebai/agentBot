@@ -91,7 +91,7 @@ export function App() {
     {access !== 'ready' ? <main className="page-content">{access === 'loading' ? <Spin tip="正在连接管理服务"><div className="loading" /></Spin> : <Alert message={error} type="error" showIcon />}</main>
       : token === null ? <main className="login-screen">
       <form className="login-form" onSubmit={event => { event.preventDefault(); void connect(); }}>
-        <div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot</span></div>
+        <div className="brand-lockup"><span className="bot-mark">TB</span><span>taobot</span></div>
         <h1>登录工作台</h1><p>输入管理员密码，管理你的机器人。</p>
         {error && <Alert message={error} type="error" showIcon className="notice" />}
         <label htmlFor="admin-password">管理员密码</label>
@@ -99,7 +99,7 @@ export function App() {
         <Button block type="primary" size="large" htmlType="submit" loading={connecting} disabled={!candidate.trim()}>登录</Button>
         <span className="login-note">密码只保留在本次浏览器会话中。</span>
       </form></main>
-      : <div className="workspace"><aside className="sidebar"><div className="brand-lockup"><span className="bot-mark">AB</span><span>AgentBot</span></div><p className="nav-label">工作空间</p><nav aria-label="主导航">{[
+      : <div className="workspace"><aside className="sidebar"><div className="brand-lockup"><span className="bot-mark">TB</span><span>taobot</span></div><p className="nav-label">工作空间</p><nav aria-label="主导航">{[
         { key: 'overview', label: '运行概览', icon: <DashboardOutlined /> },
         { key: 'agents', label: '角色和人格', icon: <RobotOutlined /> },
         { key: 'settings', label: '机器人配置', icon: <SettingOutlined /> },
@@ -112,7 +112,7 @@ export function App() {
       ].map(item => item.key === 'agents' ? <AgentMenu key={item.key} page={page} onNavigate={navigate} />
         : item.key === 'plugins' ? <PluginMenu key={item.key} token={token} page={page} onNavigate={navigate} />
         : <button key={item.key} className={page === item.key ? 'active' : ''} aria-current={page === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.icon}{item.label}</button>)}</nav><div className="sidebar-footer"><span className="status-dot" />管理服务已连接{token && <button onClick={() => { setToken(null); setVisited(['overview']); setPage('overview'); }} aria-label="退出管理"><LogoutOutlined /></button>}</div></aside>
-        <main className="main-area"><header className="topbar"><span className="topbar-title">{titles[page]}</span><span className="workspace-label">AgentBot</span></header>
+        <main className="main-area"><header className="topbar"><span className="topbar-title">{titles[page]}</span><span className="workspace-label">taobot</span></header>
           <section hidden={page !== 'overview'}>{visited.includes('overview') && <Overview token={token} />}</section>
           <section hidden={page !== 'settings'}>{visited.includes('settings') && <Settings token={token}
             categoryKeys={['basic', 'llm', 'memory', 'reply']} onPlugins={() => navigate('plugin-center')} />}</section>

@@ -120,7 +120,7 @@ def install_schema(params):
     """仅安装本次新增表，普通应用启动不会隐式执行 DDL。"""
     suffix = ".sqlite.sql" if params.backend == "sqlite" else ".sql"
     name = "2026-10-13-unified-call-records" + suffix
-    path = distribution("agent-bot").locate_file("agent_bot/resources/" + name)
+    path = distribution("taobot").locate_file("agent_bot/resources/" + name)
     sql = path.read_text(encoding="utf-8")
     with closing(connect_database(params)) as connection:
         with connection.cursor() as cursor:
@@ -263,7 +263,7 @@ async def import_jsonl(store, path, source, batch_size=100):
 
 def run(argv):
     """显式导入或校正归档时间，连接密码不出现在参数或异常输出中。"""
-    parser = argparse.ArgumentParser(prog="agent-bot records")
+    parser = argparse.ArgumentParser(prog="taobot records")
     parser.add_argument("command", choices=["migrate", "repair-times", "merge-ai-sessions"])
     parser.add_argument("--init-schema", action="store_true", help="显式安装统一记录增量表")
     group = parser.add_mutually_exclusive_group()

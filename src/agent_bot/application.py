@@ -35,7 +35,7 @@ def create_application(
             'app_enabled_plugins': [standalone_plugin],
         }), stored.revision)
     if "fastapi" not in stored.config.driver:
-        raise ValueError("agentBot management requires the FastAPI driver")
+        raise ValueError("taobot management requires the FastAPI driver")
     # 环境字段随后为 NoneBot 安全清理，文件编辑能力须先捕获覆盖关系，防止虚假开放编辑。
     # 原生字段仍需参与只读快照；HTTP 写权限由 SettingsService 单独拒绝。
     startup = StartupSettingsStore(Path.cwd(), STARTUP_SETTING_NAMES)
@@ -45,7 +45,7 @@ def create_application(
     inject_runtime_config(driver.config, stored.config, revision=stored.revision)
     app = driver.server_app
     if not isinstance(app, FastAPI):
-        raise ValueError("agentBot management requires a FastAPI application")
+        raise ValueError("taobot management requires a FastAPI application")
     app.state.napcat = napcat
     if standalone_plugin is None:
         runtime, plugins = assemble_runtime(stored, driver, app)

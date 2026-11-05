@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27,<2", "editables>=0.5,<1"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agent-bot"
+name = "taobot"
 version = "0.6.3"
-description = "Independent Agent bot service with browser administration"
+description = "taobot service with browser administration"
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
 dependencies = [
@@ -34,7 +34,8 @@ dependencies = [
 ]
 
 [project.scripts]
-agent-bot = "agent_bot.__main__:main"
+# 发布名称使用 taobot，内部包路径保留以兼容现有插件和资源定位。
+taobot = "agent_bot.__main__:main"
 chat = "agent_bot.bot_cli:main"
 
 [project.optional-dependencies]
@@ -90,6 +91,8 @@ dev-mode-dirs = ["."]
 path = "tools/build_hook.py"
 
 [tool.hatch.build.targets.wheel.force-include]
+"sql/agent-portrait.sql" = "agent_bot/resources/agent-portrait.sql"
+"sql/agent-portrait.sqlite.sql" = "agent_bot/resources/agent-portrait.sqlite.sql"
 "sql/UPGRADE-0.6.3.md" = "agent_bot/resources/UPGRADE-0.6.3.md"
 "sql/persistent-agent.sql" = "agent_bot/resources/persistent-agent.sql"
 "sql/persistent-agent.sqlite.sql" = "agent_bot/resources/persistent-agent.sqlite.sql"

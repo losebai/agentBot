@@ -136,7 +136,7 @@ class OverviewStatistics(CallStatistics):
 class ServiceStatus(ApiModel):
     """同时展示服务就绪、连接、日期区间用量与当前对话活动。"""
 
-    service: Literal["agentBot"] = "agentBot"
+    service: Literal["taobot"] = "taobot"
     ready: bool
     bot_count: int
     database_revision: int

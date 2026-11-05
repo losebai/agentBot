@@ -27,8 +27,11 @@ try:
 
     # 找模型/渠道相关配置表
     cur.execute("SHOW TABLES")
-    tables = [list(t.values())[0] for t in cur.fetchall()]
-    cand = [t for t in tables if any(k in t.lower() for k in ("model", "channel", "provider", "llm", "ai_config"))]
+    tables = [next(iter(t.values())) for t in cur.fetchall()]
+    cand = [
+        t for t in tables
+        if any(k in t.lower() for k in ("model", "channel", "provider", "llm", "ai_config"))
+    ]
     print("\n== candidate config tables:", cand)
 
     for t in cand:

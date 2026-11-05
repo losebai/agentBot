@@ -7,7 +7,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 
 
 root = Path(SPECPATH).parent
-package = Path(distribution("agent-bot").locate_file("agent_bot"))
+package = Path(distribution("taobot").locate_file("agent_bot"))
 # 遍历文件而非导入插件，避免在构建进程中初始化 NoneBot 和连接配置数据库。
 hidden = []
 for source in package.rglob("*.py"):
@@ -19,7 +19,7 @@ for name in ("nonebot.drivers", "langchain_core", "langgraph", "uvicorn"):
     hidden.extend(collect_submodules(name))
 
 data = collect_data_files("agent_bot")
-data += copy_metadata("agent-bot", recursive=True)
+data += copy_metadata("taobot", recursive=True)
 data += copy_metadata("pywebview", recursive=True)
 
 analysis = Analysis(
@@ -34,11 +34,12 @@ pyz = PYZ(analysis.pure)
 # 狐耳头像使用多尺寸 ICO，覆盖桌面快捷方式、窗口和任务栏的显示尺寸。
 desktop_icon = str(root / "assets" / "desktop" / "agentbot-icon-v2.ico")
 gui = EXE(
-    pyz, analysis.scripts, [], exclude_binaries=True, name="AgentBot",
+    pyz, analysis.scripts, [], exclude_binaries=True, name="taobot",
     console=False, debug=False, upx=False, icon=desktop_icon,
 )
+# Windows 文件名不区分大小写，后台入口使用独立后缀以免覆盖桌面程序。
 cli = EXE(
-    pyz, analysis.scripts, [], exclude_binaries=True, name="agent-bot",
+    pyz, analysis.scripts, [], exclude_binaries=True, name="taobot-cli",
     console=True, debug=False, upx=False, icon=desktop_icon,
 )
-COLLECT(gui, cli, analysis.binaries, analysis.datas, name="AgentBot", upx=False)
+COLLECT(gui, cli, analysis.binaries, analysis.datas, name="taobot", upx=False)

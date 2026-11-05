@@ -16,7 +16,7 @@ def main() -> int:
         from agent_bot.desktop import run_backend
 
         return run_backend()
-    if Path(sys.executable).stem == "AgentBot" and not sys.argv[1:]:
+    if Path(sys.executable).stem == "taobot" and not sys.argv[1:]:
         # 无控制台入口的错误用原生消息框报告，日志保存在可写目录。
         import ctypes
 
@@ -42,7 +42,7 @@ def main() -> int:
                 f"桌面启动失败 ({type(exc).__name__})。\n"
                 "请确认程序目录可写，并已安装 Microsoft Edge WebView2 Runtime。\n"
                 "启动详情见 logs/desktop-launcher.log；后端详情见 logs/desktop-backend.log。",
-                "AgentBot", 0x10,
+                "taobot", 0x10,
             )
             return 1
     from agent_bot.__main__ import main as cli_main

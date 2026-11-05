@@ -15,7 +15,7 @@ if (Test-Path -LiteralPath (Join-Path $bundle 'runtime/napcat-node')) {
     if ($LASTEXITCODE -ne 0) { throw '安装器中的 NapCat 载荷校验失败。' }
     $napcatDefine = @('/DWithNapCat=1')
 }
-foreach ($name in @("AgentBot.exe", "agent-bot.exe", "_internal", ".env.example", "WINDOWS_README.md")) {
+foreach ($name in @("taobot.exe", "taobot-cli.exe", "_internal", ".env.example", "WINDOWS_README.md")) {
     if (-not (Test-Path -LiteralPath (Join-Path $bundle $name))) {
         throw "Windows 程序包不完整：缺少 $name"
     }
@@ -35,7 +35,7 @@ if (-not (Test-Path -LiteralPath $IsccPath -PathType Leaf)) {
 }
 $output = [System.IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force -Path $output | Out-Null
-$installer = Join-Path $output "AgentBot-$Version-windows-x64-Setup.exe"
+$installer = Join-Path $output "taobot-$Version-windows-x64-Setup.exe"
 # 编译失败不允许把同名旧产物当作新安装包；只删除明确的生成文件。
 if (Test-Path -LiteralPath $installer) { Remove-Item -LiteralPath $installer -Force }
 & $IsccPath @napcatDefine "/DBundleDir=$bundle" "/DAppVersion=$Version" "/DOutputDir=$output" `

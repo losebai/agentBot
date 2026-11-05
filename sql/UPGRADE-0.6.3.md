@@ -8,11 +8,13 @@
 1. 备份业务数据库、启动配置及独立队列，停止共享数据库的旧实例。
 2. 安装 0.6.3；完整包同时包含 MySQL、SQLite 初始化及适用增量资源。
 3. 启动主服务、桌面后端或独立 worker 前，自动读取所选业务库并执行登记清单。
-   可提前运行 `agent-bot database upgrade`；命令成功退出且结构核验通过才表示迁移完成。
+   可提前运行 `taobot database upgrade`；命令成功退出且结构核验通过才表示迁移完成。
 4. 在 `call-record-classification-v1` 后执行 `persistent-agent-v1`，对应
    `persistent-agent.sql` / `persistent-agent.sqlite.sql`，创建持续身份、任务、
    情节、记忆提案及审计五表与索引、外键。更早登记增量按清单补齐，不扫描历史 SQL。
-5. 核对 `agent_bot_schema_version` 为 `0.6.3`，所有登记流水为 `applied`。
+5. 随后执行 `agent-portrait-v1`，对应 `agent-portrait.sql` /
+   `agent-portrait.sqlite.sql`，新增角色人物图表和级联外键；现有角色及图片数据不改写。
+6. 核对 `agent_bot_schema_version` 为 `0.6.3`，所有登记流水为 `applied`。
    字段、唯一键、调度索引及外键须通过实际结构核验，已有成功流水也会再次核验。
    再次执行升级应报告零项变更。新身份保持暂停，不会因升级开始付费推理或主动发送。
 

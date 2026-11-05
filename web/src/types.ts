@@ -84,7 +84,7 @@ export interface MemoryStatistics {
 }
 
 export interface ServiceStatus {
-  service: 'agentBot';
+  service: 'taobot';
   ready: boolean;
   bot_count: number;
   database_revision: number;

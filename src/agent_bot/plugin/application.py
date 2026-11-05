@@ -772,7 +772,7 @@ _settings_reloader = None if _context is not None else SettingsReloader(
 
 
 def get_runtime_state() -> _RuntimeState:
-    """供 agentBot 管理层读取当前运行时；使用客户端前必须获取租约。"""
+    """供 taobot 管理层读取当前运行时；使用客户端前必须获取租约。"""
     if _runtime_state is None:
         raise RuntimeError("QQBot 尚未启动")
     return _runtime_state

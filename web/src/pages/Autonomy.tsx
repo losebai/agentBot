@@ -1,3 +1,4 @@
+import { AgentUsageGuide } from '../components/AgentUsageGuide';
 import { Alert, Button, Checkbox, Descriptions, Empty, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tabs, Tag, Tooltip } from 'antd';
 import { CheckOutlined, CloseOutlined, EditOutlined, PauseOutlined, PlusOutlined, ReloadOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -127,6 +128,7 @@ export function Autonomy({ token }: { token: string }) {
       <Button icon={<PlusOutlined />} onClick={() => open('create')}>新建身份</Button>
       <Button danger icon={<PauseOutlined />} disabled={busy} onClick={() => void operate(() => api.pause())}>暂停全部身份</Button>
     </Space></div>
+    <AgentUsageGuide feature="autonomy" />
     {(error || directory.error) && <Alert type="error" showIcon message={error || directory.error} />}
     <div className="autonomy-host"><label>主动行动总暂停 <Switch aria-label="主动行动总暂停" checked={hostPaused} disabled={busy} onChange={value => void changeHost('chat_active_actions_paused', value)} /></label>
       <label>会话事件归档 <Switch aria-label="会话事件归档" checked={capture} disabled={busy} onChange={value => void changeHost('chat_autonomy_capture_enabled', value)} /></label></div>

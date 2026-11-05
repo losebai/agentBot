@@ -127,7 +127,7 @@ def test_windows_build_rejects_payload_inside_cleared_output(tmp_path):
     tools.mkdir(parents=True)
     script = tools / "build_windows.ps1"
     script.write_bytes((source_root / "tools/build_windows.ps1").read_bytes())
-    payload = make_payload(repo / "dist/windows/AgentBot/runtime/napcat-node")
+    payload = make_payload(repo / "dist/windows/taobot/runtime/napcat-node")
     result = subprocess.run([
         "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
         "-NapCatPayloadDirectory", str(payload),

@@ -23,7 +23,7 @@ def run(argv: Sequence[str]) -> int:
     """列表命令离线运行；run 在调用者当前进程中启动唯一指定插件。"""
     from agent_bot.plugins.catalog import BUILTIN_PLUGIN_IDS, BUILTIN_PLUGINS
 
-    parser = argparse.ArgumentParser(prog='agent-bot plugin')
+    parser = argparse.ArgumentParser(prog='taobot plugin')
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('list', help='列出可独立启动的内置插件')
     launch = commands.add_parser('run', help='在独立服务进程中运行指定插件')

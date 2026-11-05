@@ -15,9 +15,20 @@ export class AgentApi extends ApiClient {
   listAgents(cursor?: string, signal?: AbortSignal) { return this.request<Page<Agent>>(`agents${query(cursor)}`, 'GET', undefined, signal); }
   agentPage(page: number, limit: number, signal?: AbortSignal) { return this.request<CatalogPage<Agent>>(`agents?page=${page}&limit=${limit}`, 'GET', undefined, signal); }
   getAgent(id: number, signal?: AbortSignal) { return this.request<Agent>(`agents/${id}`, 'GET', undefined, signal); }
-  createAgent(body: AgentDraft) { return this.request<Agent>('agents','POST',body); }
-  updateAgent(id: number, revision: number, body: Partial<AgentDraft>) { return this.request<Agent>(`agents/${id}`,'PATCH',{expected_revision:revision,...body}); }
+  createAgent(body: AgentDraft & { portrait?: { mime_type: string; data: string } }) { return this.request<Agent>('agents','POST',body); }
+  updateAgent(id: number, revision: number, body: Partial<AgentDraft> & { portrait?: { mime_type: string; data: string } }) { return this.request<Agent>(`agents/${id}`,'PATCH',{expected_revision:revision,...body}); }
   deleteAgent(id: number, revision: number) { return this.request<void>(`agents/${id}`,'DELETE',{expected_revision:revision}); }
+  /** 人物图使用认证请求读取，不将凭据写入图片 URL。 */
+  async portrait(id: number, signal: AbortSignal): Promise<Blob> {
+    const response = await fetch(`/api/v1/agents/${id}/portrait`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {}, signal,
+    });
+    if (!response.ok) {
+      const body = await response.json();
+      throw new ApiFailure(body.message || '人物图读取失败', response.status, body.code);
+    }
+    return response.blob();
+  }
   listSkills(cursor?: string) { return this.request<Page<Skill>>(`skills${query(cursor)}`); }
   skillPage(page: number, limit: number) { return this.request<CatalogPage<Skill>>(`skills?page=${page}&limit=${limit}`); }
   getSkill(id: number) { return this.request<Skill>(`skills/${id}`); }

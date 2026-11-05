@@ -12,7 +12,7 @@ $previousEnvironment = $env:UV_PROJECT_ENVIRONMENT
 Push-Location $repoRoot
 try {
     $outputRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $OutputDirectory))
-    $bundle = Join-Path $outputRoot "AgentBot"
+    $bundle = Join-Path $outputRoot "taobot"
     # 输入必须在可清理输出之外，否则 PyInstaller 会先删除待复制的唯一载荷。
     if ($NapCatPayloadDirectory) {
         $napcatSource = (Resolve-Path -LiteralPath $NapCatPayloadDirectory).Path
@@ -26,7 +26,7 @@ try {
     }
     # PyInstaller 会重建输出目录，禁止覆盖任何已被用作部署目录的产物。
     if (Test-Path -LiteralPath $bundle) {
-        $generatedNames = @("AgentBot.exe", "agent-bot.exe", "_internal", ".env.example", "WINDOWS_README.md")
+        $generatedNames = @("taobot.exe", "taobot-cli.exe", "_internal", ".env.example", "WINDOWS_README.md")
         if (Test-Path -LiteralPath (Join-Path $bundle 'runtime')) {
             $runtimeItems = @(Get-ChildItem -LiteralPath (Join-Path $bundle 'runtime') -Force)
             if ($runtimeItems.Count -ne 1 -or $runtimeItems[0].Name -ne 'napcat-node') {
@@ -68,7 +68,7 @@ try {
 
     $env:UV_PROJECT_ENVIRONMENT = Join-Path $repoRoot "build/windows/venv"
     # uv 对本地 wheel 的默认缓存键不覆盖所有源码/前端文件，强制重装当前项目。
-    & uv sync --locked --no-editable --reinstall-package agent-bot `
+    & uv sync --locked --no-editable --reinstall-package taobot `
         --extra desktop --group windows-build --python 3.12
     if ($LASTEXITCODE -ne 0) { throw "独立构建环境安装失败" }
     $buildPython = Join-Path $env:UV_PROJECT_ENVIRONMENT "Scripts/python.exe"
@@ -87,13 +87,13 @@ try {
     }
     # 便携包与安装器共用同一份已构建程序，版本来自已安装的发布包。
     if ($BuildInstaller) {
-        $version = & $buildPython -c "from importlib.metadata import version; print(version('agent-bot'))"
+        $version = & $buildPython -c "from importlib.metadata import version; print(version('taobot'))"
         if ($LASTEXITCODE -ne 0) { throw "无法读取 Windows 包版本" }
         & (Join-Path $PSScriptRoot "build_installer.ps1") -BundleDirectory $bundle `
             -OutputDirectory (Join-Path $outputRoot "installer") -Version $version -IsccPath $IsccPath
     }
     Write-Host "桌面包已生成：$bundle"
-    Write-Host "请分发整个 AgentBot 文件夹；双击 AgentBot.exe 打开界面。"
+    Write-Host "请分发整个 taobot 文件夹；双击 taobot.exe 打开界面。"
 } finally {
     $env:UV_PROJECT_ENVIRONMENT = $previousEnvironment
     Pop-Location

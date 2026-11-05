@@ -13,7 +13,7 @@
 手动执行 `deploy-production` 发布 Web，使用不可变镜像摘要、就绪检查及原有失败回滚。
 
 同一流水线的 `windows-installer` 为可选手动作业，使用 Windows Runner 构建便携包及
-`AgentBot-<版本>-windows-x64-Setup.exe`，并验收真实打包后端的首次 SQLite 启动。
+`taobot-<版本>-windows-x64-Setup.exe`，并验收真实打包后端的首次 SQLite 启动。
 成功后下载该作业的 artifacts，其中有便携目录、安装器、`SHA256SUMS.txt`、
 `latest.json` 和一键安装脚本 `install.ps1` / `install.bat`。
 缺少 Windows Runner 时不要触发该作业；它不会阻塞 Linux 镜像或部署。
@@ -128,7 +128,7 @@ Windows 检查失败不会上传可分发的 artifacts；该可选作业失败�
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_windows.ps1 -BuildInstaller
 ```
 
-安装器默认安装到当前用户 `%LOCALAPPDATA%\Programs\AgentBot`，无需管理员权限。
+安装器默认安装到当前用户 `%LOCALAPPDATA%\Programs\taobot`，无需管理员权限。
 提供开始菜单和可选桌面快捷方式，升级保留配置与数据，卸载也保留用户运行数据。
 安装器不包含 WebView2 Runtime，目标电脑需提前安装；程序与安装器均未签名。
 
@@ -154,13 +154,13 @@ Inno Setup 6，以及已准备并验证的 `runtime/napcat` Shell 载荷；SSH �
 指定版本发布，例如：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -Version 0.6.2
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/release_windows.ps1 -Version 0.6.3
 ```
 
-先准备 `sql/UPGRADE-0.6.2.md`；脚本会同步项目版本及两个发布测试中的固定版本断言，
+先准备 `sql/UPGRADE-0.6.3.md`；脚本会同步项目版本及两个发布测试中的固定版本断言，
 不会修改第三方依赖和历史升级说明。不指定 `-Version` 时沿用现有版本并检查一致性。
 文件同步完成后即使后续构建或发布失败，工作区仍保留指定版本，便于修复后重跑。
-只想同步后在本地构建时使用 `-Version 0.6.2 -BuildOnly`。
+只想同步后在本地构建时使用 `-Version 0.6.3 -BuildOnly`。
 
 手动维护版本时同步 `pyproject.toml`、`src/agent_bot/__init__.py`、`web/package.json`、
 `web/package-lock.json` 和 `uv.lock` 中的项目版本；不要替换第三方依赖的同号版本。

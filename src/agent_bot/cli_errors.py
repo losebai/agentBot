@@ -100,7 +100,7 @@ def describe_config_error(error: Exception | SystemExit) -> str:
     if isinstance(error, SettingsAlreadyInitializedError):
         return "配置已导入；请使用 settings list 查看，使用 settings set 修改。"
     if isinstance(error, SettingsNotInitializedError):
-        return "尚未初始化运行配置，请执行 agent-bot settings init 或 settings import-env。"
+        return "尚未初始化运行配置，请执行 taobot settings init 或 settings import-env。"
     if isinstance(error, SettingsSchemaError):
         return "配置表缺失或结构不匹配，请检查所选数据库及初始化脚本；新库执行 database init。"
     if isinstance(error, SettingsError):

@@ -60,6 +60,7 @@ def mysql_factory(
         parser.executescript(resource("agent-evolution.sqlite.sql"))
         parser.executescript(resource("job-recovery.sqlite.sql"))
         parser.executescript(resource("persistent-agent.sqlite.sql"))
+        parser.executescript(resource("agent-portrait.sqlite.sql"))
         for statement in split_sql(resource('evolution-independent.sqlite.sql')):
             if statement.startswith('CREATE'):
                 parser.execute(statement)
@@ -133,6 +134,15 @@ def mysql_factory(
                 self.rows = [{"acquired": lock}]
                 return
             if "information_schema.columns" in sql:
+                if "TABLE_NAME='agent_bot_agent_portrait'" in sql:
+                    self.rows = [
+                        {"name": row[1], "type": "mediumblob" if row[1] == "image_data"
+                         else row[2].lower(), "key_type": "PRI" if row[5] else "",
+                         "nullable": "NO" if row[3] or row[5] else "YES"}
+                        for row in self.owner.inner._db.execute(
+                            "PRAGMA table_info(agent_bot_agent_portrait)")
+                    ]
+                    return
                 if "COLUMN_NAME='system_kind'" in sql:
                     self.rows = [
                         {"extra": "VIRTUAL GENERATED" if row[6] == 2 else "",
@@ -171,6 +181,14 @@ def mysql_factory(
                 ]
                 return
             if "information_schema.key_column_usage" in sql:
+                if "referential_constraints" in sql:
+                    self.rows = [
+                        {"source": row[3], "target": row[2], "target_column": row[4],
+                         "delete_rule": row[6]}
+                        for row in self.owner.inner._db.execute(
+                            "PRAGMA foreign_key_list(agent_bot_agent_portrait)")
+                    ]
+                    return
                 self.rows = [
                     {"column_name": row[3], "referenced_table": row[2], "referenced_column": row[4]}
                     for row in self.owner.inner._db.execute(
@@ -326,7 +344,7 @@ def test_mysql_known_idempotent_step_resumes_after_partial_ddl(legacy_database):
         "bilibili-v1", "comfy-plugin-v1", "material-classification-v1", "agent-personality-v1",
         "stickers-v1", "agent-evolution-v1", "evolution-independent-v2",
         "provider-user-agent-v1", "job-recovery-v1", "call-record-classification-v1",
-        "persistent-agent-v1",
+        "persistent-agent-v1", "agent-portrait-v1",
     )
     assert state.closed == 2
     assert sum("GET_LOCK" in event for event in state.events) == 2
@@ -366,7 +384,7 @@ def test_mysql_personality_resumes_partial_ddl_without_touching_roles(
     assert result.applied == ('agent-personality-v1', 'stickers-v1', 'agent-evolution-v1',
                               'evolution-independent-v2', 'provider-user-agent-v1',
                               'job-recovery-v1', 'call-record-classification-v1',
-                              'persistent-agent-v1')
+                              'persistent-agent-v1', 'agent-portrait-v1')
     assert query(legacy_database, 'SELECT * FROM agent_bot_agent ORDER BY id') == [
         (*before[0], '保留人格'), (*before[1], ''),
     ]
@@ -405,7 +423,8 @@ def test_mysql_classification_resumes_after_column_commit(legacy_database):  # n
         ("qq-summary-history", "command"),
     ]
     result = upgrade_database(params, connect=connect, read_resource=resource)
-    assert result.applied == ("call-record-classification-v1", "persistent-agent-v1")
+    assert result.applied == ("call-record-classification-v1", "persistent-agent-v1",
+                              "agent-portrait-v1")
     indexes = query(legacy_database, "PRAGMA index_info(idx_call_system_time)")
     assert [row[2] for row in indexes] == ["system_kind", "create_time", "id"]
     assert sum("ADD COLUMN system_kind" in event for event in state.events) == 1
@@ -424,6 +443,6 @@ def test_mysql_autonomy_partial_ddl_resumes_before_version_advance(legacy_databa
     assert query(legacy_database, 'SELECT status FROM agent_bot_schema_migration '
                  "WHERE migration_id='persistent-agent-v1'") == [('failed',)]
     result = upgrade_database(params, connect=connect, read_resource=resource)
-    assert result.applied == ('persistent-agent-v1',)
+    assert result.applied == ('persistent-agent-v1', 'agent-portrait-v1')
     assert result.current_version == '0.6.3'
     assert upgrade_database(params, connect=connect, read_resource=resource).applied == ()

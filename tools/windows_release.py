@@ -58,16 +58,16 @@ def prepare(root: Path, stage: Path, version: str) -> None:
     files = sorted(p for p in (root / 'sql').rglob('*')
                    if p.is_file() and p.suffix in {'.sql', '.md'})
     files += sorted((root / 'tools').glob('migrate_*.py'))
-    archive = stage / f'AgentBot-{version}-sql.zip'
+    archive = stage / f'taobot-{version}-sql.zip'
     with ZipFile(archive, 'w', ZIP_DEFLATED) as output:
         for path in files:
             output.write(path, path.relative_to(root).as_posix())
-    wheel = root / 'dist' / f'release-{version}' / f'agent_bot-{version}-py3-none-any.whl'
+    wheel = root / 'dist' / f'release-{version}' / f'taobot-{version}-py3-none-any.whl'
     shutil.copy2(wheel, stage)
     for path in (root / 'sql').glob('UPGRADE*.md'):
         shutil.copy2(path, stage)
     release = read_json(stage / 'latest.json')
-    installer = f'AgentBot-{version}-windows-x64-Setup.exe'
+    installer = f'taobot-{version}-windows-x64-Setup.exe'
     if release != {'version': version, 'filename': installer, 'sha256': sha256(stage / installer)}:
         raise ValueError('Installer manifest does not match the release')
     names = [installer, archive.name, wheel.name, 'install.ps1', 'install.bat']
@@ -86,7 +86,7 @@ def activate(root: Path, stage: Path, version: str) -> None:
             or version_tuple(version) <= version_tuple(previous['version'])):
         raise ValueError('Release version must be newer than the public version')
     files = sums(stage)
-    installer = f'AgentBot-{version}-windows-x64-Setup.exe'
+    installer = f'taobot-{version}-windows-x64-Setup.exe'
     if release.get('filename') != installer or files.get(installer) != release.get('sha256'):
         raise ValueError('Invalid installer manifest')
     for name, digest in files.items():
@@ -185,7 +185,7 @@ def set_version(root: Path, version: str) -> None:
     update('src/agent_bot/__init__.py', lambda s: replace_field(
         r'(?m)(^__version__ = ")[^"]+(")', s))
     update('uv.lock', lambda s: replace_field(
-        r'(?m)(^name = "agent-bot"\r?\nversion = ")[^"]+(")', s))
+        r'(?m)(^name = "taobot"\r?\nversion = ")[^"]+(")', s))
 
     def update_json(text: str, *, lock: bool = False) -> str:
         """只改根包版本，锁文件内第三方包的版本与下载地址保持原值。"""
@@ -225,7 +225,7 @@ def project_version(root: Path) -> str:
         if read_json(root / name)['version'] != version:
             raise ValueError(f'Version mismatch: {name}')
     lock = tomllib.loads((root / 'uv.lock').read_text('utf-8'))
-    if next(p['version'] for p in lock['package'] if p['name'] == 'agent-bot') != version:
+    if next(p['version'] for p in lock['package'] if p['name'] == 'taobot') != version:
         raise ValueError('uv.lock project version mismatch')
     if not (root / 'sql' / f'UPGRADE-{version}.md').is_file():
         raise ValueError(f'Missing sql/UPGRADE-{version}.md')

@@ -4,6 +4,7 @@ from contextlib import aclosing
 from typing import Literal
 
 from fastapi import APIRouter, Query, Request
+from starlette.responses import Response
 
 from agent_bot.admin.agent_chat import AgentChatProbe, AgentProbeRequest
 from agent_bot.admin.mcp_tools import list_server_tools
@@ -125,7 +126,8 @@ def install_agent_routes(router: APIRouter, runtime):
     async def operate(action, *args, records=False, **kwargs):
         """仅数据库目录和归档可在刷新排空时读取，发现工具及执行仍需正常租约。"""
         read_only = action in {
-            "list_agents", "get_agent", "list_skills", "get_skill", "list_mcps", "get_mcp",
+            "list_agents", "get_agent", "portrait_content", "list_skills", "get_skill",
+            "list_mcps", "get_mcp",
             "list_runs", "get_run", "list_steps",
         }
         async with runtime.lease(read_only=read_only):
@@ -148,6 +150,14 @@ def install_agent_routes(router: APIRouter, runtime):
     @router.get("/agents/{id}", response_model=AgentView)
     async def get_agent(id: int):
         return await operate("get_agent", id)
+
+    @router.get("/agents/{id}/portrait")
+    async def agent_portrait(id: int):
+        """图片继承管理认证，禁用缓存避免登录切换后复用私有内容。"""
+        row = await operate("portrait_content", id)
+        return Response(bytes(row["image_data"]), media_type=row["mime_type"], headers={
+            "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+        })
 
     @router.post("/agents", response_model=AgentView, status_code=201)
     async def create_agent(body: AgentCreate):

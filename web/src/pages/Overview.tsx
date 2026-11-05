@@ -98,7 +98,7 @@ export function Overview({ token }: { token: string }) {
       <NapCatStatus status={napcat} botCount={bots.length} error={napcatError} />
       <div className="overview-grid"><section className="panel"><div className="panel-header"><h2>机器人连接</h2><Tag>{bots.length} 个在线</Tag></div>
         {!bots.length ? <div className="empty-connections"><div className="connection-symbol">○</div><h3>等待机器人连接</h3><p>在 NapCat 中配置反向 WebSocket，连接此服务的<br /><code>/onebot/v11/ws</code>。</p></div>
-          : bots.map(bot => <div className="bot-row" key={bot.id}><div className="bot-avatar">AB</div><div><strong>{bot.id}</strong><p>{bot.adapter}</p></div><Tag color="green">在线</Tag></div>)}</section>
+          : bots.map(bot => <div className="bot-row" key={bot.id}><div className="bot-avatar">TB</div><div><strong>{bot.id}</strong><p>{bot.adapter}</p></div><Tag color="green">在线</Tag></div>)}</section>
         <section className="panel"><div className="panel-header"><h2>工作台说明</h2></div><div className="info-list"><div><span className="info-dot" /><div><h3>配置集中管理</h3><p>修改后查看保存与应用版本，确认是否需要重启。</p></div></div><div><span className="info-dot" /><div><h3>对话独立测试</h3><p>先验证模型回复，再接入 QQ 群聊或私聊。</p></div></div><div><span className="info-dot" /><div><h3>持续运行</h3><p>关闭浏览器不会停止机器人服务。</p></div></div></div></section></div>
     </>}
   </div>;

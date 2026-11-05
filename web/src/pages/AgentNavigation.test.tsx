@@ -23,7 +23,7 @@ function setup(pending = false, empty = false, failAgents = false) {
       : Response.json({ items: empty ? [] : [agent], next_cursor: null });
     if (path.endsWith('/plugins') || path.endsWith('/bots')) return Response.json([]);
     if (path.includes('/ai/models?') || path.includes('/mcp-servers?')) return Response.json({ items: [], next_cursor: null });
-    return Response.json({ service: 'agentBot', ready: true, bot_count: 0,
+    return Response.json({ service: 'taobot', ready: true, bot_count: 0,
       database_revision: 1, applied_revision: 1, restart_required_fields: [] });
   });
   vi.stubGlobal('fetch', fetcher);
@@ -57,7 +57,7 @@ it('切换运行角色后返回角色页面刷新置顶顺序，同时保留已�
   let switched = false;
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     if (String(input).includes('/agents?')) return Response.json({
-      items: switched ? [second, first] : [first, second], next_cursor: null,
+      items: switched ? [{ ...second, is_current: true }, first] : [{ ...first, is_current: true }, second], next_cursor: null,
     });
     return server.fetcher(input, options);
   }));
@@ -96,7 +96,7 @@ it('未创建 Agent 时仍能启停通用演化并查看独立记录列表', asy
   expect(await screen.findByRole('checkbox', { name: '启用长期互动演化' })).toBeVisible();
   expect(screen.getByRole('button', { name: '未关联角色（通用）' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByRole('region', { name: '演化记录列表' })).toBeVisible();
-  expect(server.fetcher.mock.calls.some(([url]) => String(url) === '/api/v1/evolution?cursor=0')).toBe(true);
+  expect(server.fetcher.mock.calls.some(([url]) => String(url) === '/api/v1/evolution?page=1&limit=10')).toBe(true);
 });
 
 it('角色目录读取失败仍可管理通用演化', async () => {
@@ -117,7 +117,7 @@ it('默认通用范围与可选角色范围使用各自状态，记录列表仍�
   const selector = await screen.findByRole('group', { name: '选择演进 Agent' });
   expect(within(selector).getByRole('button', { name: '未关联角色（通用）' })).toHaveAttribute('aria-pressed', 'true');
   fireEvent.click(await within(selector).findByRole('button', { name: /助\s*手/ }));
-  await waitFor(() => expect(server.fetcher.mock.calls.some(([url]) => String(url) === '/api/v1/evolution?cursor=0&agent_id=1')).toBe(true));
+  await waitFor(() => expect(server.fetcher.mock.calls.some(([url]) => String(url) === '/api/v1/evolution?page=1&limit=10&agent_id=1')).toBe(true));
   fireEvent.click(within(selector).getByRole('button', { name: '未关联角色（通用）' }));
   expect(within(selector).getByRole('button', { name: '未关联角色（通用）' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.getByLabelText('记录范围')).toHaveValue('all');

@@ -1,4 +1,4 @@
-# agentBot 仓库根目录流水线：检查通过后构建，生产部署需手动触发。
+# taobot 仓库根目录流水线：检查通过后构建，生产部署需手动触发。
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -112,12 +112,12 @@ windows-installer:
     - '& uv run --locked --extra dev --extra desktop pytest tests/unit/test_windows_install.py --no-cov; if ($LASTEXITCODE -ne 0) { throw "一键安装脚本测试失败" }'
     - '& powershell -NoProfile -ExecutionPolicy Bypass -File tools/build_windows.ps1 -BuildInstaller; if ($LASTEXITCODE -ne 0) { throw "Windows 安装包构建失败" }'
     # 无需交互桌面，通过临时 SQLite 验收打包后的真实后端。
-    - '& uv run --locked --extra dev --extra desktop python tools/check_windows.py dist/windows/AgentBot --first-run; if ($LASTEXITCODE -ne 0) { throw "Windows 包首次启动验收失败" }'
+    - '& uv run --locked --extra dev --extra desktop python tools/check_windows.py dist/windows/taobot --first-run; if ($LASTEXITCODE -ne 0) { throw "Windows 包首次启动验收失败" }'
   artifacts:
     name: "agentbot-windows-$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
     expire_in: 30 days
     paths:
-      - dist/windows/AgentBot/
+      - dist/windows/taobot/
       - dist/windows/installer/*-Setup.exe
       - dist/windows/installer/SHA256SUMS.txt
       - dist/windows/installer/latest.json

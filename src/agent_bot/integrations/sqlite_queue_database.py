@@ -18,7 +18,7 @@ class SqliteQueueBusyError(RuntimeError):
 
 def queue_schema_sql() -> str:
     """从安装资源读取与发布包一致的独立队列结构。"""
-    return distribution("agent-bot").locate_file(
+    return distribution("taobot").locate_file(
         "agent_bot/resources/agent_bot_queue_init.sqlite.sql",
     ).read_text(encoding="utf-8")
 

@@ -218,3 +218,74 @@ async def test_probe_legacy_budget_cannot_override_global(agent_api, legacy_requ
     })
     assert response.status_code == 200
     assert len(runtime.agent_service.tool_runtime.invoked) == 2
+
+
+async def test_portrait_requires_auth_and_returns_saved_bytes(agent_api):
+    """人物图需要管理员认证，上传后以原 MIME 读回且不进入目录响应。"""
+    from agent.test_portraits import portrait
+
+    api, _, _ = agent_api
+    raw, upload = portrait()
+    assert (await api.get("/api/v1/agents/1/portrait")).status_code == 401
+    assert (await api.get("/api/v1/agents/1/portrait", headers=HEADERS)).status_code == 404
+    response = await api.patch("/api/v1/agents/1", headers=HEADERS, json={
+        "expected_revision": 1, "portrait": upload.model_dump(),
+    })
+    assert response.status_code == 200
+    assert response.json()["portrait_sha256"]
+    assert upload.data not in response.text
+    image = await api.get("/api/v1/agents/1/portrait", headers=HEADERS)
+    assert image.status_code == 200 and image.content == raw
+    assert image.headers["content-type"] == "image/png"
+    assert image.headers["cache-control"] == "no-store"
+    assert image.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.parametrize("method,path", [("PATCH", "/api/v1/agents/1"),
+                                         ("POST", "/api/v1/agents")])
+async def test_large_portrait_save_uses_image_limit(agent_api, method, path):
+    """真实有效图片超过普通正文限额仍可保存，新建和修改遵守相同图片规则。"""
+    import base64
+    import random
+    from io import BytesIO
+
+    from PIL import Image
+
+    api, _, _ = agent_api
+    output = BytesIO()
+    Image.frombytes("RGB", (256, 256), random.Random(7).randbytes(256 * 256 * 3)).save(
+        output, format="PNG")
+    raw = output.getvalue()
+    assert len(raw) > 65536
+    body = {"portrait": {"mime_type": "image/png", "data": base64.b64encode(raw).decode()}}
+    if method == "PATCH":
+        body["expected_revision"] = 1
+    else:
+        existing = (await api.get("/api/v1/agents/1", headers=HEADERS)).json()
+        body.update(code="portrait-large", name="大图角色", model_id=existing["model_id"])
+    response = await api.request(method, path, headers=HEADERS, json=body)
+    assert response.status_code == (200 if method == "PATCH" else 201), response.text
+    image = await api.get(f"/api/v1/agents/{response.json()['id']}/portrait", headers=HEADERS)
+    assert image.content == raw
+
+
+async def test_portrait_body_limit_keeps_other_routes_bounded_and_auth_required(agent_api):
+    """人物图扩容仅限保存入口，超限分块请求被拒绝且匿名请求不能保存图片。"""
+    from agent_bot.agent.portraits import MAX_PORTRAIT_BYTES
+
+    api, _, _ = agent_api
+    unauthorized = await api.patch("/api/v1/agents/1", json={
+        "expected_revision": 1, "portrait": {"mime_type": "image/png", "data": "x" * 70000},
+    })
+    assert unauthorized.status_code == 401
+    ordinary = await api.patch("/api/v1/settings", headers=HEADERS, content=b"x" * 65537)
+    assert ordinary.status_code == 413 and ordinary.json()["code"] == "REQUEST_TOO_LARGE"
+
+    async def chunks():
+        """不提供 Content-Length，验证实际接收字节也受限制。"""
+        for _ in range((4 * ((MAX_PORTRAIT_BYTES + 2) // 3) + 256 * 1024) // 65536 + 1):
+            yield b"x" * 65536
+
+    oversized = await api.patch("/api/v1/agents/1", headers=HEADERS, content=chunks())
+    assert oversized.status_code == 413
+    assert oversized.json()["code"] == "REQUEST_TOO_LARGE"

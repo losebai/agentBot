@@ -79,13 +79,13 @@ try {
         uv build --out-dir "dist/release-$version"
     }
     Invoke-ReleaseStep 'Check wheel contents' {
-        uv run --no-sync python tools/check_package.py "dist/release-$version/agent_bot-$version-py3-none-any.whl"
+        uv run --no-sync python tools/check_package.py "dist/release-$version/taobot-$version-py3-none-any.whl"
     }
     Invoke-ReleaseStep 'Check frozen CLI and API' {
-        uv run --no-sync python tools/check_windows.py "$output/AgentBot"
+        uv run --no-sync python tools/check_windows.py "$output/taobot"
     }
     Invoke-ReleaseStep 'Check zero-config startup' {
-        uv run --no-sync python tools/check_windows.py "$output/AgentBot" --first-run
+        uv run --no-sync python tools/check_windows.py "$output/taobot" --first-run
     }
     Invoke-ReleaseStep 'Collect SQL, migration tools and checksums' {
         uv run --no-sync python tools/windows_release.py prepare $repoRoot $stage $version

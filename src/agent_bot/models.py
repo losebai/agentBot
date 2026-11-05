@@ -71,6 +71,11 @@ class AiJobResult(BaseModel):
     status: Literal["SUCCEEDED"]
     result: str = Field(min_length=1, max_length=64000)
     run_at: str = Field(alias="runAt", max_length=40)
+    # 旧版任务结果没有持续身份关联字段，缺省必须保持普通 QQ Job 投递兼容。
+    autonomy_profile_id: str | None = Field(
+        default=None, alias="autonomyProfileId", pattern=r"^[a-f0-9]{32}$",
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_target(self) -> "AiJobResult":

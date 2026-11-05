@@ -1,1 +1,1 @@
-"""Authenticated management boundaries for agentBot."""
+"""提供 taobot 管理接口的认证边界。"""

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from agent_bot.ai.catalog import AiCatalog
@@ -40,6 +42,8 @@ def agent_database():
         ON DELETE CASCADE, mcp_id INTEGER REFERENCES agent_bot_mcp(id),
         PRIMARY KEY(agent_id,mcp_id));
     """)
+    db.connection.executescript((Path(__file__).resolve().parents[2] / "sql" /
+                                "agent-portrait.sqlite.sql").read_text("utf-8"))
     yield db
     db.close()
 

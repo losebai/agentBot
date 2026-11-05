@@ -10,7 +10,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] in (["--help"], ["-h"]):
         print(
-            "usage: agent-bot [database init/upgrade | records migrate | "
+            "usage: taobot [database init/upgrade | records migrate | "
             "settings ... | workflows ... | worker [--memory-only | --autonomy] "
             "[--once | --inspect JOB_ID] | "
             "autonomy evaluate/serve | "
@@ -48,7 +48,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run(arguments[1:])
     if arguments:
         raise SystemExit(
-            "usage: agent-bot [settings ... | workflows ... | worker ... | plugin ... | --help]"
+            "usage: taobot [settings ... | workflows ... | worker ... | plugin ... | --help]"
         )
     return start_service()
 

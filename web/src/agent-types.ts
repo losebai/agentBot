@@ -8,7 +8,7 @@ export interface Versioned { id: number; revision: number; created_at?: string; 
 /** Agent 分别保存角色和人格；旧响应可省略人格，工具调用预算由机器人配置统一提供。 */
 export interface AgentDraft extends DirectoryDraft { code: string; model_id: number; vision_model_id?: number | null; fallback_model_id?: number | null; system_prompt: string; personality_prompt?: string; skill_ids: number[]; mcp_ids: number[]; tools: string[]; options: Record<string, JsonValue> }
 /** 使用状态由服务端运行配置确定，不能通过角色编辑接口写入。 */
-export interface Agent extends AgentDraft, Versioned { is_current?: boolean }
+export interface Agent extends AgentDraft, Versioned { is_current?: boolean; portrait_sha256?: string | null }
 export interface SkillDraft extends DirectoryDraft { category: string; system_prompt: string; sample_prompt: string; tools: string[] }
 export interface Skill extends SkillDraft, Versioned {}
 export interface McpDraft extends DirectoryDraft { code: string; category: 'general'|'search'; transport: 'streamable'|'sse'; endpoint: string; credential?: string|null; allowed_tools: string[]; search_tool: string|null; timeout_seconds: number; required: boolean }

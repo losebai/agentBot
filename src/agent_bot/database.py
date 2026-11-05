@@ -50,7 +50,7 @@ def initialize_database(params: DatabaseParams) -> None:
 
         initialize_sqlite(params.sqlite_path)
         return
-    resource = distribution("agent-bot").locate_file("agent_bot/resources/agent_bot_init.sql")
+    resource = distribution("taobot").locate_file("agent_bot/resources/agent_bot_init.sql")
     sql = resource.read_text(encoding="utf-8")
     connection = connect_database(params)
     try:

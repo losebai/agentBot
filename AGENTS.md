@@ -2,7 +2,7 @@
 
 ## 项目结构与模块组织
 
-- `src/`：平铺保存统一 agent_bot 包的源码，包含服务入口、应用装配、管理 API、AI/Agent/媒体模块、打包静态资源，以及机器人行为、配置、业务服务、插件及 OneBot、Redis、模型供应商、ComfyUI 集成；打包时映射为 agent_bot。
+- `src/agent_bot/`：保存统一 agent_bot 包的源码，包含服务入口、应用装配、管理 API、AI/Agent/媒体模块、打包静态资源，以及机器人行为、配置、业务服务、插件及 OneBot、Redis、模型供应商、ComfyUI 集成；打包时映射为 agent_bot。
 - `web/src/`：React/TypeScript 管理界面，包含页面、组件、API 客户端、样式及同目录测试。
 - `tests/`：Python 单元、集成、管理 API 和 AI 测试，以及共享替身与夹具。
 - `sql/agent_bot_init.sql` 与 `sql/agent_bot_init.sqlite.sql`：MySQL、SQLite 的新库初始化脚本；`sql/legacy/`：原样归档的历史脚本；独立注释增量脚本仅用于既有表。`tools/`：迁移及包检查工具；`docs/`：设计决策与实施计划。
@@ -13,14 +13,14 @@
 
 - `uv sync --extra dev --python 3.12`：安装 Python 开发依赖。
 - `npm --prefix web ci`：按锁文件安装前端依赖。
-- `uv run agent-bot`：启动服务，默认地址为 `127.0.0.1:8080`。
+- `uv run taobot`：启动服务，默认地址为 `127.0.0.1:8080`。
 - `npm --prefix web run dev`：启动 Vite，API 请求代理到后端。
 - `uv run ruff check .`：检查 Python 代码与导入顺序。
 - `npm --prefix web run typecheck`：执行 TypeScript 严格类型检查。
 - `npm --prefix web test -- --run`：运行一次前端测试。
 - `npm --prefix web run build`：生成 `src/static/`；不要手动修改生成资源。
 - `uv build`：前端构建完成后生成 wheel 和源码包。
-- `uv run python tools/check_package.py dist/agent_bot-0.5.7-py3-none-any.whl`：检查 wheel；版本变化时调整文件名。
+- `uv run python tools/check_package.py dist/taobot-0.6.3-py3-none-any.whl`：检查 wheel；版本变化时调整文件名。
 
 ## 编码风格与命名规范
 

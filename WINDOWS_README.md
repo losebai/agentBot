@@ -1,7 +1,7 @@
-# AgentBot Windows 桌面版
+# taobot Windows 桌面版
 
 此包包含后端、Python 运行时和已构建的管理前端，无需安装 Python、uv 或 Node.js。
-可以运行 `AgentBot-<版本>-windows-x64-Setup.exe` 安装，或复制整个便携版 `AgentBot` 文件夹。
+可以运行 `taobot-<版本>-windows-x64-Setup.exe` 安装，或复制整个便携版 `taobot` 文件夹。
 便携版不要单独移动 EXE 或 `_internal`。
 
 要求 Windows 10/11 x64、.NET Framework 4.6.2 以上和
@@ -10,12 +10,12 @@
 
 ## 一键安装
 
-当前发布版本为 **0.6.2**，命令始终读取下载站 `latest.json` 中的可用版本。
+当前发布版本为 **0.6.3**，命令始终读取下载站 `latest.json` 中的可用版本。
 
-0.6.2 将 NapCat 改为独立 Node 运行方式，首次登录后记住账号，后续启动尝试快速登录。
-从已完成数据库升级的 0.6.1 更新无需新增 SQL 迁移，保留配置、数据库和登录资料。
-[本版升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.6.2.md) 与
-[SQL 下载包](https://public.loserbai.cn/agentbot/AgentBot-0.6.2-sql.zip) 提供完整升级信息。
+0.6.3 发布名称统一为 taobot，新增四阶段持续智能体与角色人物图持久保存。
+从 0.6.2 更新前须备份数据库，首次启动按登记清单自动迁移并核验，失败停止启动。
+[本版升级说明](https://public.loserbai.cn/agentbot/UPGRADE-0.6.3.md) 与
+[SQL 下载包](https://public.loserbai.cn/agentbot/taobot-0.6.3-sql.zip) 提供完整升级信息。
 
 0.5.5 增加长期记忆版本、来源、冲突与遗忘管理，并统一模型身份与选择界面。
 从 0.5.4 升级前须停服备份，按
@@ -47,7 +47,7 @@ curl -fsSL -o "%TEMP%\agentbot-install.bat" https://public.loserbai.cn/agentbot/
 ```
 
 脚本从同一下载站读取 `latest.json`，下载对应 Windows x64 安装器并校验 SHA256，
-校验通过后显示安装进度，创建桌面和开始菜单快捷方式。安装完成后手动打开 AgentBot；
+校验通过后显示安装进度，创建桌面和开始菜单快捷方式。安装完成后手动打开 taobot；
 不会自动重启系统。下载、校验或安装失败会明确报错，不切换下载源。
 无需管理员权限；已有安装使用原目录升级并保留配置、数据库和媒体。
 桌面运行前仍需安装上方列出的 WebView2 Runtime。
@@ -62,15 +62,15 @@ curl -fsSL -o "%TEMP%\agentbot-install.bat" https://public.loserbai.cn/agentbot/
 - 本机版本高于服务器版本：保留本机版本，不自动降级。
 
 版本号采用 `主版本.次版本.修订号`，按数字分段比较，例如 `0.5.10` 高于 `0.5.9`。
-本机版本来自当前用户 Windows“已安装的应用”中的 AgentBot 登记；安装成功后，
+本机版本来自当前用户 Windows“已安装的应用”中的 taobot 登记；安装成功后，
 安装器自动更新登记的版本，升级失败时脚本不提前写入新版本。
 检测只适用于通过安装器安装的桌面版，便携版继续按下方说明手动升级。
 
 ## 首次使用
 
-1. 运行安装器，默认安装到 `%LOCALAPPDATA%\Programs\AgentBot`，无需管理员权限，
-   可创建开始菜单与桌面快捷方式；便携版解压到当前用户可写的目录，例如 `D:\Apps\AgentBot`。
-2. 直接双击 `AgentBot.exe`，无需提前复制配置文件、初始化数据库或安装 Redis。
+1. 运行安装器，默认安装到 `%LOCALAPPDATA%\Programs\taobot`，无需管理员权限，
+   可创建开始菜单与桌面快捷方式；便携版解压到当前用户可写的目录，例如 `D:\Apps\taobot`。
+2. 直接双击 `taobot.exe`，无需提前复制配置文件、初始化数据库或安装 Redis。
 3. 首次启动自动生成 `.env`、两个独立随机密钥、默认运行配置，以及
    `data/agent_bot.sqlite3` 业务库和 `data/queue.sqlite3` 本地持久队列。
    OneBot Token 与会话密钥均保存在 `.env`。
@@ -81,8 +81,8 @@ curl -fsSL -o "%TEMP%\agentbot-install.bat" https://public.loserbai.cn/agentbot/
 
 已有 `.env` 或 `.env.prod` 会继续使用，不覆盖配置、密钥或数据。
 若已有数据库但配置丢失，请恢复配置备份；程序不会重新生成密钥覆盖已有部署。
-手动部署可复制 `.env.example`，填写静态 OneBot Token 和会话密钥后执行 `agent-bot.exe database init` 和
-`agent-bot.exe settings init`；不要对已有配置重复执行初始化。
+手动部署可复制 `.env.example`，填写静态 OneBot Token 和会话密钥后执行 `taobot-cli.exe database init` 和
+`taobot-cli.exe settings init`；不要对已有配置重复执行初始化。
 OneBot Token 与会话密钥须使用至少 32 字符的不同随机值。
 
 已有 `.env`／环境变量中的 `ONEBOT_V11_ACCESS_TOKEN` 继续使用，修改后重启后端。
@@ -98,10 +98,10 @@ OneBot Token 与会话密钥须使用至少 32 字符的不同随机值。
 “打开后台管理界面”会使用本机默认浏览器，按用户授权将密钥编码到 URL 一键登录。
 桌面不再提供 QQ 菜单。启动窗口和查看状态不会自动启动 QQ；启动仅作用于本窗口所属的 NapCat，
 不改写静态模式配置、不重启后端。启用 QQ 插件的选择仍须保存并手动重启后端后生效。
-普通 `agent-bot.exe` 命令行服务保持外部接入，不提供桌面 NapCat 启动和登录能力。
+普通 `taobot-cli.exe` 命令行服务保持外部接入，不提供桌面 NapCat 启动和登录能力。
 
 桌面包携带固定版本 NapCat Node 运行资源，无需用户安装 Node 或另外启动 NapCat。
-点击“启动 NapCat”后，AgentBot 在后台隐藏启动配套 Node 进程；二维码直接显示在项目内。
+点击“启动 NapCat”后，taobot 在后台隐藏启动配套 Node 进程；二维码直接显示在项目内。
 不定位、注入或修改系统安装的 QQ，也不接管其他已运行的 QQ 或 NapCat。
 进程属于本窗口的 Windows Job，退出或重启后端时只清理所属进程树。
 运行资源缺失或校验失败时明确提示安装包含 Node 运行包的新版桌面程序，不回退为 QQ 注入。
@@ -160,7 +160,7 @@ Redis 是可选后端：在 `.env` 设置 `CHAT_QUEUE_BACKEND=redis`，填写 `C
 
 ## 运行与排查
 
-- `AgentBot.exe` 启动桌面窗口及所属后端，关窗会停止该后端。
+- `taobot.exe` 启动桌面窗口及所属后端，关窗会停止该后端。
 - 桌面窗口顶部“服务 → 重启后端”可应用启动配置变更，无需关闭整个窗口。
 - “服务 → 修改端口…”用弹窗填写 1-65535 的端口，保存后自动重启并连接新地址。
   新端口被占用时保留当前服务与配置；取消弹窗不作修改。后端启动失败时菜单仍可使用。
@@ -174,7 +174,7 @@ Redis 是可选后端：在 `.env` 设置 `CHAT_QUEUE_BACKEND=redis`，填写 `C
   和数据库后端，手动“服务 → 重启后端”后应用。静态密钥留空保留；可空密钥须明确清除。
   会话密钥修改并重启后会使用新的会话与身份命名空间；旧历史和记忆数据保留，
   供应商与 MCP 密钥不受影响。
-- `agent-bot.exe` 保留命令行操作；不带参数则只启动服务，可通过浏览器访问。
+- `taobot-cli.exe` 保留命令行操作；不带参数则只启动服务，可通过浏览器访问。
 - 两种 EXE 都从程序目录读取 `.env` / `.env.prod`；相对数据库、媒体路径也基于此目录。
 - 默认地址 `127.0.0.1:8080`，可在 `.env` 修改 `HOST`、`PORT`。端口冲突会明确失败，
   桌面窗口不会接管已经运行的其他服务。
@@ -198,7 +198,7 @@ powershell -ExecutionPolicy Bypass -File tools/build_windows.ps1 -BuildInstaller
 ```
 
 脚本先构建前端，再使用 `build/windows/venv` 安装锁定的非 editable 发布包，
-最终生成 `dist/windows/AgentBot/AgentBot.exe`、`agent-bot.exe` 和共享 `_internal`。
+最终生成 `dist/windows/taobot/taobot.exe`、`taobot-cli.exe` 和共享 `_internal`。
 只附带 `.env.example`，不会打包本地 `.env`、数据库或媒体文件。
 构建目录已有运行数据时会拒绝覆盖，可通过 `-OutputDirectory dist/windows-new` 换目录。
 安装器、SHA256 校验文件、`latest.json` 和两种一键安装脚本输出到
@@ -209,9 +209,9 @@ GitLab 作业与 Windows Runner 准备步骤见 [CI/CD 部署说明](deploy/READ
 开发依赖已安装时，可验收无配置、无 Redis 的首次启动，或可选 Redis 路径：
 
 ```powershell
-uv run --no-sync python tools/check_windows.py dist/windows/AgentBot
+uv run --no-sync python tools/check_windows.py dist/windows/taobot
 # 同时打开实际桌面窗口，截图后自动关窗并检查后端停机：
-uv run --no-sync python tools/check_windows.py dist/windows/AgentBot --first-run --gui-screenshot reports/desktop.png
+uv run --no-sync python tools/check_windows.py dist/windows/taobot --first-run --gui-screenshot reports/desktop.png
 ```
 
 验收不会读取部署配置或连接真实 QQ、模型和 Redis；截图验收需要交互式 Windows 桌面。

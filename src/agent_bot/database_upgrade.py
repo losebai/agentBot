@@ -83,6 +83,8 @@ MIGRATIONS = (
               "call-record-classification.sqlite.sql", True),
     Migration('0.6.3', 'persistent-agent-v1', 'persistent-agent.sql',
               'persistent-agent.sqlite.sql', True),
+    Migration('0.6.3', 'agent-portrait-v1', 'agent-portrait.sql',
+              'agent-portrait.sqlite.sql', True),
 )
 
 
@@ -97,7 +99,7 @@ class UpgradeResult:
 
 def read_sql_resource(name: str) -> str:
     """生产只读取当前安装包资源，缺文件时不能回退其他版本的源码脚本。"""
-    return distribution("agent-bot").locate_file("agent_bot/resources/" + name).read_text("utf-8")
+    return distribution("taobot").locate_file("agent_bot/resources/" + name).read_text("utf-8")
 
 
 def _version(value: str) -> tuple[int, ...]:
@@ -239,6 +241,44 @@ def _validate_autonomy(connection: Any, backend: str) -> None:
                 expected_foreign.add(('episode_id', 'agent_bot_autonomy_episode', 'id'))
             if not set(required) <= indexes or not expected_foreign <= foreign_keys:
                 raise UpgradeError(f'持续智能体索引或外键结构不匹配：{table}，停止启动。')
+
+
+def _validate_portrait(connection: Any, backend: str) -> None:
+    """人物图必须有唯一归属与级联删除，避免残缺同名表留下重复图或孤立图。"""
+    with connection.cursor() as cursor:
+        if backend == "sqlite":
+            cursor.execute("PRAGMA table_info(agent_bot_agent_portrait)")
+            columns = {row["name"]: row for row in cursor.fetchall()}
+            valid = (columns.get("agent_id", {}).get("pk") == 1
+                     and columns.get("agent_id", {}).get("type", "").upper() == "INTEGER"
+                     and all(columns.get(key, {}).get("notnull") for key in
+                             ("mime_type", "image_data", "sha256", "updated_at"))
+                     and columns.get("image_data", {}).get("type", "").upper() == "BLOB")
+            cursor.execute("PRAGMA foreign_key_list(agent_bot_agent_portrait)")
+            foreign = any(row["from"] == "agent_id" and row["table"] == "agent_bot_agent"
+                          and row["to"] == "id" and row["on_delete"] == "CASCADE"
+                          for row in cursor.fetchall())
+        else:
+            cursor.execute(
+                "SELECT COLUMN_NAME AS name,DATA_TYPE AS type,COLUMN_KEY AS key_type,"
+                "IS_NULLABLE AS nullable FROM information_schema.columns "
+                "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='agent_bot_agent_portrait'")
+            columns = {row["name"]: row for row in cursor.fetchall()}
+            valid = (columns.get("agent_id", {}).get("key_type") == "PRI"
+                     and columns.get("image_data", {}).get("type") == "mediumblob"
+                     and all(row["nullable"] == "NO" for row in columns.values()))
+            cursor.execute(
+                "SELECT k.COLUMN_NAME AS source,k.REFERENCED_TABLE_NAME AS target,"
+                "k.REFERENCED_COLUMN_NAME AS target_column,r.DELETE_RULE AS delete_rule "
+                "FROM information_schema.key_column_usage k JOIN information_schema."
+                "referential_constraints r ON k.CONSTRAINT_SCHEMA=r.CONSTRAINT_SCHEMA "
+                "AND k.CONSTRAINT_NAME=r.CONSTRAINT_NAME AND k.TABLE_NAME=r.TABLE_NAME "
+                "WHERE k.TABLE_SCHEMA=DATABASE() AND k.TABLE_NAME='agent_bot_agent_portrait'")
+            foreign = any(row["source"] == "agent_id" and row["target"] == "agent_bot_agent"
+                          and row["target_column"] == "id" and row["delete_rule"] == "CASCADE"
+                          for row in cursor.fetchall())
+        if not valid or not foreign:
+            raise UpgradeError("角色人物图主键、二进制列或级联外键结构不匹配，停止启动。")
 
 
 def _execute(connection: Any, script: str) -> None:
@@ -409,7 +449,7 @@ def upgrade_database(
                         actual, baseline,
                         exclude=(METADATA_TABLES | BILIBILI_TABLES | MATERIAL_CLASSIFICATION_TABLES
                                  | STICKER_TABLES | EVOLUTION_TABLES | AUTONOMY_TABLES
-                                 | {"agent_bot_job_attempt"}),
+                                 | {"agent_bot_job_attempt", "agent_bot_agent_portrait"}),
                     )
                     _validate_model_baseline(connection, params.backend)
                 if not METADATA_TABLES <= actual.keys():
@@ -477,6 +517,12 @@ def upgrade_database(
                         pass
                     else:
                         _execute(connection, script)
+                    if item.name == 'agent-portrait-v1':
+                        _validate(
+                            _schema(connection, params.backend),
+                            {'agent_bot_agent_portrait': expected['agent_bot_agent_portrait']},
+                        )
+                        _validate_portrait(connection, params.backend)
                     if item.name == 'persistent-agent-v1':
                         _validate(_schema(connection, params.backend),
                                   {key: expected[key] for key in AUTONOMY_TABLES})
@@ -493,6 +539,8 @@ def upgrade_database(
                     current_step = None
                     applied.append(item.name)
                 _validate(_schema(connection, params.backend), expected)
+                if any(item.name == "agent-portrait-v1" for item in active):
+                    _validate_portrait(connection, params.backend)
                 if any(item.name == 'persistent-agent-v1' for item in active):
                     _validate_autonomy(connection, params.backend)
                 if any(item.name == "agent-personality-v1" for item in active):
